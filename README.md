@@ -2,7 +2,7 @@
 
 > **[Deutsche Version](README_DE.md)**
 
-Monitoring tools for [remote-backups.com](https://remote-backups.com) datastores (Proxmox Backup Server as a Service).
+Monitoring tools for [remote-backups.com](https://remote-backups.com) datastores. Primarily built and tested against Proxmox Backup Server (PBS) datastores. The Web UI also displays rsync, SFTP, and ZFS-recv backup data when available; the alerting script is PBS-only.
 
 Two independent tools:
 
@@ -16,6 +16,9 @@ or a similar scheduler.
 Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monitoring-datastores) from remote-backups.com.
 
 ![Python](https://img.shields.io/badge/python-3.9+-green)
+
+> [!NOTE]
+> This project is not affiliated with, maintained, or endorsed by remote-backups.com.
 
 ---
 
@@ -245,6 +248,9 @@ The alerting script now persists backup-browser inventory per namespace and grou
 | `GET /monitoring/v1/datastores` | Bearer | All datastores with live metrics |
 | `GET /monitoring/v1/datastores/{id}` | Bearer | Details incl. prune, autoscaling, replication |
 | `GET /monitoring/v1/datastores/{id}/backups` | Bearer | Namespace-aware PBS backup inventory |
+| `GET /monitoring/v1/datastores/{id}/backups/rsync` | Bearer | rsync backup data (Web UI) |
+| `GET /monitoring/v1/datastores/{id}/backups/sftp` | Bearer | SFTP backup data (Web UI) |
+| `GET /monitoring/v1/datastores/{id}/backups/zfs-recv` | Bearer | ZFS-recv backup data (Web UI) |
 | `GET /monitoring/v1/datastores/{id}/rescale-log` | Bearer | Resize history |
 | `GET /health` | — | Platform health |
 | `GET /public/total-storage` | — | Total platform storage |
@@ -276,10 +282,6 @@ PBS_monitor/
 ```
 
 ---
-
-## Disclaimer
-
-This project is not affiliated with, maintained, or endorsed by remote-backups.com.
 
 ## License
 

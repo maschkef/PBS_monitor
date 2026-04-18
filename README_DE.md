@@ -2,7 +2,7 @@
 
 > **[English Version](README.md)**
 
-Monitoring-Tools für [remote-backups.com](https://remote-backups.com) Datastores (Proxmox Backup Server as a Service).
+Monitoring-Tools für [remote-backups.com](https://remote-backups.com) Datastores. Primär entwickelt und getestet für Proxmox Backup Server (PBS) Datastores. Die Web UI zeigt zusätzlich rsync-, SFTP- und ZFS-recv-Backupdaten an, sofern vorhanden; das Alerting-Script unterstützt ausschließlich PBS.
 
 Zwei unabhängige Werkzeuge:
 
@@ -16,6 +16,9 @@ den unabhängigen Betrieb per Cron oder ähnlichem Scheduler gedacht.
 Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/monitoring-datastores) von remote-backups.com.
 
 ![Python](https://img.shields.io/badge/python-3.9+-green)
+
+> [!NOTE]
+> Dieses Projekt steht in keiner Verbindung zu remote-backups.com und wird weder von ihnen betrieben noch offiziell unterstützt.
 
 ---
 
@@ -71,7 +74,7 @@ Dashboard öffnen: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 
 > **Produktivbetrieb:** Die App wird standardmäßig von [Waitress](https://docs.pylonsproject.org/projects/waitress/) ausgeliefert (in `requirements.txt` enthalten), wodurch die Flask-Development-Server-Warnung entfällt. Mit `FLASK_DEBUG=1` in `.env` kann bei Bedarf wieder auf den Flask Dev-Server mit Auto-Reload umgeschaltet werden.
 
-### Screenshot
+### Dashboard-Sektionen
 
 Das Dashboard zeigt pro Datastore eine Karte mit vier Sektionen:
 
@@ -245,6 +248,9 @@ Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace un
 | `GET /monitoring/v1/datastores` | Bearer | Alle Datastores mit Live-Metriken |
 | `GET /monitoring/v1/datastores/{id}` | Bearer | Detail inkl. Prune, Autoscaling, Replication |
 | `GET /monitoring/v1/datastores/{id}/backups` | Bearer | Namespace-aware PBS-Backup-Inventar |
+| `GET /monitoring/v1/datastores/{id}/backups/rsync` | Bearer | rsync-Backup-Daten (Web UI) |
+| `GET /monitoring/v1/datastores/{id}/backups/sftp` | Bearer | SFTP-Backup-Daten (Web UI) |
+| `GET /monitoring/v1/datastores/{id}/backups/zfs-recv` | Bearer | ZFS-recv-Backup-Daten (Web UI) |
 | `GET /monitoring/v1/datastores/{id}/rescale-log` | Bearer | Resize-Historie |
 | `GET /health` | — | Plattform-Gesundheit |
 | `GET /public/total-storage` | — | Gesamtspeicher Plattform |
@@ -259,7 +265,9 @@ Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace un
 PBS_monitor/
 ├── .env.example                    # Vorlage für API Key
 ├── .gitignore
-├── README.md
+├── LICENSE
+├── README.md                       # Englische Dokumentation
+├── README_DE.md                    # Deutsche Dokumentation
 ├── webui/                          # Tool 1: Web Dashboard
 │   ├── app.py                      # Flask Server
 │   ├── requirements.txt
@@ -274,9 +282,7 @@ PBS_monitor/
     └── state.json                  # Runtime-State (gitignored, auto-generiert)
 ```
 
-## Disclaimer
-
-Dieses Projekt ist nicht mit remote-backups.com verbunden, wird nicht von ihnen gewartet oder unterstützt.
+---
 
 ## Lizenz
 
