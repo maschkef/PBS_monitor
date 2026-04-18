@@ -1,0 +1,39 @@
+# Secrets
+.env
+
+# Alerting runtime state (auto-generated)
+alerting/state.json
+
+# Alerting config (contains ntfy topic/token)
+alerting/config.json
+
+# Per-group alerting rules written by the learning/config editor
+alerting/group_rules.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# venv
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+remote-backupscom-reseller-api.yaml
+new_remote-backupscom-reseller-api.yaml
+remote-backupscom-monitoring-api.yaml

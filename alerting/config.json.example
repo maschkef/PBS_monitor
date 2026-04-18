@@ -1,0 +1,42 @@
+{
+  "_comment_api": "Base URL of the Monitoring API",
+  "api_base": "https://api.remote-backups.com",
+  
+  "_comment_ntfy": "Notification settings. ntfy_topic is required. ntfy_token is optional for private ntfy instances.",
+  "ntfy_url": "https://ntfy.sh",
+  "ntfy_topic": "your-topic-here",
+  "ntfy_token": "",
+  
+  "_comment_ignored": "List of objects describing backup groups to ignore.",
+  "ignored_groups": [],
+  
+  "_comment_thresholds": "Warning and critical thresholds for datastore events.",
+  "thresholds": {
+    "storage_warn_percent": 80,
+    "storage_crit_percent": 90,
+    "gc_max_age_hours": 36,
+    "verification_max_age_days": 14
+  },
+  
+  "_comment_quiet_hours": "Suppresses lower-priority alerts during specified hours.",
+  "quiet_hours": {
+    "enabled": false,
+    "start": "22:00",
+    "end": "07:00",
+    "min_priority": 4
+  },
+  
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
+  "schedule_learning": {
+    "enabled": true,
+    "timezone": "local",
+    "history_window_days": 60,
+    "min_occurrences": 2,
+    "time_tolerance_minutes": 30,
+    "due_grace_minutes": 30,
+    "stale_after_days": 8
+  },
+  
+  "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
+  "alert_cooldown_minutes": 60
+}
