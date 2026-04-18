@@ -283,6 +283,14 @@ PBS_monitor/
 
 ---
 
+## Contact
+
+If you have questions, suggestions, or encounter issues with this project, feel free to reach out:
+
+📧 **Email:** [maschkef-git@pm.me](mailto:maschkef-git@pm.me)
+
+---
+
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

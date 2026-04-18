@@ -284,6 +284,14 @@ PBS_monitor/
 
 ---
 
+## Kontakt
+
+Bei Fragen, Anregungen oder Problemen mit diesem Projekt kannst du mich gern kontaktieren:
+
+📧 **E-Mail:** [maschkef-git@pm.me](mailto:maschkef-git@pm.me)
+
+---
+
 ## Lizenz
 
 Dieses Projekt ist unter der MIT-Lizenz lizenziert – siehe die [LICENSE](LICENSE) Datei für Details.
