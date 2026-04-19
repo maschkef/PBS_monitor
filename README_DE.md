@@ -35,11 +35,11 @@ Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/m
 > **Schnellstart:**
 > ```bash
 > # Option 1: Ein-Befehl-Bereitstellung
-> curl -sL https://github.com/maschkef/PBS_monitor/releases/latest/download/quickstart.sh | bash
+> curl -sL https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker/quick-deploy.sh | bash
 > 
 > # Option 2: Traditioneller docker-compose Workflow
 > wget https://github.com/maschkef/PBS_monitor/releases/latest/download/docker-compose.yml
-> wget https://github.com/maschkef/PBS_monitor/releases/latest/download/.env.example -O .env
+> wget https://raw.githubusercontent.com/maschkef/PBS_monitor/main/.env.example -O .env
 > # .env editieren und API_KEY setzen, dann:
 > docker-compose up -d
 > ```

@@ -53,7 +53,7 @@ if ! curl -sLf -o docker-compose.yml "https://github.com/maschkef/PBS_monitor/re
 fi
 
 # Download .env template
-if ! curl -sLf -o .env.example "https://github.com/maschkef/PBS_monitor/releases/latest/download/.env.example"; then
+if ! curl -sLf -o .env.example "https://raw.githubusercontent.com/maschkef/PBS_monitor/main/.env.example"; then
     echo -e "${RED}❌ Failed to download .env.example${NC}"
     exit 1
 fi

@@ -17,7 +17,7 @@ if [ -d /app/.env ]; then
     echo "  sudo rm -rf .env"
     echo "  cp .env.example .env            # if you have .env.example locally"
     echo "  # -- or download it directly:"
-    echo "  curl -sLo .env https://github.com/maschkef/PBS_monitor/releases/latest/download/.env.example"
+    echo "  curl -sLo .env https://raw.githubusercontent.com/maschkef/PBS_monitor/main/.env.example"
     echo "  # Edit .env and set API_KEY"
     echo "  docker compose up"
     echo ""
