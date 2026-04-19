@@ -17,9 +17,6 @@ updates:
     commit-message:
       prefix: "deps(pip/alerting)"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "python"
 
   # Python packages for the web UI
   - package-ecosystem: "pip"
@@ -35,9 +32,6 @@ updates:
     commit-message:
       prefix: "deps(pip/webui)"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "python"
 
   # Docker base image for alerting service
   - package-ecosystem: "docker"
@@ -53,9 +47,6 @@ updates:
     commit-message:
       prefix: "deps(docker/alerting)"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
 
   # Docker base image for web UI
   - package-ecosystem: "docker"
@@ -71,9 +62,6 @@ updates:
     commit-message:
       prefix: "deps(docker/webui)"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
 
   # GitHub Actions workflows
   - package-ecosystem: "github-actions"
@@ -89,6 +77,3 @@ updates:
     commit-message:
       prefix: "deps(actions)"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "github-actions"
