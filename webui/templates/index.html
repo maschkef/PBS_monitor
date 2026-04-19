@@ -2,6 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PBS Monitor</title>
     <style>
@@ -1209,6 +1210,7 @@
             <button class="btn" onclick="openTestModal()">🔔 Test</button>
             <button class="btn" onclick="openLogModal()">📋 Log</button>
             <button class="btn" onclick="loadAll()" title="Full refresh: reloads all data including configuration, rescale-log and backup inventory">⟳ Refresh</button>
+            {% if auth_enabled %}<form action="/logout" method="post" style="display:inline"><button class="btn" type="submit" title="Sign out">⏏ Logout</button></form>{% endif %}
             <span class="last-updated" id="lastUpdated"></span>
         </div>
     </div>
@@ -1266,6 +1268,7 @@
           <div class="form-group">
             <label>ntfy Token (optional)</label>
             <input type="password" id="cfg-ntfy_token" autocomplete="new-password" placeholder="empty = no token">
+            <small id="cfg-ntfy_token_hint" style="display:none;color:var(--green)">&#10003; Token is configured. Leave blank to keep it, type a new value to replace it.</small>
           </div>
           <div class="form-group">
             <label>Alert Cooldown (minutes)</label>
@@ -1666,7 +1669,7 @@
         function statusBadge(status) {
             const s = (status || 'unknown').toLowerCase();
             const icons = { ok: '✓', error: '✗', running: '⟳', never: '–' };
-            return `<span class="badge ${s}">${icons[s] || '?'} ${s}</span>`;
+            return `<span class="badge ${s}">${icons[s] || '?'} ${escHtml(s)}</span>`;
         }
 
         function enabledBadge(enabled) {
@@ -1804,6 +1807,17 @@
             });
         }
 
+        function getCsrfToken() {
+            return document.querySelector('meta[name="csrf-token"]')?.content || '';
+        }
+
+        // Use fetchWrite for all state-changing requests — automatically injects
+        // the per-session CSRF token so the server-side require_csrf check passes.
+        function fetchWrite(url, options = {}) {
+            const headers = { 'X-CSRF-Token': getCsrfToken(), ...(options.headers || {}) };
+            return fetch(url, { ...options, headers });
+        }
+
         function protocolLabel(key) {
             return {
                 rsync: 'Rsync',
@@ -1832,18 +1846,18 @@
         function renderMetaCard(label, value) {
             return `<div class="browser-meta-card">
                 <div class="browser-meta-label">${label}</div>
-                <div class="browser-meta-value">${value || '—'}</div>
+                <div class="browser-meta-value">${escHtml(value) || '—'}</div>
             </div>`;
         }
 
         function renderProtocolEntry(entry, index) {
             const title = entry.name || entry.filename || entry.fullDataset || `Entry ${index + 1}`;
             const rows = Object.entries(entry).map(([key, value]) => `<div class="status-row">
-                <span class="status-label">${key}</span>
-                <span class="status-value">${formatGenericValue(key, value)}</span>
+                <span class="status-label">${escHtml(key)}</span>
+                <span class="status-value">${escHtml(String(formatGenericValue(key, value)))}</span>
             </div>`).join('');
             return `<div class="browser-entry">
-                <div class="browser-entry-title">${title}</div>
+                <div class="browser-entry-title">${escHtml(title)}</div>
                 ${rows}
             </div>`;
         }
@@ -1853,7 +1867,7 @@
             const list = Array.isArray(entries) ? entries : [entries];
             if (!list.length) return '';
             return `<div class="browser-section">
-                <div class="section-title">${protocolLabel(key)}</div>
+                <div class="section-title">${escHtml(protocolLabel(key))}</div>
                 ${list.map((entry, index) => renderProtocolEntry(entry, index)).join('')}
             </div>`;
         }
@@ -1884,7 +1898,7 @@
                     </div>
                 </summary>
                 <div class="browser-snapshot-body">
-                    ${snapshot.comment ? `<div class="browser-note">${snapshot.comment}</div>` : ''}
+                    ${snapshot.comment ? `<div class="browser-note">${escHtml(snapshot.comment)}</div>` : ''}
                     <table class="browser-file-table">
                         <thead>
                             <tr>
@@ -1895,9 +1909,9 @@
                         </thead>
                         <tbody>
                             ${snapshot.files.map(file => `<tr>
-                                <td>${file.filename}</td>
+                                <td>${escHtml(file.filename)}</td>
                                 <td>${file.size_human}</td>
-                                <td>${file.csum || '—'}</td>
+                                <td>${escHtml(file.csum || '—')}</td>
                             </tr>`).join('')}
                         </tbody>
                     </table>
@@ -1913,8 +1927,8 @@
                 <summary>
                     <div class="browser-group-line">
                         <span class="browser-group-heading">
-                            <span class="browser-group-title">${title}</span>
-                            ${subtitle ? `<span class="browser-group-subtitle">${subtitle}</span>` : ''}
+                            <span class="browser-group-title">${escHtml(title)}</span>
+                            ${subtitle ? `<span class="browser-group-subtitle">${escHtml(subtitle)}</span>` : ''}
                         </span>
                         <div class="browser-pills">
                             <span class="browser-pill">${group.snapshot_count} snapshots</span>
@@ -1930,7 +1944,7 @@
                         ${renderMetaCard('Last Backup', lastBackup)}
                         ${renderMetaCard('Snapshot Count', String(group.snapshot_count))}
                     </div>
-                    ${group.comment ? `<div class="browser-note">${group.comment}</div>` : ''}
+                    ${group.comment ? `<div class="browser-note">${escHtml(group.comment)}</div>` : ''}
                     ${group.snapshots.length
                         ? group.snapshots.map(renderSnapshot).join('')
                         : '<div class="browser-empty">No snapshots in this group.</div>'}
@@ -1947,14 +1961,14 @@
             return `<details class="browser-namespace" ${shouldOpen ? 'open' : ''}>
                 <summary>
                     <div class="browser-summary-line">
-                        <span class="browser-namespace-name">${namespace.label}</span>
+                        <span class="browser-namespace-name">${escHtml(namespace.label)}</span>
                         ${counts}
                     </div>
                 </summary>
                 <div class="browser-namespace-body">
-                    ${namespace.comment ? `<div class="browser-note">${namespace.comment}</div>` : ''}
+                    ${namespace.comment ? `<div class="browser-note">${escHtml(namespace.comment)}</div>` : ''}
                     ${namespace.error
-                        ? `<div class="browser-error">${namespace.error}</div>`
+                        ? `<div class="browser-error">${escHtml(namespace.error)}</div>`
                         : namespace.groups.length
                             ? namespace.groups.map(renderGroup).join('')
                             : '<div class="browser-empty">No backups in this namespace.</div>'}
@@ -2009,7 +2023,7 @@
             }
 
             if (payload.error) {
-                return `<div class="backup-browser-panel"><div class="browser-shell"><div class="browser-error">${payload.error}</div></div></div>`;
+                return `<div class="backup-browser-panel"><div class="browser-shell"><div class="browser-error">${escHtml(payload.error)}</div></div></div>`;
             }
 
             return `<div class="backup-browser-panel">${renderBackupBrowser(payload)}</div>`;
@@ -2052,7 +2066,7 @@
                 return `<div class="rescale-entry">
                     <span class="rescale-arrow ${dir}">${arrow}</span>
                     <strong>${e.from_gb}</strong> → <strong>${e.to_gb} GB</strong>
-                    <span class="rescale-reason">${e.reason || 'unknown'}</span>
+                    <span class="rescale-reason">${escHtml(e.reason || 'unknown')}</span>
                     <span class="rescale-date">${formatDate(e.timestamp)}</span>
                 </div>`;
             }).join('') + '</div>';
@@ -2061,20 +2075,20 @@
         function renderAlertItem(alert) {
             return `<div class="alert-item priority-${alert.priority}">
                 <div class="alert-head">
-                    <span class="alert-title">${alert.title}</span>
+                    <span class="alert-title">${escHtml(alert.title)}</span>
                     <span class="alert-priority">${alertPriorityLabel(alert.priority)}</span>
                 </div>
-                <div class="alert-message">${alert.message}</div>
+                <div class="alert-message">${escHtml(alert.message)}</div>
             </div>`;
         }
 
         function renderLearnedGroup(group) {
             const slots = (group.slots || []).map(slot =>
-                `<span class="browser-pill">${slot.weekday_name} ${slot.time} · ${slot.sample_count}x</span>`
+                `<span class="browser-pill">${escHtml(slot.weekday_name)} ${escHtml(slot.time)} · ${slot.sample_count}x</span>`
             ).join('');
             return `<div class="learned-group">
-                <div class="learned-group-title">${group.label}</div>
-                <div class="learned-group-subtitle">namespace ${group.namespace}</div>
+                <div class="learned-group-title">${escHtml(group.label)}</div>
+                <div class="learned-group-subtitle">namespace ${escHtml(group.namespace)}</div>
                 <div class="browser-pills">${slots}</div>
             </div>`;
         }
@@ -2110,14 +2124,14 @@
                 { label: 'Learned', value: learnedText },
                 { label: 'Last Backup', value: formatDate(group.last_backup_at) },
                 { label: 'Next Backup', value: group.next_expected_at ? formatDate(group.next_expected_at) : '—' },
-            ].map(item => `<div class="learned-group-compact-item"><div class="learned-group-compact-label">${item.label}</div><div class="learned-group-compact-value">${item.value}</div></div>`).join('');
+            ].map(item => `<div class="learned-group-compact-item"><div class="learned-group-compact-label">${item.label}</div><div class="learned-group-compact-value">${escHtml(item.value)}</div></div>`).join('');
 
             return `<details class="learned-group" ${isExpanded ? 'open' : ''}>
                 <summary>
                     <div class="browser-summary-line">
-                        <span class="learned-group-title"><span class="toggle-arrow">&#9658;</span>${group.label}</span>
+                        <span class="learned-group-title"><span class="toggle-arrow">&#9658;</span>${escHtml(group.label)}</span>
                         <div class="browser-pills">
-                            <span class="browser-pill">namespace ${group.namespace}</span>
+                            <span class="browser-pill">namespace ${escHtml(group.namespace)}</span>
                             ${group.group_alert_count ? `<span class="browser-pill">${group.group_alert_count} alerts</span>` : ''}
                             ${group.locked ? '<span class="browser-pill">locked</span>' : '<span class="browser-pill">auto</span>'}
                         </div>
@@ -2260,7 +2274,7 @@
                 interval_anchor_minute: intervalAnchorMinute,
             };
 
-            const response = await fetch('/api/alerting/group-rule', {
+            const response = await fetchWrite('/api/alerting/group-rule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -2279,7 +2293,7 @@
                 return;
             }
 
-            const response = await fetch('/api/alerting/ignore-group', {
+            const response = await fetchWrite('/api/alerting/ignore-group', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2302,7 +2316,7 @@
             const label = meta.backup_id ? `${meta.backup_type}/${meta.backup_id}` : meta.backup_type;
             const confirmed = window.confirm(`Re-enable alerting for backup group "${label}"?`);
             if (!confirmed) return;
-            const response = await fetch('/api/alerting/unignore-group', {
+            const response = await fetchWrite('/api/alerting/unignore-group', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2329,9 +2343,9 @@
                 const subtitle = ig.display_name ? techId : null;
                 return `<div class="learned-group" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
                     <div>
-                        <div class="learned-group-title">${niceName}</div>
-                        ${subtitle ? `<div class="learned-group-subtitle">${subtitle}</div>` : ''}
-                        <div class="learned-group-subtitle">namespace ${ns}</div>
+                        <div class="learned-group-title">${escHtml(niceName)}</div>
+                        ${subtitle ? `<div class="learned-group-subtitle">${escHtml(subtitle)}</div>` : ''}
+                        <div class="learned-group-subtitle">namespace ${escHtml(ns)}</div>
                     </div>
                     <button class="btn btn-secondary" onclick='unignoreGroup(${JSON.stringify({
                         datastore_id: ig.datastore_id,
@@ -2370,15 +2384,15 @@
                     </div>
                     <div class="alert-summary-card">
                         <div class="alert-summary-label">Alerting State</div>
-                        <div class="alert-summary-value">${alerting.state_source || 'ephemeral'}</div>
+                        <div class="alert-summary-value">${escHtml(alerting.state_source || 'ephemeral')}</div>
                     </div>
                     <div class="alert-summary-card">
                         <div class="alert-summary-label">Rule Config</div>
-                        <div class="alert-summary-value">${alerting.rules_source || 'ephemeral'}</div>
+                        <div class="alert-summary-value">${escHtml(alerting.rules_source || 'ephemeral')}</div>
                     </div>
                 </div>
-                <div class="soft-note" style="margin-bottom:0.9rem;">Backup evaluation: ${alerting.backup_status || 'inventory unavailable'}</div>
-                ${alerting.inventory_error ? `<div class="browser-error" style="margin-bottom:0.9rem;">Backup inventory unavailable: ${alerting.inventory_error}</div>` : ''}
+                <div class="soft-note" style="margin-bottom:0.9rem;">Backup evaluation: ${escHtml(alerting.backup_status || 'inventory unavailable')}</div>
+                ${alerting.inventory_error ? `<div class="browser-error" style="margin-bottom:0.9rem;">Backup inventory unavailable: ${escHtml(alerting.inventory_error)}</div>` : ''}
                 ${alerts.length
                     ? `<div class="alert-list">${alerts.map(renderAlertItem).join('')}</div>`
                     : '<div class="soft-note" style="margin-bottom:0.9rem;">No active alerts for this datastore.</div>'}
@@ -2408,14 +2422,14 @@
                     <div class="ds-header-main">
                         <div class="ds-title">
                             <span class="health-dot ${ds.health}"></span>
-                            ${ds.name}
+                            ${escHtml(ds.name)}
                         </div>
-                        <div class="ds-id">${ds.id} · ${ds.size_gb} GB · Created ${formatDate(ds.created_at)}</div>
+                        <div class="ds-id">${escHtml(ds.id)} · ${ds.size_gb} GB · Created ${formatDate(ds.created_at)}</div>
                     </div>
                     <div class="ds-header-side">
                         <div class="ds-issues">${issuesHtml}</div>
-                        <button class="btn btn-secondary" onclick="toggleAlertingPanel('${ds.id}')">${alertingLabel}</button>
-                        <button class="btn btn-secondary" onclick="toggleBackupBrowser('${ds.id}')">${browserLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleAlertingPanel(${JSON.stringify(ds.id)})">${alertingLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleBackupBrowser(${JSON.stringify(ds.id)})">${browserLabel}</button>
                     </div>
                 </div>
                 <div class="ds-body">
@@ -2474,7 +2488,7 @@
 
                         <!-- Retention -->
                         <div class="section">
-                            <div class="section-title">Retention (Prune: ${ds.prune.schedule})</div>
+                            <div class="section-title">Retention (Prune: ${escHtml(ds.prune.schedule)})</div>
                             <div class="prune-grid">
                                 <div class="prune-item"><div class="num">${ds.prune.keep_last}</div><div class="lbl">Last</div></div>
                                 <div class="prune-item"><div class="num">${ds.prune.keep_hourly}</div><div class="lbl">Hourly</div></div>
@@ -2782,7 +2796,7 @@
         async function clearNotificationLog() {
             if (!confirm('Clear all notification log entries?')) return;
             try {
-                const res = await fetch('/api/alerting/notification-log', { method: 'DELETE' });
+                const res = await fetchWrite('/api/alerting/notification-log', { method: 'DELETE' });
                 const data = await res.json();
                 if (data.ok) {
                     renderLogModal([]);
@@ -2805,7 +2819,14 @@
                 _ntfyUrl = c.ntfy_url || null;
                 document.getElementById('cfg-ntfy_url').value = c.ntfy_url || '';
                 document.getElementById('cfg-ntfy_topic').value = c.ntfy_topic || '';
-                document.getElementById('cfg-ntfy_token').value = c.ntfy_token || '';
+                // Never pre-fill the token field with the sentinel — keep it empty and
+                // show a hint instead. The server will preserve the existing token when
+                // the field is submitted empty.
+                const tokenField = document.getElementById('cfg-ntfy_token');
+                const tokenHint = document.getElementById('cfg-ntfy_token_hint');
+                tokenField.value = '';
+                tokenField.placeholder = c.ntfy_token_set ? '(configured — leave blank to keep, type to replace)' : 'empty = no token';
+                if (tokenHint) tokenHint.style.display = c.ntfy_token_set ? '' : 'none';
                 document.getElementById('cfg-cooldown').value = c.alert_cooldown_minutes ?? 60;
                 document.getElementById('cfg-daemon-interval').value = Math.round((c.daemon_interval_seconds ?? 1800) / 60);
 
@@ -2853,10 +2874,13 @@
             .addEventListener('click', function() { loadConfig(); updateCronEntry(); });
 
         async function saveConfig() {
+            const tokenFieldValue = document.getElementById('cfg-ntfy_token').value;
             const payload = {
                 ntfy_url: document.getElementById('cfg-ntfy_url').value.trim(),
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
-                ntfy_token: document.getElementById('cfg-ntfy_token').value,
+                // Only include ntfy_token when the user has actually typed something;
+                // omitting it preserves the previously stored secret on the server.
+                ...(tokenFieldValue !== '' ? { ntfy_token: tokenFieldValue } : {}),
                 alert_cooldown_minutes: parseInt(document.getElementById('cfg-cooldown').value) || 60,
                 daemon_interval_seconds: (parseInt(document.getElementById('cfg-daemon-interval').value) || 30) * 60,
                 thresholds: {
@@ -2888,7 +2912,7 @@
             };
 
             try {
-                const res = await fetch('/api/alerting/config', {
+                const res = await fetchWrite('/api/alerting/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -2999,7 +3023,7 @@
             btn.textContent = '⏳ Running…';
             showTestOutput('Dry run running…', '');
             try {
-                const res = await fetch('/api/alerting/test/dry-run', { method: 'POST' });
+                const res = await fetchWrite('/api/alerting/test/dry-run', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok) {
                     const { description } = categorizeError(`HTTP ${res.status}`);
@@ -3032,7 +3056,7 @@
             btn.textContent = '⏳ Running…';
             showTestOutput('Full test running…', '');
             try {
-                const res = await fetch('/api/alerting/test/live', { method: 'POST' });
+                const res = await fetchWrite('/api/alerting/test/live', { method: 'POST' });
                 const data = await res.json();
                 const label = data.ok ? '✓ Test complete' : '✗ Test failed';
                 let out = data.output || '';
@@ -3059,7 +3083,7 @@
             btn.textContent = '⏳ Sending…';
             showTestOutput('Sending test notification…', '');
             try {
-                const res = await fetch('/api/alerting/test/notify', {
+                const res = await fetchWrite('/api/alerting/test/notify', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ severity }),

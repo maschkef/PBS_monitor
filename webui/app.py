@@ -6,12 +6,14 @@ import copy
 import io
 import json
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 import requests
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +43,95 @@ except ValueError:
     WEBUI_PORT = 5111
 WEBUI_READ_ONLY = os.environ.get("WEBUI_READ_ONLY", "").lower() in ("1", "true", "yes")
 FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+WEBUI_PASSWORD = os.environ.get("WEBUI_PASSWORD", "").strip()
+WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "").strip()
+
+
+def _configure_secret_key() -> str:
+    """Return the Flask secret key from environment, or a volatile fallback.
+
+    If WEBUI_PASSWORD is set (auth is active) but WEBUI_SECRET_KEY is not,
+    sessions will not survive a server restart.  A warning is printed so the
+    operator knows to set WEBUI_SECRET_KEY for a stable deployment.
+    """
+    if WEBUI_SECRET_KEY:
+        return WEBUI_SECRET_KEY
+    if WEBUI_PASSWORD:
+        print(
+            "[WARN] WEBUI_PASSWORD is set but WEBUI_SECRET_KEY is not. "
+            "Sessions will be invalidated on every restart. "
+            "Set WEBUI_SECRET_KEY to a random hex string for stable sessions.",
+            file=sys.stderr,
+        )
+    return secrets.token_hex(32)
+
+
+app.secret_key = _configure_secret_key()
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# Sentinel returned to the browser instead of actual secret values.
+# The frontend must submit this exact string back for the server to recognise
+# that the user did not change the secret (i.e., preserve the stored value).
+_TOKEN_SENTINEL = "***CONFIGURED***"
+
+
+def auth_enabled() -> bool:
+    """Return True when password-based authentication is configured."""
+    return bool(WEBUI_PASSWORD)
+
+
+def _get_or_create_csrf_token() -> str:
+    """Return the per-session CSRF token, creating it if necessary."""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+def require_auth(f):
+    """Decorator: redirect to /login (or return 401 for API routes) when auth is enabled."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not auth_enabled():
+            return f(*args, **kwargs)
+        if not session.get("authenticated"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_csrf(f):
+    """Decorator: validate X-CSRF-Token header for all state-changing routes.
+
+    Only enforced when auth is enabled (CSRF is only meaningful in a
+    session-authenticated context).
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not auth_enabled():
+            return f(*args, **kwargs)
+        token = request.headers.get("X-CSRF-Token", "")
+        expected = session.get("csrf_token", "")
+        if not token or not secrets.compare_digest(token, expected):
+            return jsonify({"error": "CSRF validation failed"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _redact_config(cfg: dict) -> dict:
+    """Return a copy of cfg safe for browser consumption.
+
+    Secrets are replaced with a sentinel so the frontend can distinguish
+    'token is configured' from 'token is empty' without the actual value
+    ever leaving the server.
+    """
+    redacted = dict(cfg)
+    redacted["ntfy_token_set"] = bool(redacted.get("ntfy_token"))
+    if redacted.get("ntfy_token"):
+        redacted["ntfy_token"] = _TOKEN_SENTINEL
+    return redacted
 
 
 def api_get(path, params=None):
@@ -494,12 +585,52 @@ def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, 
     }
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Login page — only active when WEBUI_PASSWORD is configured."""
+    if not auth_enabled():
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        # Validate the per-form nonce to prevent login-CSRF before checking
+        # the password. Constant-time compare for both checks.
+        form_nonce = request.form.get("_nonce", "")
+        session_nonce = session.get("login_nonce", "")
+        nonce_valid = bool(form_nonce) and bool(session_nonce) and secrets.compare_digest(
+            form_nonce, session_nonce
+        )
+        password_valid = secrets.compare_digest(
+            request.form.get("password", ""), WEBUI_PASSWORD
+        )
+        if nonce_valid and password_valid:
+            session.clear()
+            session["authenticated"] = True
+            session["csrf_token"] = secrets.token_hex(32)
+            return redirect(url_for("index"))
+        error = "Invalid password"
+
+    nonce = secrets.token_hex(16)
+    session["login_nonce"] = nonce
+    return render_template("login.html", error=error, nonce=nonce)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """Destroy the current session."""
+    session.clear()
+    return redirect(url_for("login") if auth_enabled() else url_for("index"))
+
+
 @app.route("/")
+@require_auth
 def index():
-    return render_template("index.html")
+    csrf_token = _get_or_create_csrf_token() if auth_enabled() else ""
+    return render_template("index.html", csrf_token=csrf_token, auth_enabled=auth_enabled())
 
 
 @app.route("/api/datastores/metrics")
+@require_auth
 def get_datastores_metrics():
     """Fetch frequently-changing datastore data for lightweight auto-refresh.
 
@@ -619,6 +750,7 @@ def get_datastores_metrics():
 
 
 @app.route("/api/datastores")
+@require_auth
 def get_datastores():
     """Fetch all datastores with full details."""
     rescale_range = request.args.get("rescale_range", "90d")
@@ -763,6 +895,8 @@ def get_datastores():
 
 
 @app.route("/api/alerting/group-rule", methods=["POST"])
+@require_auth
+@require_csrf
 def save_group_rule():
     guard = read_only_guard()
     if guard:
@@ -821,6 +955,8 @@ def save_group_rule():
 
 
 @app.route("/api/alerting/ignore-group", methods=["POST"])
+@require_auth
+@require_csrf
 def ignore_group():
     guard = read_only_guard()
     if guard:
@@ -875,6 +1011,8 @@ def ignore_group():
 
 
 @app.route("/api/alerting/unignore-group", methods=["POST"])
+@require_auth
+@require_csrf
 def unignore_group():
     """Remove a backup group from the ignored_groups list in config."""
     guard = read_only_guard()
@@ -911,6 +1049,7 @@ def unignore_group():
 
 
 @app.route("/api/webui/info")
+@require_auth
 def webui_info():
     """Return web UI metadata (read-only flag, paths) for the frontend."""
     # Detect Docker environment
@@ -925,13 +1064,16 @@ def webui_info():
 
 
 @app.route("/api/alerting/config")
+@require_auth
 def get_alerting_config():
-    """Return the current alerting configuration."""
+    """Return the current alerting configuration with secrets redacted."""
     cfg = load_visual_alerting_config()
-    return jsonify({"config": cfg, "read_only": WEBUI_READ_ONLY})
+    return jsonify({"config": _redact_config(cfg), "read_only": WEBUI_READ_ONLY})
 
 
 @app.route("/api/alerting/config", methods=["POST"])
+@require_auth
+@require_csrf
 def save_alerting_config():
     """Persist user-supplied changes to alerting/config.json."""
     guard = read_only_guard()
@@ -944,9 +1086,15 @@ def save_alerting_config():
         with open(ALERTING_CONFIG_PATH) as f:
             raw_config = json.load(f)
 
-    for key in ("ntfy_url", "ntfy_topic", "ntfy_token"):
+    for key in ("ntfy_url", "ntfy_topic"):
         if key in payload:
             raw_config[key] = str(payload[key])
+    # ntfy_token: only update when the user submitted a real value, not the
+    # redaction sentinel. Submitting an empty string clears the stored token.
+    if "ntfy_token" in payload:
+        submitted = str(payload["ntfy_token"])
+        if submitted != _TOKEN_SENTINEL:
+            raw_config["ntfy_token"] = submitted
 
     if "alert_cooldown_minutes" in payload:
         val = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
@@ -1008,6 +1156,8 @@ def save_alerting_config():
 
 
 @app.route("/api/alerting/test/dry-run", methods=["POST"])
+@require_auth
+@require_csrf
 def alerting_test_dry_run():
     """Simulate a full alerting run and return what would be sent — without sending."""
     alerting_config = load_visual_alerting_config()
@@ -1081,6 +1231,8 @@ def alerting_test_dry_run():
 
 
 @app.route("/api/alerting/test/live", methods=["POST"])
+@require_auth
+@require_csrf
 def alerting_test_live():
     """Run a real alerting check and send notifications via ntfy."""
     guard = read_only_guard()
@@ -1099,6 +1251,8 @@ def alerting_test_live():
 
 
 @app.route("/api/alerting/test/notify", methods=["POST"])
+@require_auth
+@require_csrf
 def alerting_test_notify():
     """Send a single test notification to verify the ntfy configuration."""
     guard = read_only_guard()
@@ -1157,6 +1311,7 @@ def alerting_test_notify():
 
 
 @app.route("/api/alerting/notification-log", methods=["GET"])
+@require_auth
 def get_notification_log():
     """Return the notification history log."""
     try:
@@ -1171,6 +1326,8 @@ def get_notification_log():
 
 
 @app.route("/api/alerting/notification-log", methods=["DELETE"])
+@require_auth
+@require_csrf
 def clear_notification_log():
     """Clear the notification history log."""
     guard = read_only_guard()
@@ -1185,6 +1342,7 @@ def clear_notification_log():
 
 
 @app.route("/api/health")
+@require_auth
 def get_health():
     """Proxy the platform health check."""
     try:
@@ -1195,6 +1353,7 @@ def get_health():
 
 
 @app.route("/api/datastores/<datastore_id>/backups")
+@require_auth
 def get_datastore_backups(datastore_id):
     """Fetch namespace-aware backup browsing data for a single datastore."""
     base_path = f"/monitoring/v1/datastores/{datastore_id}/backups"
@@ -1262,6 +1421,7 @@ def get_datastore_backups(datastore_id):
 
 
 @app.route("/api/platform-stats")
+@require_auth
 def get_platform_stats():
     """Fetch public platform statistics."""
     stats = {}

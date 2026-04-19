@@ -40,3 +40,5 @@ new_remote-backupscom-reseller-api.yaml
 remote-backupscom-monitoring-api.yaml
 
 docker-test/*
+temp/*
+TODO.md
