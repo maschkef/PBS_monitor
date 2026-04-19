@@ -16,15 +16,18 @@ Cron example (every 5 minutes):
 """
 
 import argparse
+import ipaddress
 import json
 import shutil
 import os
 import signal
+import socket
 import statistics
 import sys
 import time
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -1891,6 +1894,44 @@ def append_notification_log(log_path, entry):
         print(f"  [WARN] Could not write notification log: {exc}", file=sys.stderr)
 
 
+_PRIVATE_NETWORKS_MONITOR = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _validate_ntfy_url_monitor(url: str) -> None:
+    """Raise ValueError if url is not a safe, public http/https endpoint."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise ValueError("Invalid ntfy URL.")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("ntfy URL must use http or https.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("ntfy URL must contain a hostname.")
+    try:
+        results = socket.getaddrinfo(hostname, None)
+    except OSError:
+        raise ValueError("ntfy URL hostname could not be resolved.")
+    for _family, _type, _proto, _canonname, sockaddr in results:
+        raw_addr = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(raw_addr)
+        except ValueError:
+            continue
+        for net in _PRIVATE_NETWORKS_MONITOR:
+            if addr in net:
+                raise ValueError("ntfy URL must not point to a private or reserved address.")
+
+
 def send_ntfy(config, alert):
     """Send a single alert via ntfy."""
     # Check if ntfy is configured - don't send to external services without user configuration
@@ -1911,6 +1952,12 @@ def send_ntfy(config, alert):
     }
     if config.get("ntfy_token"):
         headers["Authorization"] = f"Bearer {config['ntfy_token']}"
+
+    try:
+        _validate_ntfy_url_monitor(ntfy_url)
+    except ValueError as exc:
+        print(f"  [ERROR] ntfy URL rejected (SSRF guard): {exc}", file=sys.stderr)
+        return False
 
     url = f"{ntfy_url}/{ntfy_topic}"
     try:

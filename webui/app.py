@@ -4,16 +4,22 @@
 import contextlib
 import copy
 import io
+import ipaddress
 import json
+import logging
 import os
 import secrets
+import socket
 import sys
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +31,18 @@ from alerting import monitor as alert_monitor  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
 
 app = Flask(__name__)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per minute"],
+    storage_uri="memory://",
+)
+
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({"error": "Rate limit exceeded. Please slow down."}), 429
 
 API_BASE = "https://api.remote-backups.com"
 API_KEY = os.environ.get("API_KEY", "")
@@ -70,15 +88,103 @@ app.secret_key = _configure_secret_key()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
+
+@app.after_request
+def add_security_headers(response):
+    """Inject security headers on every response."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none';"
+    )
+    return response
+
+
 # Sentinel returned to the browser instead of actual secret values.
 # The frontend must submit this exact string back for the server to recognise
 # that the user did not change the secret (i.e., preserve the stored value).
 _TOKEN_SENTINEL = "***CONFIGURED***"
 
+# ── Audit logging ─────────────────────────────────────────────────────────────
+_AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", "").strip()
+_audit_logger = logging.getLogger("pbs_monitor.audit")
+_audit_logger.setLevel(logging.INFO)
+_audit_logger.propagate = False
+if _AUDIT_LOG_PATH:
+    _audit_handler: logging.Handler = logging.FileHandler(_AUDIT_LOG_PATH, encoding="utf-8")
+else:
+    _audit_handler = logging.StreamHandler(sys.stderr)
+_audit_handler.setFormatter(logging.Formatter("%(message)s"))
+_audit_logger.addHandler(_audit_handler)
+
+
+def _audit(action: str, **kwargs) -> None:
+    """Emit a structured JSON audit log line for a security-relevant event."""
+    record: dict = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "remote_addr": request.remote_addr,
+        "user_agent": (request.headers.get("User-Agent", "") or "")[:200],
+    }
+    record.update(kwargs)
+    _audit_logger.info(json.dumps(record, separators=(",", ":")))
+
 
 def auth_enabled() -> bool:
     """Return True when password-based authentication is configured."""
     return bool(WEBUI_PASSWORD)
+
+
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _validate_ntfy_url(url: str) -> None:
+    """Raise ValueError if url is not a safe, public http/https endpoint.
+
+    Prevents SSRF by rejecting loopback, link-local, private-range, and
+    cloud-metadata addresses as well as non-http/https schemes.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise ValueError("Invalid ntfy URL.")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("ntfy URL must use http or https.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("ntfy URL must contain a hostname.")
+    try:
+        results = socket.getaddrinfo(hostname, None)
+    except OSError:
+        raise ValueError("ntfy URL hostname could not be resolved.")
+    for _family, _type, _proto, _canonname, sockaddr in results:
+        raw_addr = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(raw_addr)
+        except ValueError:
+            continue
+        for net in _PRIVATE_NETWORKS:
+            if addr in net:
+                raise ValueError("ntfy URL must not point to a private or reserved address.")
 
 
 def _get_or_create_csrf_token() -> str:
@@ -586,6 +692,7 @@ def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, 
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def login():
     """Login page — only active when WEBUI_PASSWORD is configured."""
     if not auth_enabled():
@@ -607,7 +714,9 @@ def login():
             session.clear()
             session["authenticated"] = True
             session["csrf_token"] = secrets.token_hex(32)
+            _audit("login_success")
             return redirect(url_for("index"))
+        _audit("login_failure")
         error = "Invalid password"
 
     nonce = secrets.token_hex(16)
@@ -618,6 +727,7 @@ def login():
 @app.route("/logout", methods=["POST"])
 def logout():
     """Destroy the current session."""
+    _audit("logout")
     session.clear()
     return redirect(url_for("login") if auth_enabled() else url_for("index"))
 
@@ -897,6 +1007,7 @@ def get_datastores():
 @app.route("/api/alerting/group-rule", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("30 per minute")
 def save_group_rule():
     guard = read_only_guard()
     if guard:
@@ -947,6 +1058,7 @@ def save_group_rule():
     })
     group_rules["groups"][rule_key] = alert_monitor.normalize_group_rule(rule)
     alert_monitor.save_group_rules(group_rules)
+    _audit("group_rule_save", rule_key=rule_key, locked=rule.get("locked"), schedule_kind=schedule_kind)
     return jsonify({
         "ok": True,
         "rule_key": rule_key,
@@ -957,6 +1069,7 @@ def save_group_rule():
 @app.route("/api/alerting/ignore-group", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("30 per minute")
 def ignore_group():
     guard = read_only_guard()
     if guard:
@@ -1003,6 +1116,8 @@ def ignore_group():
         del group_rules["groups"][rule_key]
         alert_monitor.save_group_rules(group_rules)
 
+    rule_key_ig = alert_monitor.make_rule_key(datastore_id, namespace, backup_type, backup_id)
+    _audit("ignore_group", rule_key=rule_key_ig, already_existed=already_exists)
     return jsonify({
         "ok": True,
         "ignored_group": ignored_group,
@@ -1013,6 +1128,7 @@ def ignore_group():
 @app.route("/api/alerting/unignore-group", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("30 per minute")
 def unignore_group():
     """Remove a backup group from the ignored_groups list in config."""
     guard = read_only_guard()
@@ -1045,7 +1161,10 @@ def unignore_group():
     with open(ALERTING_CONFIG_PATH, "w") as f:
         json.dump(raw_config, f, indent=2)
 
-    return jsonify({"ok": True, "removed": len(normalized) - len(new_list)})
+    removed_count = len(normalized) - len(new_list)
+    rule_key_un = alert_monitor.make_rule_key(datastore_id, namespace, backup_type, backup_id)
+    _audit("unignore_group", rule_key=rule_key_un, removed_count=removed_count)
+    return jsonify({"ok": True, "removed": removed_count})
 
 
 @app.route("/api/webui/info")
@@ -1074,6 +1193,7 @@ def get_alerting_config():
 @app.route("/api/alerting/config", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("30 per minute")
 def save_alerting_config():
     """Persist user-supplied changes to alerting/config.json."""
     guard = read_only_guard()
@@ -1152,12 +1272,15 @@ def save_alerting_config():
     with open(ALERTING_CONFIG_PATH, "w") as f:
         json.dump(raw_config, f, indent=2)
 
+    changed_keys = [k for k in payload if k != "ntfy_token"]
+    _audit("config_save", changed_keys=changed_keys)
     return jsonify({"ok": True})
 
 
 @app.route("/api/alerting/test/dry-run", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("5 per minute")
 def alerting_test_dry_run():
     """Simulate a full alerting run and return what would be sent — without sending."""
     alerting_config = load_visual_alerting_config()
@@ -1233,6 +1356,7 @@ def alerting_test_dry_run():
 @app.route("/api/alerting/test/live", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("5 per minute")
 def alerting_test_live():
     """Run a real alerting check and send notifications via ntfy."""
     guard = read_only_guard()
@@ -1245,6 +1369,7 @@ def alerting_test_live():
     try:
         with contextlib.redirect_stdout(output):
             alert_monitor.run_check(config, state)
+        _audit("test_live")
         return jsonify({"ok": True, "output": output.getvalue()})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "output": output.getvalue()}), 500
@@ -1253,6 +1378,7 @@ def alerting_test_live():
 @app.route("/api/alerting/test/notify", methods=["POST"])
 @require_auth
 @require_csrf
+@limiter.limit("5 per minute")
 def alerting_test_notify():
     """Send a single test notification to verify the ntfy configuration."""
     guard = read_only_guard()
@@ -1271,6 +1397,11 @@ def alerting_test_notify():
 
     if not ntfy_url or not ntfy_topic:
         return jsonify({"ok": False, "error": "ntfy_url and ntfy_topic must be configured."}), 400
+
+    try:
+        _validate_ntfy_url(ntfy_url)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
     prio_cfg = config.get("notification_priorities", {})
     default_prio = 4 if severity == "warning" else 5
@@ -1304,6 +1435,7 @@ def alerting_test_notify():
             "datastore_name": None,
             "alert_key": None,
         })
+        _audit("test_notify", severity=severity)
         return jsonify({"ok": True, "url": url, "priority": priority})
     except requests.RequestException as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
@@ -1328,6 +1460,7 @@ def get_notification_log():
 @app.route("/api/alerting/notification-log", methods=["DELETE"])
 @require_auth
 @require_csrf
+@limiter.limit("30 per minute")
 def clear_notification_log():
     """Clear the notification history log."""
     guard = read_only_guard()
@@ -1336,6 +1469,7 @@ def clear_notification_log():
     try:
         with open(ALERTING_LOG_PATH, "w") as f:
             json.dump([], f)
+        _audit("notification_log_clear")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
