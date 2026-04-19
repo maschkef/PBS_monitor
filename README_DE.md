@@ -83,8 +83,9 @@ Ein grafisches Dashboard um den Status aller Datastores auf einen Blick zu prüf
 - **Immutable Backup & Replication Status**
 - **Backup Browser** — PBS-Namespaces, spezifische Backup-Gruppen, Snapshots und andere Protokolle (rsync, sftp, zfs-recv) direkt in der UI durchsuchen; jeder Snapshot zeigt seinen Verifikationsstatus (verified / verify failed / unverified)
 - **Alerting-Konfiguration** — wenn das Alerting-System aktiv ist, bietet die Web UI eine vollständige Oberfläche zur Konfiguration aller Alerting-Einstellungen: Zeitpläne, Schwellwerte, ignorierte Gruppen, ntfy-Einstellungen, Ruhezeiten und mehr
-- **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden
-- **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten
+- **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden; Intervall-Schedules unterstützen eine optionale Ankerzeit (z. B. `06:00` → Backups erwartet um 06:00, 08:00, 10:00 …)
+- **Nächstes Backup** — jede Backup-Gruppe im Alerting-Panel zeigt den berechneten nächsten erwarteten Backup-Zeitpunkt basierend auf dem aktiven Schedule
+- **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten; ignorierte Gruppen werden in einer ausklappbaren Liste angezeigt und können jederzeit reaktiviert werden (Unignore)
 - **Rescale-History** — Timeline der letzten 90 Tage (Autoscaling-Events, manuelle Resizes)
 - **Visuelles Alerting** — aktuelle Alarmzustände und gelernte Backup-Fenster direkt im Dashboard
 - **Platform-Stats** — Gesamtspeicher, Backup-Count und Traffic der Plattform
@@ -133,8 +134,8 @@ auf einem Server per Cron laufen kann.
 - **Totalausfall-Erkennung** — Sofort-Alarm wenn Backup-Browser und Aggregat-Metrik gemeinsam auf 0 fallen
 - **Gelernte Backup-Fenster** — leitet konservative Wochentag-/Zeit-Slots pro Backup-Gruppe aus beobachteten Snapshots ab
 - **Missed-Backup-Alerts** — warnt bei verpassten gelernten Backup-Fenstern und behandelt manuelle Off-Schedule-Läufe als Ausreißer
-- **Gesperrte Gruppenregeln** — manuelle Zeitpläne können das Lernen für einzelne Backup-Gruppen übersteuern
-- **Ignorierte Gruppen** — Backup-Gruppen können über die UI oder Konfiguration komplett vom Monitoring ausgeschlossen werden
+- **Gesperrte Gruppenregeln** — manuelle Zeitpläne können das Lernen für einzelne Backup-Gruppen übersteuern; Intervall-Schedules akzeptieren eine optionale Ankerzeit (HH:MM), sodass die Erwartung an einem festen Startzeitpunkt ausgerichtet ist statt am letzten beobachteten Backup
+- **Ignorierte Gruppen** — Backup-Gruppen können über die UI oder Konfiguration komplett vom Monitoring ausgeschlossen und jederzeit über die Web UI wieder reaktiviert werden
 - **Replication-Lag-Alerts** — warnt wenn eine konfigurierte Replikation deutlich hinterherhängt
 - **Host-Offline-Erkennung** — Alert wenn der Server nicht erreichbar ist
 - **Immutable Backup Warnung** — Alert bei pending Disable-Request
@@ -270,7 +271,7 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `schedule_learning.due_grace_minutes` | Wie lange ein gelerntes Backup-Fenster verspätet sein darf, bevor ein Alert erzeugt wird. Standard: `30` |
 | `schedule_learning.stale_after_days` | Zusätzliche Tage über die normale wöchentliche Slot-Kadenz hinaus, bevor ein gelernter Slot als veraltet gilt |
 | `alert_cooldown_minutes` | Mindestzeit zwischen wiederholten Alerts gleichen Typs |
-| `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon` oder Docker-Container, Sekunden, Standard: 1800) |
+| `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon` oder Docker-Container, Sekunden, Standard: 1800). In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
 
 Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` oder der Shell):
 
@@ -302,7 +303,7 @@ Die Monitoring API ist read-only. Sie liefert inzwischen live PBS-Namespaces, Ba
 Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace und Gruppe und lernt daraus konservative Wochentag-/Zeit-Slots oder kurze Intervalle. Aktuell kann das Backup-Alerting erkennen:
 - ✅ Ob alle sichtbaren PBS-Backups verschwunden sind
 - ✅ Ob ein gelerntes wiederkehrendes Backup-Fenster für eine bestimmte Backup-Gruppe verpasst wurde
-- ✅ Häufige wiederkehrende Backups wie alle 2 Stunden per Intervall-Erkennung
+- ✅ Häufige wiederkehrende Backups wie alle 2 Stunden per Intervall-Erkennung — mit optionaler fester Ankerzeit für ausgerichtete Slot-Erkennung (z. B. `06:00` + alle 2 h → 06:00, 08:00, 10:00 …)
 - ✅ Täglich wiederkehrende Backups als eigener editierbarer Schedule-Typ
 - ✅ Off-Schedule-Snapshots am selben Tag als Kontext, ohne sie als Beweis für einen erfolgreichen geplanten Lauf zu werten
 - ❌ Komplexere Rhythmen wie monatliche, zweiwöchentliche oder wirklich unregelmäßige Schedules

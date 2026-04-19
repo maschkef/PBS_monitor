@@ -339,6 +339,7 @@ def serialize_schedule_model(schedule_model):
         "status": schedule_model.get("status", "unconfigured"),
         "timezone": schedule_model.get("timezone"),
         "interval_minutes": schedule_model.get("interval_minutes"),
+        "interval_anchor_minute": schedule_model.get("interval_anchor_minute"),
         "interval_human": schedule_model.get("interval_human"),
         "slot_count": schedule_model.get("slot_count", 0),
         "active_slot_count": schedule_model.get("active_slot_count", 0),
@@ -357,8 +358,11 @@ def serialize_schedule_model(schedule_model):
     }
 
 
-def collect_schedule_groups(ds_state):
+def collect_schedule_groups(ds_state, tzinfo=None):
     """Collect schedule information for all backup groups in one datastore."""
+    if tzinfo is None:
+        tzinfo = datetime.now().astimezone().tzinfo
+
     group_alert_counts = {}
     for alert in ds_state.get("active_group_alerts") or []:
         rule_key = alert.get("group_rule_key")
@@ -373,6 +377,10 @@ def collect_schedule_groups(ds_state):
             group_rule,
             (group_state.get("schedule_model") or {}).get("timezone") or "local",
         )
+        effective_model = group_state.get("schedule_model") or {}
+        next_expected_at = alert_monitor.compute_next_expected_backup(
+            group_state, effective_model, tzinfo
+        )
         groups.append({
             "rule_key": group_state.get("group_rule_key"),
             "label": group_state.get("display_name") or f"{group_state.get('backup_type')}/{group_state.get('backup_id')}",
@@ -381,10 +389,11 @@ def collect_schedule_groups(ds_state):
             "backup_type": group_state.get("backup_type"),
             "backup_id": group_state.get("backup_id"),
             "last_backup_at": group_state.get("last_backup_at"),
+            "next_expected_at": next_expected_at,
             "locked": bool(group_rule.get("locked")),
             "group_alert_count": group_alert_counts.get(group_state.get("group_rule_key"), 0),
             "group_rule": group_rule,
-            "effective_schedule": serialize_schedule_model(group_state.get("schedule_model") or {}),
+            "effective_schedule": serialize_schedule_model(effective_model),
             "learned_schedule": serialize_schedule_model(group_state.get("learned_schedule_model") or {}),
             "configured_schedule": serialize_schedule_model(configured_schedule),
         })
@@ -436,6 +445,36 @@ def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, 
         if alert.get("scope") == "group" and alert.get("group_rule_key")
     ]
 
+    tzinfo = alert_monitor.get_schedule_timezone(alerting_config)
+    ds_id = detail.get("id", "")
+
+    # Build a lookup of display names from the current backup-group state
+    _bg_display_names = {}
+    for group_state in (ds_state.get("backup_groups") or {}).values():
+        rk = alert_monitor.make_rule_key(
+            ds_id,
+            group_state.get("namespace"),
+            group_state.get("backup_type"),
+            group_state.get("backup_id"),
+        )
+        if group_state.get("display_name"):
+            _bg_display_names[rk] = group_state["display_name"]
+
+    ds_ignored_groups = []
+    for ig in (alerting_config.get("ignored_groups") or []):
+        if ig.get("datastore_id") != ds_id:
+            continue
+        enriched_ig = dict(ig)
+        if not enriched_ig.get("display_name"):
+            lookup_key = alert_monitor.make_rule_key(
+                ds_id,
+                ig.get("namespace"),
+                ig.get("backup_type"),
+                ig.get("backup_id"),
+            )
+            enriched_ig["display_name"] = _bg_display_names.get(lookup_key)
+        ds_ignored_groups.append(enriched_ig)
+
     return {
         "health": priority_to_health(max_priority),
         "alerts": serialized_alerts,
@@ -445,10 +484,11 @@ def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, 
         "inventory_error": inventory_error,
         "state_source": "persisted" if ALERTING_STATE_PATH.exists() else "ephemeral",
         "rules_source": rules_source,
+        "ignored_groups": ds_ignored_groups,
         "schedule_learning": {
             "learned_group_count": schedule_summary.get("learned_group_count", 0),
             "active_slot_count": schedule_summary.get("active_slot_count", 0),
-            "groups": collect_schedule_groups(ds_state),
+            "groups": collect_schedule_groups(ds_state, tzinfo=tzinfo),
         },
     }
 
@@ -766,6 +806,7 @@ def save_group_rule():
         "daily_slots": daily_slots if schedule_kind == "daily" else [],
         "weekly_slots": weekly_slots if schedule_kind == "weekly" else [],
         "interval_minutes": interval_minutes if schedule_kind == "interval" else None,
+        "interval_anchor_minute": alert_monitor.coerce_int(payload.get("interval_anchor_minute")) if schedule_kind == "interval" else None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": "user",
     })
@@ -802,6 +843,7 @@ def ignore_group():
         "namespace": namespace,
         "backup_type": backup_type,
         "backup_id": backup_id,
+        "display_name": payload.get("display_name") or None,
     }
     normalized_ignored_groups = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
     already_exists = any(
@@ -829,6 +871,42 @@ def ignore_group():
         "ignored_group": ignored_group,
         "already_exists": already_exists,
     })
+
+
+@app.route("/api/alerting/unignore-group", methods=["POST"])
+def unignore_group():
+    """Remove a backup group from the ignored_groups list in config."""
+    guard = read_only_guard()
+    if guard:
+        return guard
+    payload = request.get_json(silent=True) or {}
+    datastore_id = payload.get("datastore_id") or ""
+    namespace = payload.get("namespace") or ""
+    backup_type = payload.get("backup_type") or ""
+    backup_id = str(payload.get("backup_id", ""))
+    if not datastore_id or not backup_type or not backup_id:
+        return jsonify({"error": "Missing datastore_id, backup_type or backup_id."}), 400
+
+    raw_config = {}
+    if ALERTING_CONFIG_PATH.exists():
+        with open(ALERTING_CONFIG_PATH) as f:
+            raw_config = json.load(f)
+
+    normalized = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
+    new_list = [
+        ig for ig in normalized
+        if not (
+            (ig.get("datastore_id") or "") == datastore_id
+            and (ig.get("namespace") or "") == namespace
+            and (ig.get("backup_type") or "") == backup_type
+            and (ig.get("backup_id") or "") == backup_id
+        )
+    ]
+    raw_config["ignored_groups"] = new_list
+    with open(ALERTING_CONFIG_PATH, "w") as f:
+        json.dump(raw_config, f, indent=2)
+
+    return jsonify({"ok": True, "removed": len(normalized) - len(new_list)})
 
 
 @app.route("/api/webui/info")

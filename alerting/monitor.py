@@ -200,6 +200,10 @@ def normalize_group_rule(raw_rule):
     if interval_minutes is not None and interval_minutes <= 0:
         interval_minutes = None
 
+    interval_anchor_minute = coerce_int(raw_rule.get("interval_anchor_minute"))
+    if interval_anchor_minute is not None and not (0 <= interval_anchor_minute <= 1439):
+        interval_anchor_minute = None
+
     return {
         "datastore_id": raw_rule.get("datastore_id") or "",
         "namespace": raw_rule.get("namespace") or "",
@@ -212,6 +216,7 @@ def normalize_group_rule(raw_rule):
         "daily_slots": normalize_daily_slots(raw_rule.get("daily_slots")),
         "weekly_slots": normalize_weekly_slots(raw_rule.get("weekly_slots")),
         "interval_minutes": interval_minutes,
+        "interval_anchor_minute": interval_anchor_minute,
         "updated_at": raw_rule.get("updated_at"),
         "updated_by": raw_rule.get("updated_by") or "learning",
     }
@@ -227,16 +232,19 @@ def normalize_ignored_group(raw_group):
         "namespace": None,
         "backup_type": None,
         "backup_id": None,
+        "display_name": None,
     }
-    for key in normalized:
+    for key in ("datastore_id", "namespace", "backup_type", "backup_id"):
         if key not in raw_group:
             continue
         value = raw_group.get(key)
         if value is None:
             continue
         normalized[key] = str(value)
-    if all(value is None for value in normalized.values()):
+    if all(normalized[k] is None for k in ("datastore_id", "namespace", "backup_type", "backup_id")):
         return None
+    if raw_group.get("display_name"):
+        normalized["display_name"] = str(raw_group["display_name"])
     return normalized
 
 
@@ -740,6 +748,7 @@ def build_schedule_model_from_rule(rule, fallback_timezone):
             "slot_count": 1,
             "active_slot_count": 1,
             "interval_minutes": rule["interval_minutes"],
+            "interval_anchor_minute": rule.get("interval_anchor_minute"),
             "interval_human": format_interval_minutes(rule["interval_minutes"]),
             "last_observed_at": None,
             "sample_count": 0,
@@ -957,6 +966,65 @@ def format_interval_minutes(interval_minutes):
     if hours:
         return f"every {hours}h"
     return f"every {minutes}m"
+
+
+def compute_anchor_aligned_due(anchor_minute, interval_minutes, now_local):
+    """Return the most recently due anchor-aligned interval time before or at now."""
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    anchor_dt = day_start + timedelta(minutes=anchor_minute)
+    # If the anchor today is still in the future, go back one day
+    if anchor_dt > now_local:
+        anchor_dt -= timedelta(days=1)
+    delta_minutes = (now_local - anchor_dt).total_seconds() / 60
+    k = int(delta_minutes // interval_minutes)
+    return anchor_dt + timedelta(minutes=k * interval_minutes)
+
+
+def compute_next_expected_backup(group_state, schedule_model, tzinfo):
+    """Return an ISO string for the next expected backup time, or None."""
+    if not schedule_model_has_definition(schedule_model):
+        return None
+
+    now_local = datetime.now(tzinfo)
+
+    if schedule_model.get("kind") == "interval" and schedule_model.get("interval_minutes"):
+        interval_minutes = schedule_model["interval_minutes"]
+        anchor_minute = schedule_model.get("interval_anchor_minute")
+
+        if anchor_minute is not None:
+            due_dt = compute_anchor_aligned_due(anchor_minute, interval_minutes, now_local)
+            return (due_dt + timedelta(minutes=interval_minutes)).isoformat()
+
+        last_backup_at = group_state.get("last_backup_at")
+        if not last_backup_at:
+            return None
+        last_backup_dt = parse_iso(last_backup_at).astimezone(tzinfo)
+        return (last_backup_dt + timedelta(minutes=interval_minutes)).isoformat()
+
+    if schedule_model.get("kind") in ("daily", "weekly"):
+        next_dt = None
+        for slot in schedule_model.get("slots") or []:
+            if slot.get("status") != "active":
+                continue
+            due_time = dt_time(slot["minute_of_day"] // 60, slot["minute_of_day"] % 60)
+            if schedule_model["kind"] == "daily":
+                candidate = datetime.combine(now_local.date(), due_time, tzinfo=now_local.tzinfo)
+                if candidate <= now_local:
+                    candidate += timedelta(days=1)
+            else:
+                days_until = (slot["weekday"] - now_local.weekday()) % 7
+                candidate = datetime.combine(
+                    now_local.date() + timedelta(days=days_until),
+                    due_time,
+                    tzinfo=now_local.tzinfo,
+                )
+                if candidate <= now_local:
+                    candidate += timedelta(weeks=1)
+            if next_dt is None or candidate < next_dt:
+                next_dt = candidate
+        return next_dt.isoformat() if next_dt else None
+
+    return None
 
 
 def detect_interval_schedule(occurrences, config, now_local, tzinfo):
@@ -1225,17 +1293,43 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
 
     alerts = []
     if schedule_model.get("kind") == "interval" and schedule_model.get("interval_minutes"):
-        latest_occurrence = max(occurrences, key=lambda item: item["local_dt"], default=None)
-        if latest_occurrence:
-            due_dt_local = latest_occurrence["local_dt"] + timedelta(minutes=schedule_model["interval_minutes"])
-            if now_local > due_dt_local + timedelta(minutes=due_grace_minutes):
-                alerts.append(build_missed_interval_alert(
-                    ds,
-                    group_state,
-                    schedule_model,
-                    now_local,
-                    latest_occurrence["local_dt"],
-                ))
+        interval_minutes = schedule_model["interval_minutes"]
+        anchor_minute = schedule_model.get("interval_anchor_minute")
+
+        if anchor_minute is not None:
+            # Anchor-based interval: find the most recently due aligned time
+            due_dt = compute_anchor_aligned_due(anchor_minute, interval_minutes, now_local)
+            if now_local > due_dt + timedelta(minutes=due_grace_minutes):
+                window_start = due_dt - timedelta(minutes=tolerance_minutes)
+                window_end = due_dt + timedelta(minutes=due_grace_minutes)
+                matching_occurrence = next(
+                    (
+                        occurrence
+                        for occurrence in occurrences
+                        if window_start <= occurrence["local_dt"] <= window_end
+                    ),
+                    None,
+                )
+                if not matching_occurrence:
+                    last_local = max(
+                        (o["local_dt"] for o in occurrences),
+                        default=now_local,
+                    )
+                    alerts.append(build_missed_interval_alert(
+                        ds, group_state, schedule_model, now_local, last_local,
+                    ))
+        else:
+            latest_occurrence = max(occurrences, key=lambda item: item["local_dt"], default=None)
+            if latest_occurrence:
+                due_dt_local = latest_occurrence["local_dt"] + timedelta(minutes=interval_minutes)
+                if now_local > due_dt_local + timedelta(minutes=due_grace_minutes):
+                    alerts.append(build_missed_interval_alert(
+                        ds,
+                        group_state,
+                        schedule_model,
+                        now_local,
+                        latest_occurrence["local_dt"],
+                    ))
         return alerts
 
     if schedule_model.get("kind") == "daily":

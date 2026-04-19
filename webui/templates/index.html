@@ -599,6 +599,23 @@
         .toggle input:checked + .toggle-slider { background: var(--blue); }
         .toggle input:checked + .toggle-slider:before { transform: translateX(16px); }
 
+        /* ── Inline expand arrow for learned-group details ─── */
+        .learned-group > summary {
+            list-style: none;
+            cursor: pointer;
+        }
+        .learned-group > summary::-webkit-details-marker { display: none; }
+        .toggle-arrow {
+            display: inline-block;
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            margin-right: 0.3rem;
+            transition: transform 0.15s;
+            user-select: none;
+            vertical-align: middle;
+        }
+        details[open] > summary .toggle-arrow { transform: rotate(90deg); }
+
         .footer {
             text-align: center;
             padding: 2rem;
@@ -1254,9 +1271,9 @@
             <input type="number" id="cfg-cooldown" min="0" step="1">
           </div>
           <div class="form-group">
-            <label>Daemon Interval (seconds)</label>
-            <input type="number" id="cfg-daemon-interval" min="60" step="60" placeholder="1800">
-            <small>How often the alerting daemon checks for issues (minimum 60 seconds)</small>
+            <label>Daemon Interval (minutes)</label>
+            <input type="number" id="cfg-daemon-interval" min="1" step="1" placeholder="30">
+            <small>How often the alerting daemon checks for issues (minimum 1 minute)</small>
           </div>
         </div>
 
@@ -2000,6 +2017,11 @@
                 ? configured.weekly_slots.map(slot => `${slot.weekday_name} ${slot.time}`).join(', ')
                 : scheduleSlotsToInput(effective);
             const intervalValue = configured.interval_minutes || effective.interval_minutes || '';
+            const intervalAnchorValue = configured.interval_anchor_minute != null
+                ? `${String(Math.floor(configured.interval_anchor_minute / 60)).padStart(2, '0')}:${String(configured.interval_anchor_minute % 60).padStart(2, '0')}`
+                : (effective.interval_anchor_minute != null
+                    ? `${String(Math.floor(effective.interval_anchor_minute / 60)).padStart(2, '0')}:${String(effective.interval_anchor_minute % 60).padStart(2, '0')}`
+                    : '');
             const timezoneValue = configured.timezone || effective.timezone || 'local';
             const isExpanded = group.group_alert_count > 0;
             const compactSummary = [
@@ -2007,12 +2029,13 @@
                 { label: 'Configured', value: configuredText },
                 { label: 'Learned', value: learnedText },
                 { label: 'Last Backup', value: formatDate(group.last_backup_at) },
+                { label: 'Next Backup', value: group.next_expected_at ? formatDate(group.next_expected_at) : '—' },
             ].map(item => `<div class="learned-group-compact-item"><div class="learned-group-compact-label">${item.label}</div><div class="learned-group-compact-value">${item.value}</div></div>`).join('');
 
             return `<details class="learned-group" ${isExpanded ? 'open' : ''}>
                 <summary>
                     <div class="browser-summary-line">
-                        <span class="learned-group-title">${group.label}</span>
+                        <span class="learned-group-title"><span class="toggle-arrow">&#9658;</span>${group.label}</span>
                         <div class="browser-pills">
                             <span class="browser-pill">namespace ${group.namespace}</span>
                             ${group.group_alert_count ? `<span class="browser-pill">${group.group_alert_count} alerts</span>` : ''}
@@ -2049,6 +2072,10 @@
                         <input id="interval-${domId}" class="header-select" style="width:120px;" type="number" min="1" step="1" value="${intervalValue}">
                     </div>
                     <div class="status-row">
+                        <span class="status-label">Interval Start (HH:MM)</span>
+                        <input id="interval-start-${domId}" class="header-select" style="width:120px;" value="${intervalAnchorValue}" placeholder="06:00" title="Optional start/anchor time for the interval (e.g. 06:00 → backups at 06:00, 08:00, …)">
+                    </div>
+                    <div class="status-row">
                         <span class="status-label">Timezone</span>
                         <input id="timezone-${domId}" class="header-select" style="min-width:180px;" value="${timezoneValue}">
                     </div>
@@ -2082,6 +2109,7 @@
             document.getElementById(`timezone-${domId}`).value = learned.timezone || 'local';
             if (learned.kind === 'interval') {
                 document.getElementById(`interval-${domId}`).value = learned.interval_minutes || '';
+                document.getElementById(`interval-start-${domId}`).value = '';
                 document.getElementById(`daily-${domId}`).value = '';
                 document.getElementById(`weekly-${domId}`).value = '';
             } else if (learned.kind === 'daily') {
@@ -2102,6 +2130,24 @@
             const dailyText = document.getElementById(`daily-${meta.domId}`).value;
             const weeklyText = document.getElementById(`weekly-${meta.domId}`).value;
             const intervalValue = document.getElementById(`interval-${meta.domId}`).value;
+            const intervalStartText = document.getElementById(`interval-start-${meta.domId}`).value.trim();
+
+            // Parse interval anchor time (HH:MM → minute_of_day)
+            let intervalAnchorMinute = null;
+            if (kind === 'interval' && intervalStartText) {
+                const anchorMatch = intervalStartText.match(/^(\d{1,2}):(\d{2})$/);
+                if (!anchorMatch) {
+                    window.alert(`Invalid Interval Start time: "${intervalStartText}". Expected HH:MM (e.g. 06:00).`);
+                    return;
+                }
+                const anchorH = Number(anchorMatch[1]);
+                const anchorM = Number(anchorMatch[2]);
+                if (anchorH > 23 || anchorM > 59) {
+                    window.alert(`Invalid Interval Start time: "${intervalStartText}".`);
+                    return;
+                }
+                intervalAnchorMinute = anchorH * 60 + anchorM;
+            }
 
             let dailySlots = [];
             try {
@@ -2131,6 +2177,7 @@
                 daily_slots: dailySlots,
                 weekly_slots: weeklySlots,
                 interval_minutes: intervalValue ? Number(intervalValue) : null,
+                interval_anchor_minute: intervalAnchorMinute,
             };
 
             const response = await fetch('/api/alerting/group-rule', {
@@ -2160,6 +2207,7 @@
                     namespace: meta.namespace,
                     backup_type: meta.backup_type,
                     backup_id: meta.backup_id,
+                    display_name: meta.display_name,
                 }),
             });
             const data = await response.json();
@@ -2168,6 +2216,57 @@
                 return;
             }
             await loadAll();
+        }
+
+        async function unignoreGroup(meta) {
+            const label = meta.backup_id ? `${meta.backup_type}/${meta.backup_id}` : meta.backup_type;
+            const confirmed = window.confirm(`Re-enable alerting for backup group "${label}"?`);
+            if (!confirmed) return;
+            const response = await fetch('/api/alerting/unignore-group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    datastore_id: meta.datastore_id,
+                    namespace: meta.namespace,
+                    backup_type: meta.backup_type,
+                    backup_id: meta.backup_id,
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                window.alert(data.error || 'Failed to unignore group');
+                return;
+            }
+            await loadAll();
+        }
+
+        function renderIgnoredGroups(dsId, ignoredGroups) {
+            if (!ignoredGroups || !ignoredGroups.length) return '';
+            const items = ignoredGroups.map(ig => {
+                const techId = `${ig.backup_type || '?'}/${ig.backup_id || '?'}`;
+                const niceName = ig.display_name || techId;
+                const ns = ig.namespace || 'root';
+                const subtitle = ig.display_name ? techId : null;
+                return `<div class="learned-group" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                    <div>
+                        <div class="learned-group-title">${niceName}</div>
+                        ${subtitle ? `<div class="learned-group-subtitle">${subtitle}</div>` : ''}
+                        <div class="learned-group-subtitle">namespace ${ns}</div>
+                    </div>
+                    <button class="btn btn-secondary" onclick='unignoreGroup(${JSON.stringify({
+                        datastore_id: ig.datastore_id,
+                        namespace: ig.namespace || '',
+                        backup_type: ig.backup_type,
+                        backup_id: ig.backup_id,
+                    }).replace(/'/g, "&apos;")})'>Unignore</button>
+                </div>`;
+            }).join('');
+            return `<details style="margin-top:0.6rem;">
+                <summary style="cursor:pointer;font-size:0.8rem;color:var(--text-dim);padding:0.4rem 0;list-style:none;display:flex;align-items:center;gap:0.4rem;">
+                    <span>&#9658;</span> Ignored Groups (${ignoredGroups.length})
+                </summary>
+                <div class="learned-group-list" style="margin-top:0.6rem;">${items}</div>
+            </details>`;
         }
 
         function renderAlertingSection(dsId, alerting) {
@@ -2206,6 +2305,7 @@
                 ${groups.length
                     ? `<div class="learned-group-list">${groups.map(group => renderGroupRuleEditor(dsId, group)).join('')}</div>`
                     : '<div class="soft-note">No backup groups available for schedule configuration yet.</div>'}
+                ${renderIgnoredGroups(dsId, alerting.ignored_groups)}
             </div>`;
         }
 
@@ -2559,7 +2659,7 @@
                 document.getElementById('cfg-ntfy_topic').value = c.ntfy_topic || '';
                 document.getElementById('cfg-ntfy_token').value = c.ntfy_token || '';
                 document.getElementById('cfg-cooldown').value = c.alert_cooldown_minutes ?? 60;
-                document.getElementById('cfg-daemon-interval').value = c.daemon_interval_seconds ?? 1800;
+                document.getElementById('cfg-daemon-interval').value = Math.round((c.daemon_interval_seconds ?? 1800) / 60);
 
                 const t = c.thresholds || {};
                 document.getElementById('cfg-thr-warn').value = t.storage_warn_percent ?? 80;
@@ -2605,7 +2705,7 @@
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
                 ntfy_token: document.getElementById('cfg-ntfy_token').value,
                 alert_cooldown_minutes: parseInt(document.getElementById('cfg-cooldown').value) || 60,
-                daemon_interval_seconds: parseInt(document.getElementById('cfg-daemon-interval').value) || 1800,
+                daemon_interval_seconds: (parseInt(document.getElementById('cfg-daemon-interval').value) || 30) * 60,
                 thresholds: {
                     storage_warn_percent: parseInt(document.getElementById('cfg-thr-warn').value),
                     storage_crit_percent: parseInt(document.getElementById('cfg-thr-crit').value),

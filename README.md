@@ -82,8 +82,9 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **Immutable backup & replication status**
 - **Backup browser** — explore PBS namespaces, backup groups, individual snapshots, and other protocols (rsync, sftp, zfs-recv) directly in the UI; each snapshot shows its verification status (verified / verify failed / unverified)
 - **Alerting configuration** — when the alerting component is active, the Web UI provides a complete interface to configure all alerting settings: schedules, thresholds, ignored groups, ntfy settings, quiet hours, and more
-- **Editable group schedules** — learned schedules can be reviewed, edited, and locked from the Web UI
-- **Ignored groups** — mute alerts for specific backup groups directly via the web interface
+- **Editable group schedules** — learned schedules can be reviewed, edited, and locked from the Web UI; interval schedules support an optional anchor start time (e.g. `06:00` → backups expected at 06:00, 08:00, 10:00 …)
+- **Next backup indicator** — each backup group in the alerting panel shows the calculated next expected backup time based on the active schedule
+- **Ignored groups** — mute alerts for specific backup groups directly via the web interface; ignored groups are shown in a collapsible list and can be re-activated (Unignore) at any time
 - **Rescale history** — timeline of the last 90 days (autoscaling events, manual resizes)
 - **Visual alerting** — current alert conditions and learned backup windows directly in the dashboard
 - **Platform stats** — total storage, backup count and traffic across the platform
@@ -132,8 +133,8 @@ on a server via cron.
 - **Total loss detection** — immediate alarm when both backup browser and aggregate metrics drop to zero
 - **Learned backup windows** — derives conservative weekday/time slots per backup group from observed snapshots
 - **Missed backup alerts** — warns when a learned backup window is missed while off-schedule manual runs are treated as outliers
-- **Locked group rules** — manual schedules can override learning for specific backup groups
-- **Ignored groups** — specific backup groups can be completely excluded from monitoring via UI or configuration files
+- **Locked group rules** — manual schedules can override learning for specific backup groups; interval schedules accept an optional anchor time (HH:MM) so the expected cadence is aligned to a fixed start instead of the last observed backup
+- **Ignored groups** — specific backup groups can be completely excluded from monitoring via UI or configuration files; can be re-enabled from the Web UI at any time
 - **Replication lag alerts** — warns when configured replication falls noticeably behind
 - **Host offline detection** — alert when the server is unreachable
 - **Immutable backup warning** — alert on pending disable request
@@ -263,7 +264,7 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `gc_max_age_hours` | GC considered overdue after X hours |
 | `verification_max_age_days` | Verification considered overdue after X days |
 | `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
-| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800) |
+| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800). Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
 
 The following can also be set as environment variables (in `.env` or the shell):
 
@@ -304,7 +305,7 @@ The Monitoring API is read-only. It now exposes live PBS namespaces, backup grou
 The alerting script now persists backup-browser inventory per namespace and group and learns conservative weekday/time slots or short intervals from that history. Current backup alerting can detect:
 - ✅ Whether all visible PBS backups have disappeared
 - ✅ Whether a learned recurring backup window was missed for a specific backup group
-- ✅ Frequent recurring backups such as every 2 hours via interval detection
+- ✅ Frequent recurring backups such as every 2 hours via interval detection — with optional fixed anchor time for aligned slot detection (e.g. `06:00` + every 2 h → 06:00, 08:00, 10:00 …)
 - ✅ Daily recurring backups as a dedicated editable schedule type
 - ✅ Off-schedule same-day snapshots as context without treating them as proof that the learned window ran
 - ❌ More complex cadences such as monthly, biweekly, or truly irregular schedules
