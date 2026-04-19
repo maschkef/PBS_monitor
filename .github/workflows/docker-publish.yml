@@ -58,7 +58,7 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push alerting image
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: docker/alerting/Dockerfile
@@ -67,7 +67,7 @@ jobs:
         labels: ${{ steps.meta-alerting.outputs.labels }}
 
     - name: Build and push webui image
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: docker/webui/Dockerfile
