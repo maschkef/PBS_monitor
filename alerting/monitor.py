@@ -1325,13 +1325,21 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
                     None,
                 )
                 if not matching_occurrence:
-                    last_local = max(
-                        (o["local_dt"] for o in occurrences),
-                        default=now_local,
+                    # Suppress if a backup ran late (after the grace window but
+                    # still within this interval period — before the next slot).
+                    next_due_dt = due_dt + timedelta(minutes=interval_minutes)
+                    late_coverage = any(
+                        window_end < o["local_dt"] <= next_due_dt
+                        for o in occurrences
                     )
-                    alerts.append(build_missed_interval_alert(
-                        ds, group_state, schedule_model, now_local, last_local,
-                    ))
+                    if not late_coverage:
+                        last_local = max(
+                            (o["local_dt"] for o in occurrences),
+                            default=now_local,
+                        )
+                        alerts.append(build_missed_interval_alert(
+                            ds, group_state, schedule_model, now_local, last_local,
+                        ))
         else:
             latest_occurrence = max(occurrences, key=lambda item: item["local_dt"], default=None)
             if latest_occurrence:
