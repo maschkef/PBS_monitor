@@ -19,7 +19,7 @@ jobs:
         python-version: ['3.11']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build alerting image
         run: docker build -f docker/alerting/Dockerfile -t pbs-alerting-test .
@@ -69,7 +69,7 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build alerting image for scan
         run: docker build -f docker/alerting/Dockerfile -t pbs-alerting-test .
