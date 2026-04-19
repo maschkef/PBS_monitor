@@ -1253,6 +1253,11 @@
             <label>Alert Cooldown (minutes)</label>
             <input type="number" id="cfg-cooldown" min="0" step="1">
           </div>
+          <div class="form-group">
+            <label>Daemon Interval (seconds)</label>
+            <input type="number" id="cfg-daemon-interval" min="60" step="60" placeholder="1800">
+            <small>How often the alerting daemon checks for issues (minimum 60 seconds)</small>
+          </div>
         </div>
 
         <!-- Thresholds -->
@@ -1335,10 +1340,18 @@
 
         <!-- Cron Setup -->
         <div id="tab-cron" class="tab-panel">
-          <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:1rem;">
-            Add the following entry to the crontab of the user who should run the alerting.
-            Run <code style="color:var(--cyan)">crontab -e</code> and append the line at the end.
-          </p>
+          <div id="docker-notice" style="display:none;">
+            <p style="font-size:0.9rem;color:var(--yellow);margin-bottom:1rem;padding:0.75rem;background:rgba(255,193,7,0.1);border-left:3px solid var(--yellow);border-radius:4px;">
+              ⚠️ <strong>Docker Deployment Detected</strong><br>
+              When using Docker, the alerting service runs as a daemon automatically. No cron job setup is needed.<br>
+              The alerting container runs <code>monitor.py --daemon</code> with the configured interval.
+            </p>
+          </div>
+          <div id="cron-setup">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:1rem;">
+              Add the following entry to the crontab of the user who should run the alerting.
+              Run <code style="color:var(--cyan)">crontab -e</code> and append the line at the end.
+            </p>
           <div class="form-group">
             <label>Interval</label>
             <select id="cron-interval" onchange="updateCronEntry()">
@@ -1363,6 +1376,7 @@
             To write logs, append <code style="color:var(--cyan)"> &gt;&gt; /var/log/pbs-monitor.log 2&gt;&amp;1</code>
             to the end of the entry.
           </p>
+          </div>
         </div>
 
         <div id="settingsMsg" style="display:none;margin-top:0.75rem;font-size:0.83rem;"></div>
@@ -2521,6 +2535,7 @@
                 const info = await fetchJson('/api/webui/info');
                 _webuiAlertingPath = info.alerting_path || null;
                 _webuiPythonExec = info.python_executable || null;
+                _isDocker = info.is_docker || false;
                 if (info.read_only) {
                     document.getElementById('readOnlyBadge').style.display = '';
                     document.getElementById('saveConfigBtn').disabled = true;
@@ -2544,6 +2559,7 @@
                 document.getElementById('cfg-ntfy_topic').value = c.ntfy_topic || '';
                 document.getElementById('cfg-ntfy_token').value = c.ntfy_token || '';
                 document.getElementById('cfg-cooldown').value = c.alert_cooldown_minutes ?? 60;
+                document.getElementById('cfg-daemon-interval').value = c.daemon_interval_seconds ?? 1800;
 
                 const t = c.thresholds || {};
                 document.getElementById('cfg-thr-warn').value = t.storage_warn_percent ?? 80;
@@ -2589,6 +2605,7 @@
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
                 ntfy_token: document.getElementById('cfg-ntfy_token').value,
                 alert_cooldown_minutes: parseInt(document.getElementById('cfg-cooldown').value) || 60,
+                daemon_interval_seconds: parseInt(document.getElementById('cfg-daemon-interval').value) || 1800,
                 thresholds: {
                     storage_warn_percent: parseInt(document.getElementById('cfg-thr-warn').value),
                     storage_crit_percent: parseInt(document.getElementById('cfg-thr-crit').value),
@@ -2637,13 +2654,22 @@
         let _webuiAlertingPath = null;
         let _webuiPythonExec = null;
         let _ntfyUrl = null;
+        let _isDocker = false;
 
         function updateCronEntry() {
-            const schedule = document.getElementById('cron-interval').value;
-            const alertDir = _webuiAlertingPath || '/path/to/PBS_monitor/alerting';
-            const python = _webuiPythonExec || 'python3';
-            const entry = `${schedule} cd ${alertDir} && ${python} monitor.py`;
-            document.getElementById('cronEntryText').textContent = entry;
+            if (_isDocker) {
+                document.getElementById('docker-notice').style.display = 'block';
+                document.getElementById('cron-setup').style.display = 'none';
+            } else {
+                document.getElementById('docker-notice').style.display = 'none';
+                document.getElementById('cron-setup').style.display = 'block';
+                
+                const schedule = document.getElementById('cron-interval').value;
+                const alertDir = _webuiAlertingPath || '/path/to/PBS_monitor/alerting';
+                const python = _webuiPythonExec || 'python3';
+                const entry = `${schedule} cd ${alertDir} && ${python} monitor.py`;
+                document.getElementById('cronEntryText').textContent = entry;
+            }
         }
 
         function copyCronEntry() {

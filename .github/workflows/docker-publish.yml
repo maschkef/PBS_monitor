@@ -1,0 +1,265 @@
+name: Build and Publish Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_ALERTING: ${{ github.repository }}-alerting
+  IMAGE_NAME_WEBUI: ${{ github.repository }}-webui
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata for alerting image
+      id: meta-alerting
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_ALERTING }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Extract metadata for webui image  
+      id: meta-webui
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WEBUI }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push alerting image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: docker/alerting/Dockerfile
+        push: true
+        tags: ${{ steps.meta-alerting.outputs.tags }}
+        labels: ${{ steps.meta-alerting.outputs.labels }}
+
+    - name: Build and push webui image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: docker/webui/Dockerfile
+        push: true
+        tags: ${{ steps.meta-webui.outputs.tags }}
+        labels: ${{ steps.meta-webui.outputs.labels }}
+
+    # Create release assets for tagged releases
+    - name: Prepare release assets
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        mkdir -p release-assets
+        
+        # Lowercase repo name for GHCR (GHCR requires lowercase image names)
+        REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        
+        # Create standalone docker-compose.yml using registry images
+        cat > release-assets/docker-compose.yml << EOF
+        services:
+          pbs-alerting:
+            image: ghcr.io/${REPO_LOWER}-alerting:\${VERSION:-latest}
+            container_name: pbs-alerting
+            restart: unless-stopped
+            volumes:
+              - ./config:/app/data:rw
+              - ./.env:/app/.env:ro
+            environment:
+              - PYTHONUNBUFFERED=1
+              - ALERTING_DATA_DIR=/app/data
+            depends_on:
+              - pbs-webui
+            deploy:
+              resources:
+                limits:
+                  memory: 256M
+                reservations:
+                  memory: 128M
+        
+          pbs-webui:
+            image: ghcr.io/${REPO_LOWER}-webui:\${VERSION:-latest}
+            container_name: pbs-webui
+            restart: unless-stopped
+            ports:
+              - "5111:5111"
+            volumes:
+              - ./config:/app/data:rw
+              - ./.env:/app/.env:ro
+            environment:
+              - PYTHONUNBUFFERED=1
+              - ALERTING_DATA_DIR=/app/data
+              - WEBUI_HOST=0.0.0.0
+              - WEBUI_PORT=5111
+              - WEBUI_READ_ONLY=0
+              - FLASK_DEBUG=0
+            deploy:
+              resources:
+                limits:
+                  memory: 512M
+                reservations:
+                  memory: 256M
+        
+        networks:
+          default:
+            name: pbs-monitor
+        EOF
+        
+        # Copy environment template
+        cp .env.example release-assets/.env.example
+        
+        # Create quickstart script
+        cp docker/quick-deploy.sh release-assets/quickstart.sh
+        chmod +x release-assets/quickstart.sh
+        
+        # Create README for Docker deployment
+        cat > release-assets/README-DOCKER.md << 'EOF'
+        # PBS Monitor Docker Deployment
+        
+        This release includes Docker support for easy deployment.
+        
+        ## Quick Start Options
+        
+        ### Option 1: One-command deployment
+        ```bash
+        # Download and run quickstart script
+        ./quickstart.sh
+        ```
+        
+        ### Option 2: Manual docker-compose setup  
+        ```bash
+        # 1. Configure environment
+        cp .env.example .env
+        nano .env  # Set API_KEY
+        
+        # 2. Start services
+        docker-compose up -d
+        
+        # 3. Access Web UI
+        open http://localhost:5111
+        ```
+        
+        ## What's included
+        
+        - `docker-compose.yml` - Ready-to-use multi-container setup
+        - `.env.example` - Configuration template
+        - `quickstart.sh` - Automated deployment script
+        - `README-DOCKER.md` - This documentation
+        
+        Images are automatically pulled from GitHub Container Registry.
+        EOF
+
+    - name: Upload release assets
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-assets
+        path: release-assets/
+
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Download release assets
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-assets
+        path: release-assets/
+
+    - name: Compute lowercase image names
+      run: echo "REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          release-assets/docker-compose.yml
+          release-assets/.env.example
+          release-assets/quickstart.sh
+          release-assets/README-DOCKER.md
+        generate_release_notes: true
+        prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') || contains(github.ref, 'rc') }}
+        body: |
+          ## 🐳 Docker Support
+
+          This release includes Docker support for easy deployment.
+
+          ### Quick Start Options
+
+          **Option 1: One-command deployment**
+          ```bash
+          curl -sL https://github.com/${{ github.repository }}/releases/latest/download/quickstart.sh | bash
+          ```
+
+          **Option 2: Traditional docker-compose workflow**
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/latest/download/docker-compose.yml
+          wget https://github.com/${{ github.repository }}/releases/latest/download/.env.example -O .env
+          # Edit .env and set API_KEY, then:
+          docker-compose up -d
+          ```
+
+          ### Docker Images
+          - `ghcr.io/${{ env.REPO_LOWER }}-alerting:${{ github.ref_name }}`
+          - `ghcr.io/${{ env.REPO_LOWER }}-webui:${{ github.ref_name }}`
+
+          See the attached `README-DOCKER.md` for detailed instructions.
+
+    - name: Create deployment summary
+      run: |
+        echo "## 🐳 Docker Images Published" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Alerting Service" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "ghcr.io/${REPO_LOWER}-alerting:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Web UI Service" >> $GITHUB_STEP_SUMMARY 
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "ghcr.io/${REPO_LOWER}-webui:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Quick Start" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# Option 1: Quickstart" >> $GITHUB_STEP_SUMMARY
+        echo "curl -sL https://github.com/${{ github.repository }}/releases/latest/download/quickstart.sh | bash" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Option 2: Traditional docker-compose workflow" >> $GITHUB_STEP_SUMMARY
+        echo "wget https://github.com/${{ github.repository }}/releases/latest/download/docker-compose.yml" >> $GITHUB_STEP_SUMMARY
+        echo "wget https://github.com/${{ github.repository }}/releases/latest/download/.env.example -O .env" >> $GITHUB_STEP_SUMMARY
+        echo "# Edit .env and set API_KEY, then:" >> $GITHUB_STEP_SUMMARY
+        echo "docker-compose up -d" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

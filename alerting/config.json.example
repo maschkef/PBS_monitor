@@ -2,9 +2,9 @@
   "_comment_api": "Base URL of the Monitoring API",
   "api_base": "https://api.remote-backups.com",
   
-  "_comment_ntfy": "Notification settings. ntfy_topic is required. ntfy_token is optional for private ntfy instances.",
+  "_comment_ntfy": "Push notification settings. Configure ntfy_topic to enable external notifications. Leave empty to disable.",
   "ntfy_url": "https://ntfy.sh",
-  "ntfy_topic": "your-topic-here",
+  "ntfy_topic": "",
   "ntfy_token": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",

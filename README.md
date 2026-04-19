@@ -20,6 +20,30 @@ a web interface instead of manually editing configuration files.
 Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monitoring-datastores) from remote-backups.com.
 
 ![Python](https://img.shields.io/badge/python-3.9+-green)
+![Docker](https://img.shields.io/badge/docker-available-blue)
+
+> [!TIP]  
+> **🐳 Docker deployment (v0.2.0-beta):** Docker support is available as a beta feature.
+> 
+> **Why beta?** 
+> This project is quite new and Docker integration is brand new.
+> This is my first project developing Docker support myself.
+>
+> The core Python functionality is stable, but containerized deployment needs validation.
+> 
+> **Quick start:**
+> ```bash
+> # Option 1: One-command deployment
+> curl -sL https://github.com/maschkef/PBS_monitor/releases/latest/download/quickstart.sh | bash
+> 
+> # Option 2: Traditional docker-compose workflow
+> wget https://github.com/maschkef/PBS_monitor/releases/latest/download/docker-compose.yml
+> wget https://github.com/maschkef/PBS_monitor/releases/latest/download/.env.example -O .env
+> # Edit .env and set API_KEY, then:
+> docker-compose up -d
+> ```
+> 
+> See release assets for documentation: [Latest Release](https://github.com/maschkef/PBS_monitor/releases/latest)
 
 > [!NOTE]
 > This project is not affiliated with, maintained, or endorsed by remote-backups.com.
@@ -124,9 +148,33 @@ on a server via cron.
 cd alerting
 pip install -r requirements.txt
 
-# Create and edit configuration
+# Create initial configuration (optional)
 cp config.json.example config.json
-# Edit config.json: set ntfy_topic (required), optionally ntfy_token
+```
+
+### Configuration
+
+**Option 1: Via Web UI (recommended when using both tools)**
+
+If you're running the Web UI tool (see above), you can configure all alerting settings through the web interface:
+
+1. Start the Web UI: `cd ../webui && python app.py` 
+2. Open [http://127.0.0.1:5111](http://127.0.0.1:5111)
+3. Click the gear icon (⚙️) to open **Alerting Configuration**
+4. Configure push notifications:
+   - **ntfy Topic**: Enter your topic name (e.g., "my-pbs-alerts") to enable notifications
+   - **ntfy URL**: Usually `https://ntfy.sh` (default)
+   - **ntfy Token**: Optional, for private ntfy instances
+5. Adjust other settings as needed (thresholds, quiet hours, daemon interval, etc.)
+6. Save settings
+
+**Option 2: Manual configuration file editing**
+
+Alternatively, edit `alerting/config.json` directly. See the [Configuration File Reference](#configuration-file-reference) section below for all available parameters:
+
+```bash
+cp config.json.example config.json
+# Edit alerting/config.json and set at minimum your API key and (optionally) ntfy_topic
 ```
 
 ### Usage
@@ -135,29 +183,29 @@ cp config.json.example config.json
 # Single check
 python monitor.py
 
-# Daemon mode (every 5 minutes)
-python monitor.py --daemon 300
+# Daemon mode (every 30 minutes)
+python monitor.py --daemon 1800
 ```
 
 ### Cron Job (recommended)
 
 ```bash
-# Check every 5 minutes
-*/5 * * * * cd /path/to/PBS_monitor/alerting && /usr/bin/python3 monitor.py >> /var/log/pbs-monitor.log 2>&1
+# Check every 30 minutes
+*/30 * * * * cd /path/to/PBS_monitor/alerting && /usr/bin/python3 monitor.py >> /var/log/pbs-monitor.log 2>&1
 ```
 
-### Configuration
+### Configuration File Reference
 
-The file `alerting/config.json` will be automatically copied from `alerting/config.json.example` on the first run if you don't create it manually:
+When using manual configuration (Option 2 above), the file `alerting/config.json` will be automatically copied from `alerting/config.json.example` on the first run if you don't create it manually:
 
 ```json
 {
   "_comment_api": "Base URL of the Monitoring API",
   "api_base": "https://api.remote-backups.com",
   
-  "_comment_ntfy": "Notification settings. ntfy_topic is required. ntfy_token is optional for private ntfy instances.",
+  "_comment_ntfy": "Push notification settings. Configure ntfy_topic to enable external notifications. Leave empty to disable.",
   "ntfy_url": "https://ntfy.sh",
-  "ntfy_topic": "your-topic-here",
+  "ntfy_topic": "",
   "ntfy_token": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",
@@ -191,16 +239,22 @@ The file `alerting/config.json` will be automatically copied from `alerting/conf
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
-  "alert_cooldown_minutes": 60
+  "alert_cooldown_minutes": 60,
+  
+  "_comment_daemon": "Interval for daemon mode checks in seconds.",
+  "daemon_interval_seconds": 1800
 }
 ```
 
 Per-group manual and locked schedules are stored separately in `alerting/group_rules.json`.
 Supported manual schedule types are `daily`, `weekly`, and `interval`.
 
+> [!TIP]
+> **Easy configuration**: All parameters below can be configured through the Web UI interface (⚙️ Alerting Configuration) when both tools are running, instead of manually editing JSON files.
+
 | Parameter | Description |
 |-----------|-------------|
-| `ntfy_topic` | ntfy topic name — **must be configured** |
+| `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications |
 | `ntfy_token` | Optional. Bearer token for private ntfy instances |
 | `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`) |
 | `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
@@ -208,6 +262,15 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `storage_crit_percent` | Storage critical threshold in percent |
 | `gc_max_age_hours` | GC considered overdue after X hours |
 | `verification_max_age_days` | Verification considered overdue after X days |
+| `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
+| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800) |
+
+The following can also be set as environment variables (in `.env` or the shell):
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Set automatically in Docker containers (`/app/data`). |
+
 | `quiet_hours.enabled` | Enable quiet hours (true/false) |
 | `quiet_hours.min_priority` | Only send alerts at or above this priority during quiet hours |
 | `schedule_learning.enabled` | Enable learned backup-window detection |
@@ -270,8 +333,18 @@ The alerting script now persists backup-browser inventory per namespace and grou
 PBS_monitor/
 ├── .env.example                    # API key template
 ├── .gitignore
+├── LICENSE
 ├── README.md                       # English documentation
 ├── README_DE.md                    # German documentation
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml      # CI/CD: build and publish Docker images
+├── docker/                         # Docker deployment files
+│   ├── quick-deploy.sh             # One-command deployment script
+│   ├── alerting/
+│   │   └── Dockerfile
+│   └── webui/
+│       └── Dockerfile
 ├── webui/                          # Tool 1: Web Dashboard
 │   ├── app.py                      # Flask server
 │   ├── requirements.txt

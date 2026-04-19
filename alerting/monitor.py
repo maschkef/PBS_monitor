@@ -9,7 +9,7 @@ State is persisted to a JSON file between runs.
 
 Usage:
     python monitor.py                  # single check
-    python monitor.py --daemon 300     # check every 300 seconds
+    python monitor.py --daemon 1800    # check every 1800 seconds (30 minutes)
 
 Cron example (every 5 minutes):
     */5 * * * * cd /path/to/alerting && python monitor.py
@@ -34,8 +34,15 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR.parent / ".env"
-CONFIG_PATH = SCRIPT_DIR / "config.json"
-STATE_PATH = SCRIPT_DIR / "state.json"
+
+# Support a configurable data directory (e.g. for Docker deployments where
+# config/state must be stored in a mounted volume separate from the code).
+# Defaults to the script directory for non-Docker use.
+_data_dir_env = os.environ.get("ALERTING_DATA_DIR", "").strip()
+DATA_DIR = Path(_data_dir_env) if _data_dir_env else SCRIPT_DIR
+
+CONFIG_PATH = DATA_DIR / "config.json"
+STATE_PATH = DATA_DIR / "state.json"
 
 load_dotenv(ENV_PATH)
 
@@ -43,13 +50,13 @@ STATE_VERSION = 2
 MAX_CURRENT_SNAPSHOT_DETAILS = 24
 MAX_OBSERVED_SNAPSHOT_HISTORY = 1000
 GROUP_RULES_VERSION = 1
-GROUP_RULES_PATH = SCRIPT_DIR / "group_rules.json"
+GROUP_RULES_PATH = DATA_DIR / "group_rules.json"
 INTERVAL_MODEL_MAX_MINUTES = 360
 
 DEFAULT_CONFIG = {
     "api_base": "https://api.remote-backups.com",
-    "ntfy_url": "https://ntfy.sh",
-    "ntfy_topic": "pbs-monitor",
+    # "ntfy_url": "https://ntfy.sh",  # Example: configure this to enable push notifications
+    "ntfy_topic": "",  # REQUIRED: set this to enable push notifications (e.g., "your-pbs-alerts")
     "ntfy_token": "",
     "ignored_groups": [],
     "thresholds": {
@@ -74,6 +81,7 @@ DEFAULT_CONFIG = {
         "stale_after_days": 8,
     },
     "alert_cooldown_minutes": 60,
+    "daemon_interval_seconds": 1800,  # 30 minutes default for daemon mode
 }
 
 
@@ -1670,6 +1678,17 @@ def _ntfy_header_safe(value):
 
 def send_ntfy(config, alert):
     """Send a single alert via ntfy."""
+    # Check if ntfy is configured - don't send to external services without user configuration
+    ntfy_topic = config.get("ntfy_topic", "").strip()
+    if not ntfy_topic:
+        print("  [INFO] ntfy_topic not configured, skipping push notification")
+        return False
+        
+    ntfy_url = config.get("ntfy_url", "https://ntfy.sh").strip()
+    if not ntfy_url:
+        print("  [INFO] ntfy_url not configured, skipping push notification")
+        return False
+        
     headers = {
         "Title": _ntfy_header_safe(f"PBS: {alert.title}"),
         "Priority": str(alert.priority),
@@ -1678,7 +1697,7 @@ def send_ntfy(config, alert):
     if config.get("ntfy_token"):
         headers["Authorization"] = f"Bearer {config['ntfy_token']}"
 
-    url = f"{config['ntfy_url']}/{config['ntfy_topic']}"
+    url = f"{ntfy_url}/{ntfy_topic}"
     try:
         resp = requests.post(url, data=alert.message.encode("utf-8"), headers=headers, timeout=10)
         resp.raise_for_status()

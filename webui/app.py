@@ -26,8 +26,12 @@ app = Flask(__name__)
 
 API_BASE = "https://api.remote-backups.com"
 API_KEY = os.environ.get("API_KEY", "")
-ALERTING_CONFIG_PATH = PROJECT_ROOT / "alerting" / "config.json"
-ALERTING_STATE_PATH = PROJECT_ROOT / "alerting" / "state.json"
+# Support a configurable data directory so Docker containers can mount a
+# persistent volume separate from the application code.
+_alerting_data_env = os.environ.get("ALERTING_DATA_DIR", "").strip()
+_alerting_data_dir = Path(_alerting_data_env) if _alerting_data_env else (PROJECT_ROOT / "alerting")
+ALERTING_CONFIG_PATH = _alerting_data_dir / "config.json"
+ALERTING_STATE_PATH = _alerting_data_dir / "state.json"
 
 WEBUI_HOST = os.environ.get("WEBUI_HOST", "127.0.0.1")
 try:
@@ -830,10 +834,14 @@ def ignore_group():
 @app.route("/api/webui/info")
 def webui_info():
     """Return web UI metadata (read-only flag, paths) for the frontend."""
+    # Detect Docker environment
+    is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV") == "true"
+    
     return jsonify({
         "read_only": WEBUI_READ_ONLY,
         "alerting_path": str(PROJECT_ROOT / "alerting"),
         "python_executable": sys.executable,
+        "is_docker": is_docker,
     })
 
 
@@ -865,6 +873,11 @@ def save_alerting_config():
         val = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
         if val is not None and val >= 0:
             raw_config["alert_cooldown_minutes"] = val
+
+    if "daemon_interval_seconds" in payload:
+        val = alert_monitor.coerce_int(payload["daemon_interval_seconds"])
+        if val is not None and val >= 60:  # Minimum 1 minute
+            raw_config["daemon_interval_seconds"] = val
 
     if "thresholds" in payload and isinstance(payload["thresholds"], dict):
         raw_thr = raw_config.setdefault("thresholds", {})
