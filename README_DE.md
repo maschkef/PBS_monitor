@@ -13,6 +13,11 @@ Die Web UI kann dieselben Alarmzustände zusätzlich visuell darstellen, das
 eigentliche Alerting-Script bleibt aber vollständig eigenständig und ist für
 den unabhängigen Betrieb per Cron oder ähnlichem Scheduler gedacht.
 
+**Integration**: Wenn beide Tools aktiv sind, kann die Web UI zur Konfiguration
+des Alerting-Systems verwendet werden (Zeitpläne, Schwellwerte, ignorierte Gruppen,
+ntfy-Einstellungen) über eine Web-Oberfläche anstatt manueller Bearbeitung der
+Konfigurationsdateien.
+
 Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/monitoring-datastores) von remote-backups.com.
 
 ![Python](https://img.shields.io/badge/python-3.9+-green)
@@ -53,6 +58,7 @@ Ein grafisches Dashboard um den Status aller Datastores auf einen Blick zu prüf
 - **Autoscaling-Konfiguration** — Schwellwerte und Modus
 - **Immutable Backup & Replication Status**
 - **Backup Browser** — PBS-Namespaces, spezifische Backup-Gruppen, Snapshots und andere Protokolle (rsync, sftp, zfs-recv) direkt in der UI durchsuchen; jeder Snapshot zeigt seinen Verifikationsstatus (verified / verify failed / unverified)
+- **Alerting-Konfiguration** — wenn das Alerting-System aktiv ist, bietet die Web UI eine vollständige Oberfläche zur Konfiguration aller Alerting-Einstellungen: Zeitpläne, Schwellwerte, ignorierte Gruppen, ntfy-Einstellungen, Ruhezeiten und mehr
 - **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden
 - **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten
 - **Rescale-History** — Timeline der letzten 90 Tage (Autoscaling-Events, manuelle Resizes)

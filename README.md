@@ -13,6 +13,10 @@ The Web UI can surface the same alert conditions visually, but the alerting
 script remains fully standalone and is intended to run independently via cron
 or a similar scheduler.
 
+**Integration**: When both tools are active, the Web UI can be used to configure
+the alerting system (schedules, thresholds, ignored groups, ntfy settings) through
+a web interface instead of manually editing configuration files.
+
 Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monitoring-datastores) from remote-backups.com.
 
 ![Python](https://img.shields.io/badge/python-3.9+-green)
@@ -53,6 +57,7 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **Autoscaling configuration** — thresholds and mode
 - **Immutable backup & replication status**
 - **Backup browser** — explore PBS namespaces, backup groups, individual snapshots, and other protocols (rsync, sftp, zfs-recv) directly in the UI; each snapshot shows its verification status (verified / verify failed / unverified)
+- **Alerting configuration** — when the alerting component is active, the Web UI provides a complete interface to configure all alerting settings: schedules, thresholds, ignored groups, ntfy settings, quiet hours, and more
 - **Editable group schedules** — learned schedules can be reviewed, edited, and locked from the Web UI
 - **Ignored groups** — mute alerts for specific backup groups directly via the web interface
 - **Rescale history** — timeline of the last 90 days (autoscaling events, manual resizes)
