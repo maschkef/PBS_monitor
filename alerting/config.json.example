@@ -25,6 +25,12 @@
     "end": "07:00",
     "min_priority": 4
   },
+
+  "_comment_priorities": "ntfy priority assigned to warning (4=high) and critical (5=urgent) alerts. Range 1–5. Level 5 bypasses Do Not Disturb on supported devices. The min_priority field in quiet_hours uses the same scale.",
+  "notification_priorities": {
+    "warning": 4,
+    "critical": 5
+  },
   
   "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
   "schedule_learning": {
@@ -34,7 +40,8 @@
     "min_occurrences": 2,
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
-    "stale_after_days": 8
+    "stale_after_days": 8,
+    "snapshot_retention_count": 24
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",

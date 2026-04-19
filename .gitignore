@@ -3,6 +3,7 @@
 
 # Alerting runtime state (auto-generated)
 alerting/state.json
+alerting/notification_log.json
 
 # Alerting config (contains ntfy topic/token)
 alerting/config.json

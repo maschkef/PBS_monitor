@@ -24,13 +24,7 @@ Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/m
 ![Docker](https://img.shields.io/badge/docker-verfügbar-blue)
 
 > [!TIP]  
-> **🐳 Docker-Bereitstellung (v0.2.0-beta):** Docker-Unterstützung ist als Beta-Feature verfügbar.
-> 
-> **Warum Beta?** 
-> Dieses Projekt ist noch recht neu, und die Docker-Integration ist brandneu.
-> Dies ist mein erstes Projekt, bei dem ich selbst Docker-Unterstützung entwickle.
->
-> Die Python-Kernfunktionalität ist stabil, aber die containerisierte Bereitstellung benötigt Validierung.
+> **🐳 Docker-Bereitstellung:** Docker-Unterstützung ist verfügbar und wurde bei mir erfolgreich getestet.
 > 
 > **Schnellstart:**
 > ```bash
@@ -82,11 +76,12 @@ Ein grafisches Dashboard um den Status aller Datastores auf einen Blick zu prüf
 - **Autoscaling-Konfiguration** — Schwellwerte und Modus
 - **Immutable Backup & Replication Status**
 - **Backup Browser** — PBS-Namespaces, spezifische Backup-Gruppen, Snapshots und andere Protokolle (rsync, sftp, zfs-recv) direkt in der UI durchsuchen; jeder Snapshot zeigt seinen Verifikationsstatus (verified / verify failed / unverified)
-- **Alerting-Konfiguration** — wenn das Alerting-System aktiv ist, bietet die Web UI eine vollständige Oberfläche zur Konfiguration aller Alerting-Einstellungen: Zeitpläne, Schwellwerte, ignorierte Gruppen, ntfy-Einstellungen, Ruhezeiten und mehr
+- **Alerting-Konfiguration** — wenn das Alerting-System aktiv ist, bietet die Web UI eine vollständige Oberfläche zur Konfiguration aller Alerting-Einstellungen: Zeitpläne, Schwellwerte, ignorierte Gruppen, ntfy-Einstellungen, Ruhezeiten, Benachrichtigungs-Prioritäten und mehr
 - **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden; Intervall-Schedules unterstützen eine optionale Ankerzeit (z. B. `06:00` → Backups erwartet um 06:00, 08:00, 10:00 …)
 - **Nächstes Backup** — jede Backup-Gruppe im Alerting-Panel zeigt den berechneten nächsten erwarteten Backup-Zeitpunkt basierend auf dem aktiven Schedule
 - **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten; ignorierte Gruppen werden in einer ausklappbaren Liste angezeigt und können jederzeit reaktiviert werden (Unignore)
 - **Rescale-History** — Timeline der letzten 90 Tage (Autoscaling-Events, manuelle Resizes)
+- **Benachrichtigungs-Log** — persistente History aller gesendeten Alerts (inkl. Test-Benachrichtigungen); über den **📋 Log**-Button in der Kopfzeile einseh- und löschbar
 - **Visuelles Alerting** — aktuelle Alarmzustände und gelernte Backup-Fenster direkt im Dashboard
 - **Platform-Stats** — Gesamtspeicher, Backup-Count und Traffic der Plattform
 - **Zweistufige Aktualisierung** — der **⟳ Refresh**-Button führt eine vollständige Aktualisierung durch (alle Daten inkl. Rescale-Log, Backup-Inventar und Platform-Stats); der **Auto-Refresh**-Timer lädt dagegen nur häufig wechselnde Daten nach (Speicher-Metriken, GC-/Verification-Zeitangaben, Replikations-Sync, Alerting-Zustand). Das reduziert die API-Aufrufe beim automatischen Refresh von ~22+ auf ~4 (bei einem typischen Account mit drei Datastores). Über jeden Button und das Intervall-Dropdown zeigt ein Tooltip, was dabei geladen bzw. ausgelassen wird.
@@ -132,6 +127,7 @@ auf einem Server per Cron laufen kann.
 - **Verification-Überwachung** — Alert bei Fehler oder überfällig (> 14 Tage)
 - **Backup-Inventarisierung** — sammelt PBS-Snapshots namespace- und gruppengenau als Grundlage für lernendes Alerting
 - **Totalausfall-Erkennung** — Sofort-Alarm wenn Backup-Browser und Aggregat-Metrik gemeinsam auf 0 fallen
+- **Snapshot-Verschwinden-Erkennung** — warnt wenn die Snapshot-Anzahl einer Gruppe unter die `keep_last`-Prune-Policy fällt und so eine unerwartete Löschung außerhalb des normalen Prunings anzeigt
 - **Gelernte Backup-Fenster** — leitet konservative Wochentag-/Zeit-Slots pro Backup-Gruppe aus beobachteten Snapshots ab
 - **Missed-Backup-Alerts** — warnt bei verpassten gelernten Backup-Fenstern und behandelt manuelle Off-Schedule-Läufe als Ausreißer
 - **Gesperrte Gruppenregeln** — manuelle Zeitpläne können das Lernen für einzelne Backup-Gruppen übersteuern; Intervall-Schedules akzeptieren eine optionale Ankerzeit (HH:MM), sodass die Erwartung an einem festen Startzeitpunkt ausgerichtet ist statt am letzten beobachteten Backup
@@ -141,8 +137,10 @@ auf einem Server per Cron laufen kann.
 - **Immutable Backup Warnung** — Alert bei pending Disable-Request
 - **API-Health-Check** — Prüft die Plattform-Erreichbarkeit
 - **Quiet Hours** — Niedrig-priore Alerts nachts unterdrücken
+- **Konfigurierbare Benachrichtigungs-Prioritäten** — ntfy-Priorität separat für Warning- und Critical-Alerts setzen (1 min/lautlos … 5 dringend/bypass DND); dieselbe Skala nutzt auch der Quiet-Hours-Mindestschwellwert
 - **Alert-Cooldown** — Verhindert Spam bei anhaltenden Problemen
 - **Persistenter State** — versionierte Snapshot-Historie pro Backup-Gruppe
+- **Benachrichtigungs-History-Log** — jeder versendete Alert (inkl. Test-Benachrichtigungen aus der Web UI) wird an `notification_log.json` angehängt; über das 📋 Log-Panel der Web UI einsehbar und löschbar
 
 ### Setup
 
@@ -158,7 +156,7 @@ cp config.json.example config.json
 
 **Option 1: Über die Web UI (empfohlen bei Verwendung beider Tools)**
 
-Wenn Sie das Web UI Tool verwenden (siehe oben), können Sie alle Alerting-Einstellungen über die Weboberfläche konfigurieren:
+Wenn du das Web UI Tool verwendest (siehe oben), kannst du alle Alerting-Einstellungen über die Weboberfläche konfigurieren:
 
 1. Web UI starten: `cd ../webui && python app.py`
 2. [http://127.0.0.1:5111](http://127.0.0.1:5111) öffnen
@@ -167,8 +165,9 @@ Wenn Sie das Web UI Tool verwenden (siehe oben), können Sie alle Alerting-Einst
    - **ntfy Topic**: Topic-Name eingeben (z.B. "meine-pbs-alerts") um Benachrichtigungen zu aktivieren
    - **ntfy URL**: Meist `https://ntfy.sh` (Standard)
    - **ntfy Token**: Optional, für private ntfy-Instanzen
-5. Weitere Einstellungen nach Bedarf anpassen (Schwellwerte, Ruhezeiten, Daemon-Intervall, etc.)
-6. Einstellungen speichern
+5. Alert-Prioritäten unter **Notifications → Alert Priorities** festlegen (Warning = 4 high, Critical = 5 urgent als Standard). Dieselbe Skala 1–5 gilt auch für das Feld **Minimum priority to send** unter Quiet Hours.
+6. Weitere Einstellungen nach Bedarf anpassen (Schwellwerte, Ruhezeiten, Daemon-Intervall, etc.)
+7. Einstellungen speichern
 
 **Option 2: Manuelle Bearbeitung der Konfigurationsdatei**
 
@@ -198,7 +197,7 @@ python monitor.py --daemon 1800
 
 ### Konfigurationsdatei-Referenz
 
-Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json` beim ersten Start automatisch aus `alerting/config.json.example` kopiert, falls sie noch nicht existiert. Sie können sie jedoch auch vorab manuell erstellen:
+Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json` beim ersten Start automatisch aus `alerting/config.json.example` kopiert, falls sie noch nicht existiert. Du kannst sie jedoch auch vorab manuell erstellen:
 
 ```json
 {
@@ -229,6 +228,12 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "min_priority": 4
   },
   
+  "_comment_priorities": "ntfy-Priorit\u00e4t f\u00fcr Warning- (4=high) und Critical-Alerts (5=urgent). Bereich 1\u20135. Stufe 5 umgeht Do Not Disturb auf unterst\u00fctzten Ger\u00e4ten. Das Feld min_priority in quiet_hours nutzt dieselbe Skala.",
+  "notification_priorities": {
+    "warning": 4,
+    "critical": 5
+  },
+  
   "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
   "schedule_learning": {
     "enabled": true,
@@ -237,7 +242,8 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "min_occurrences": 2,
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
-    "stale_after_days": 8
+    "stale_after_days": 8,
+    "snapshot_retention_count": 24
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
@@ -270,6 +276,7 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `schedule_learning.time_tolerance_minutes` | Erlaubte zeitliche Abweichung in Minuten für das Lernen und Matchen. Standard: `30` |
 | `schedule_learning.due_grace_minutes` | Wie lange ein gelerntes Backup-Fenster verspätet sein darf, bevor ein Alert erzeugt wird. Standard: `30` |
 | `schedule_learning.stale_after_days` | Zusätzliche Tage über die normale wöchentliche Slot-Kadenz hinaus, bevor ein gelernter Slot als veraltet gilt |
+| `schedule_learning.snapshot_retention_count` | Wie viele der neuesten Snapshots pro Backup-Gruppe im State gespeichert werden (Standard: 24). Wird für Schedule-Learning und Snapshot-Verlust-Erkennung verwendet — bei Gruppen mit vielen täglichen Backups erhöhen |
 | `alert_cooldown_minutes` | Mindestzeit zwischen wiederholten Alerts gleichen Typs |
 | `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon` oder Docker-Container, Sekunden, Standard: 1800). In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
 
@@ -284,7 +291,7 @@ Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` ode
 | Prio | Verwendung |
 |------|-----------|
 | 5 (urgent) | Storage ≥ 90%, Verification failed, alle Backups weg, API nicht erreichbar |
-| 4 (high) | GC failed, Host offline, verpasstes Backup-Fenster oder Intervall, veraltete Replication, Immutable Disable pending |
+| 4 (high) | GC failed, Host offline, verpasstes Backup-Fenster oder Intervall, veraltete Replication, Immutable Disable pending, Snapshots unerwartet entfernt |
 | 3 (default) | Storage ≥ 80%, GC/Verification überfällig oder nie gelaufen |
 
 💡 **Tipp:** Alle diese Parameter können einfach über die Web-UI konfiguriert werden, anstatt die JSON-Dateien manuell zu bearbeiten.
@@ -302,6 +309,7 @@ Die Monitoring API ist read-only. Sie liefert inzwischen live PBS-Namespaces, Ba
 
 Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace und Gruppe und lernt daraus konservative Wochentag-/Zeit-Slots oder kurze Intervalle. Aktuell kann das Backup-Alerting erkennen:
 - ✅ Ob alle sichtbaren PBS-Backups verschwunden sind
+- ✅ Ob die Snapshot-Anzahl einer Gruppe unter die `keep_last`-Policy fällt (unerwartete Löschung)
 - ✅ Ob ein gelerntes wiederkehrendes Backup-Fenster für eine bestimmte Backup-Gruppe verpasst wurde
 - ✅ Häufige wiederkehrende Backups wie alle 2 Stunden per Intervall-Erkennung — mit optionaler fester Ankerzeit für ausgerichtete Slot-Erkennung (z. B. `06:00` + alle 2 h → 06:00, 08:00, 10:00 …)
 - ✅ Täglich wiederkehrende Backups als eigener editierbarer Schedule-Typ
@@ -355,7 +363,8 @@ PBS_monitor/
     ├── config.json.example         # Vorlage für Alerting-Konfiguration
     ├── config.json                 # Lokale Konfig (gitignored)
     ├── group_rules.json            # Lokale Gruppenregeln (gitignored, auto-generiert)
-    └── state.json                  # Runtime-State (gitignored, auto-generiert)
+    ├── state.json                  # Runtime-State (gitignored, auto-generiert)
+    └── notification_log.json       # Benachrichtigungs-History (gitignored, auto-generiert)
 ```
 
 ---

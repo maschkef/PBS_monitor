@@ -1207,6 +1207,7 @@
             <span id="readOnlyBadge" class="badge read-only" style="display:none">🔒 Read Only</span>
             <button class="btn" onclick="openModal('settingsModal')">⚙ Settings</button>
             <button class="btn" onclick="openTestModal()">🔔 Test</button>
+            <button class="btn" onclick="openLogModal()">📋 Log</button>
             <button class="btn" onclick="loadAll()" title="Full refresh: reloads all data including configuration, rescale-log and backup inventory">⟳ Refresh</button>
             <span class="last-updated" id="lastUpdated"></span>
         </div>
@@ -1275,6 +1276,35 @@
             <input type="number" id="cfg-daemon-interval" min="1" step="1" placeholder="30">
             <small>How often the alerting daemon checks for issues (minimum 1 minute)</small>
           </div>
+          <p class="form-section-title" style="margin-top:1.25rem">Alert Priorities</p>
+          <p style="font-size:0.82rem;color:var(--text-dim);margin-bottom:0.75rem;line-height:1.5">
+            ntfy priority for outgoing alerts: <strong style="color:var(--text)">1&nbsp;min</strong> (silent) &rarr;
+            <strong style="color:var(--text)">3&nbsp;default</strong> &rarr;
+            <strong style="color:var(--text)">5&nbsp;urgent</strong> (bypasses Do Not Disturb on supported devices).
+            The <em>Minimum priority to send</em> under Quiet Hours uses the same scale.
+          </p>
+          <div class="form-group">
+            <label>Warning priority</label>
+            <select id="cfg-prio-warning">
+              <option value="1">1 &ndash; min (silent)</option>
+              <option value="2">2 &ndash; low</option>
+              <option value="3">3 &ndash; default</option>
+              <option value="4">4 &ndash; high</option>
+              <option value="5">5 &ndash; urgent (bypasses DND)</option>
+            </select>
+            <small>Applies to: storage warnings, missed backups, overdue GC / verification</small>
+          </div>
+          <div class="form-group">
+            <label>Critical priority</label>
+            <select id="cfg-prio-critical">
+              <option value="1">1 &ndash; min (silent)</option>
+              <option value="2">2 &ndash; low</option>
+              <option value="3">3 &ndash; default</option>
+              <option value="4">4 &ndash; high</option>
+              <option value="5">5 &ndash; urgent (bypasses DND)</option>
+            </select>
+            <small>Applies to: critical storage usage, verification failures, datastore offline</small>
+          </div>
         </div>
 
         <!-- Thresholds -->
@@ -1316,7 +1346,14 @@
           </div>
           <div class="form-group">
             <label>Minimum priority to send</label>
-            <input type="number" id="cfg-qh-prio" min="1" max="5" step="1">
+            <select id="cfg-qh-prio">
+              <option value="1">1 &ndash; min</option>
+              <option value="2">2 &ndash; low</option>
+              <option value="3">3 &ndash; default</option>
+              <option value="4">4 &ndash; high</option>
+              <option value="5">5 &ndash; urgent</option>
+            </select>
+            <small>Alerts with a priority below this level are suppressed during quiet hours. Configure the priority per severity under <em>Notifications &rarr; Alert Priorities</em>.</small>
           </div>
         </div>
 
@@ -1352,6 +1389,10 @@
           <div class="form-group">
             <label>Stale after (extra days)</label>
             <input type="number" id="cfg-sl-stale" min="1" step="1">
+          </div>
+          <div class="form-group">
+            <label title="How many recent snapshots per backup group are kept in state for schedule learning and snapshot-loss detection. Raise this to improve detection coverage for groups with many daily backups.">Snapshot retention (per group)</label>
+            <input type="number" id="cfg-sl-retention" min="1" step="1">
           </div>
         </div>
 
@@ -1412,18 +1453,57 @@
           <button class="modal-close" onclick="closeModal('testModal')">✕</button>
         </div>
         <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:1rem;">
-          <strong style="color:var(--text)">Dry run</strong> – simulates the full check and shows what would be sent, without contacting ntfy.<br>
-          <strong style="color:var(--text)">Full test</strong> – runs the real check and sends actual notifications.<br>
-          <strong style="color:var(--text)">Send test notification</strong> – sends a single ping to your ntfy server to verify the configuration.
+          <strong style="color:var(--text)">Dry run</strong> &ndash; simulates the full check and shows what would be sent, without contacting ntfy.<br>
+          <strong style="color:var(--text)">Full test</strong> &ndash; runs the real check and sends actual notifications.<br>
+          <strong style="color:var(--text)">Send test notification</strong> &ndash; sends a single ping to your ntfy server. Use the severity selector below to test the configured priority for warning or critical alerts.
         </p>
-        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem;">
           <button class="btn btn-primary" id="btnDryRun" onclick="runDryTest()">🧪 Dry run</button>
           <button class="btn" style="border-color:var(--yellow);color:var(--yellow)" id="btnLiveTest" onclick="runLiveTest()">🚀 Full test</button>
           <button class="btn" style="border-color:var(--cyan);color:var(--cyan)" id="btnPingTest" onclick="runPingTest()">📬 Send test notification</button>
         </div>
+        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1.25rem;font-size:0.84rem;flex-wrap:wrap;">
+          <span style="color:var(--text-dim)">Severity for <strong style="color:var(--text)">Send test notification</strong>:</span>
+          <select id="test-severity" style="width:auto" onchange="updateTestPrioLabel()">
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
+          <span id="test-prio-label" style="color:var(--text-dim)"></span>
+        </div>
         <div id="testOutput" style="display:none;">
           <div class="form-section-title" id="testOutputLabel">Result</div>
           <pre class="test-output" id="testOutputPre"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Notification Log Modal ───────────────────────────── -->
+    <div id="logModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal('logModal')">
+      <div class="modal-box" style="max-width:900px">
+        <div class="modal-header">
+          <h2>📋 Notification Log</h2>
+          <button class="modal-close" onclick="closeModal('logModal')">✕</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+          <span id="logModalCount" style="font-size:0.84rem;color:var(--text-dim)"></span>
+          <button class="btn" style="border-color:var(--red,#e06c75);color:var(--red,#e06c75);font-size:0.82rem" onclick="clearNotificationLog()">🗑 Clear log</button>
+        </div>
+        <div id="logModalBody" style="overflow-x:auto;max-height:60vh;overflow-y:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left;padding:0.35rem 0.5rem;white-space:nowrap;color:var(--text-dim);font-weight:500">Time</th>
+                <th style="text-align:left;padding:0.35rem 0.5rem;white-space:nowrap;color:var(--text-dim);font-weight:500">Source</th>
+                <th style="text-align:left;padding:0.35rem 0.5rem;white-space:nowrap;color:var(--text-dim);font-weight:500">Prio</th>
+                <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-dim);font-weight:500">Title</th>
+                <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-dim);font-weight:500">Message</th>
+                <th style="text-align:left;padding:0.35rem 0.5rem;white-space:nowrap;color:var(--text-dim);font-weight:500">Datastore</th>
+              </tr>
+            </thead>
+            <tbody id="logModalTable"></tbody>
+          </table>
+          <p id="logModalEmpty" style="display:none;color:var(--text-dim);font-size:0.85rem;text-align:center;padding:1.5rem 0">No entries yet.</p>
+          <p id="logModalError" style="display:none;color:var(--red,#e06c75);font-size:0.84rem;padding:0.5rem 0"></p>
         </div>
       </div>
     </div>
@@ -2617,7 +2697,7 @@
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                ['settingsModal', 'testModal', 'errorModal'].forEach(closeModal);
+                ['settingsModal', 'testModal', 'logModal', 'errorModal'].forEach(closeModal);
             }
         });
 
@@ -2648,6 +2728,74 @@
         // ── Alerting config ────────────────────────────────────────────────────
         async function openTestModal() {
             openModal('testModal');
+            updateTestPrioLabel();
+        }
+
+        // ── Notification Log ───────────────────────────────────────────────────
+        async function openLogModal() {
+            openModal('logModal');
+            document.getElementById('logModalCount').textContent = 'Loading…';
+            document.getElementById('logModalEmpty').style.display = 'none';
+            document.getElementById('logModalError').style.display = 'none';
+            document.getElementById('logModalTable').innerHTML = '';
+            try {
+                const data = await fetchJson('/api/alerting/notification-log');
+                renderLogModal(data.entries || []);
+            } catch (e) {
+                document.getElementById('logModalCount').textContent = '';
+                const errEl = document.getElementById('logModalError');
+                errEl.textContent = 'Failed to load log: ' + (e.message || e);
+                errEl.style.display = '';
+            }
+        }
+
+        function renderLogModal(entries) {
+            const countEl = document.getElementById('logModalCount');
+            const tbody = document.getElementById('logModalTable');
+            const emptyEl = document.getElementById('logModalEmpty');
+            tbody.innerHTML = '';
+            if (!entries.length) {
+                countEl.textContent = '0 entries';
+                emptyEl.style.display = '';
+                return;
+            }
+            countEl.textContent = entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies') + ' (newest first)';
+            emptyEl.style.display = 'none';
+            const prioColor = p => p >= 5 ? 'var(--red,#e06c75)' : p >= 4 ? 'var(--yellow,#e5c07b)' : 'var(--text-dim)';
+            const srcLabel = s => s === 'webui-test' ? 'test' : s || '—';
+            // newest-first
+            const sorted = [...entries].reverse();
+            for (const e of sorted) {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid var(--border)';
+                tr.innerHTML = `
+                  <td style="padding:0.3rem 0.5rem;white-space:nowrap;color:var(--text-dim)">${formatDate(e.timestamp)}</td>
+                  <td style="padding:0.3rem 0.5rem;white-space:nowrap">${escHtml(srcLabel(e.source))}</td>
+                  <td style="padding:0.3rem 0.5rem;color:${prioColor(e.priority)};font-weight:600;white-space:nowrap">${e.priority ?? '—'}</td>
+                  <td style="padding:0.3rem 0.5rem">${escHtml(e.title || '—')}</td>
+                  <td style="padding:0.3rem 0.5rem;color:var(--text-dim);max-width:22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(e.message || '')}">${escHtml(e.message || '—')}</td>
+                  <td style="padding:0.3rem 0.5rem;white-space:nowrap;color:var(--text-dim)">${escHtml(e.datastore_name || '—')}</td>`;
+                tbody.appendChild(tr);
+            }
+        }
+
+        async function clearNotificationLog() {
+            if (!confirm('Clear all notification log entries?')) return;
+            try {
+                const res = await fetch('/api/alerting/notification-log', { method: 'DELETE' });
+                const data = await res.json();
+                if (data.ok) {
+                    renderLogModal([]);
+                } else {
+                    alert('Failed to clear log: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to clear log: ' + (e.message || e));
+            }
+        }
+
+        function escHtml(str) {
+            return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         }
 
         async function loadConfig() {
@@ -2660,6 +2808,10 @@
                 document.getElementById('cfg-ntfy_token').value = c.ntfy_token || '';
                 document.getElementById('cfg-cooldown').value = c.alert_cooldown_minutes ?? 60;
                 document.getElementById('cfg-daemon-interval').value = Math.round((c.daemon_interval_seconds ?? 1800) / 60);
+
+                _notifPriorities = c.notification_priorities || { warning: 4, critical: 5 };
+                document.getElementById('cfg-prio-warning').value = _notifPriorities.warning ?? 4;
+                document.getElementById('cfg-prio-critical').value = _notifPriorities.critical ?? 5;
 
                 const t = c.thresholds || {};
                 document.getElementById('cfg-thr-warn').value = t.storage_warn_percent ?? 80;
@@ -2681,6 +2833,7 @@
                 document.getElementById('cfg-sl-tolerance').value = sl.time_tolerance_minutes ?? 30;
                 document.getElementById('cfg-sl-grace').value = sl.due_grace_minutes ?? 30;
                 document.getElementById('cfg-sl-stale').value = sl.stale_after_days ?? 8;
+                document.getElementById('cfg-sl-retention').value = sl.snapshot_retention_count ?? 24;
 
                 if (res.read_only) {
                     document.getElementById('saveConfigBtn').disabled = true;
@@ -2718,6 +2871,10 @@
                     end: document.getElementById('cfg-qh-end').value.trim(),
                     min_priority: parseInt(document.getElementById('cfg-qh-prio').value),
                 },
+                notification_priorities: {
+                    warning: parseInt(document.getElementById('cfg-prio-warning').value),
+                    critical: parseInt(document.getElementById('cfg-prio-critical').value),
+                },
                 schedule_learning: {
                     enabled: document.getElementById('cfg-sl-enabled').value === 'true',
                     timezone: document.getElementById('cfg-sl-tz').value.trim(),
@@ -2726,6 +2883,7 @@
                     time_tolerance_minutes: parseInt(document.getElementById('cfg-sl-tolerance').value),
                     due_grace_minutes: parseInt(document.getElementById('cfg-sl-grace').value),
                     stale_after_days: parseInt(document.getElementById('cfg-sl-stale').value),
+                    snapshot_retention_count: parseInt(document.getElementById('cfg-sl-retention').value),
                 },
             };
 
@@ -2750,10 +2908,23 @@
             el.style.color = type === 'error' ? 'var(--red)' : 'var(--green)';
         }
 
+        function priorityLabel(p) {
+            return {1: 'min', 2: 'low', 3: 'default', 4: 'high', 5: 'urgent'}[p] || String(p);
+        }
+
+        function updateTestPrioLabel() {
+            const el = document.getElementById('test-prio-label');
+            if (!el) return;
+            const sv = document.getElementById('test-severity')?.value || 'warning';
+            const p = (_notifPriorities || {})[sv] ?? (sv === 'warning' ? 4 : 5);
+            el.textContent = `→ ntfy priority ${p} (${priorityLabel(p)})`;
+        }
+
         // ── Cron entry builder ─────────────────────────────────────────────────
         let _webuiAlertingPath = null;
         let _webuiPythonExec = null;
         let _ntfyUrl = null;
+        let _notifPriorities = null;
         let _isDocker = false;
 
         function updateCronEntry() {
@@ -2883,14 +3054,20 @@
 
         async function runPingTest() {
             const btn = document.getElementById('btnPingTest');
+            const severity = document.getElementById('test-severity')?.value || 'warning';
             btn.disabled = true;
             btn.textContent = '⏳ Sending…';
             showTestOutput('Sending test notification…', '');
             try {
-                const res = await fetch('/api/alerting/test/notify', { method: 'POST' });
+                const res = await fetch('/api/alerting/test/notify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ severity }),
+                });
                 const data = await res.json();
                 if (data.ok) {
-                    showTestOutput('✓ Test notification sent', `Notification delivered to ${data.url}`);
+                    showTestOutput('✓ Test notification sent',
+                        `Notification delivered to ${data.url}\nPriority: ${data.priority} (${priorityLabel(data.priority)})`);
                 } else {
                     const { description } = categorizeError(
                         data.status_code ? `HTTP ${data.status_code}` : (data.error || '')

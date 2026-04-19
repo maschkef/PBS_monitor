@@ -32,6 +32,7 @@ _alerting_data_env = os.environ.get("ALERTING_DATA_DIR", "").strip()
 _alerting_data_dir = Path(_alerting_data_env) if _alerting_data_env else (PROJECT_ROOT / "alerting")
 ALERTING_CONFIG_PATH = _alerting_data_dir / "config.json"
 ALERTING_STATE_PATH = _alerting_data_dir / "state.json"
+ALERTING_LOG_PATH = _alerting_data_dir / "notification_log.json"
 
 WEBUI_HOST = os.environ.get("WEBUI_HOST", "127.0.0.1")
 try:
@@ -986,11 +987,19 @@ def save_alerting_config():
         if "timezone" in sl:
             raw_sl["timezone"] = str(sl["timezone"])
         for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
-                        "due_grace_minutes", "stale_after_days"):
+                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
             if int_key in sl:
                 val = alert_monitor.coerce_int(sl[int_key])
                 if val is not None and val > 0:
                     raw_sl[int_key] = val
+
+    if "notification_priorities" in payload and isinstance(payload["notification_priorities"], dict):
+        raw_np = raw_config.setdefault("notification_priorities", {})
+        for sev in ("warning", "critical"):
+            if sev in payload["notification_priorities"]:
+                val = alert_monitor.coerce_int(payload["notification_priorities"][sev])
+                if val is not None and 1 <= val <= 5:
+                    raw_np[sev] = val
 
     with open(ALERTING_CONFIG_PATH, "w") as f:
         json.dump(raw_config, f, indent=2)
@@ -1096,6 +1105,11 @@ def alerting_test_notify():
     if guard:
         return guard
 
+    body = request.get_json(silent=True) or {}
+    severity = body.get("severity", "warning")
+    if severity not in ("warning", "critical"):
+        severity = "warning"
+
     config = alert_monitor.load_config()
     ntfy_url = config.get("ntfy_url", "").rstrip("/")
     ntfy_topic = config.get("ntfy_topic", "")
@@ -1104,11 +1118,17 @@ def alerting_test_notify():
     if not ntfy_url or not ntfy_topic:
         return jsonify({"ok": False, "error": "ntfy_url and ntfy_topic must be configured."}), 400
 
+    prio_cfg = config.get("notification_priorities", {})
+    default_prio = 4 if severity == "warning" else 5
+    priority = max(1, min(5, int(prio_cfg.get(severity) or default_prio)))
+
     url = f"{ntfy_url}/{ntfy_topic}"
+    severity_label = severity.capitalize()
+    tag = "warning" if severity == "warning" else "rotating_light"
     headers = {
-        "Title": "PBS Monitor - Test Notification",
-        "Priority": "3",
-        "Tags": "white_check_mark",
+        "Title": alert_monitor._ntfy_header_safe(f"PBS Monitor - Test Notification ({severity_label})"),
+        "Priority": str(priority),
+        "Tags": alert_monitor._ntfy_header_safe(tag),
     }
     if ntfy_token:
         headers["Authorization"] = f"Bearer {ntfy_token}"
@@ -1116,15 +1136,52 @@ def alerting_test_notify():
     try:
         resp = requests.post(
             url,
-            data="This is a test notification from PBS Monitor to verify the ntfy configuration.".encode("utf-8"),
+            data=f"Test {severity_label} notification from PBS Monitor (ntfy priority {priority}).".encode("utf-8"),
             headers=headers,
             timeout=10,
         )
         resp.raise_for_status()
-        return jsonify({"ok": True, "url": url})
+        alert_monitor.append_notification_log(ALERTING_LOG_PATH, {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "webui-test",
+            "title": f"PBS Monitor - Test Notification ({severity_label})",
+            "message": f"Test {severity_label} notification from PBS Monitor (ntfy priority {priority}).",
+            "priority": priority,
+            "datastore_name": None,
+            "alert_key": None,
+        })
+        return jsonify({"ok": True, "url": url, "priority": priority})
     except requests.RequestException as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         return jsonify({"ok": False, "error": str(e), "status_code": status_code}), 502
+
+
+@app.route("/api/alerting/notification-log", methods=["GET"])
+def get_notification_log():
+    """Return the notification history log."""
+    try:
+        if ALERTING_LOG_PATH.exists():
+            with open(ALERTING_LOG_PATH) as f:
+                entries = json.load(f)
+        else:
+            entries = []
+        return jsonify({"entries": entries, "count": len(entries)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/alerting/notification-log", methods=["DELETE"])
+def clear_notification_log():
+    """Clear the notification history log."""
+    guard = read_only_guard()
+    if guard:
+        return guard
+    try:
+        with open(ALERTING_LOG_PATH, "w") as f:
+            json.dump([], f)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/health")

@@ -43,12 +43,14 @@ DATA_DIR = Path(_data_dir_env) if _data_dir_env else SCRIPT_DIR
 
 CONFIG_PATH = DATA_DIR / "config.json"
 STATE_PATH = DATA_DIR / "state.json"
+NOTIFICATION_LOG_PATH = DATA_DIR / "notification_log.json"
 
 load_dotenv(ENV_PATH)
 
 STATE_VERSION = 2
 MAX_CURRENT_SNAPSHOT_DETAILS = 24
 MAX_OBSERVED_SNAPSHOT_HISTORY = 1000
+MAX_NOTIFICATION_LOG_ENTRIES = 500
 GROUP_RULES_VERSION = 1
 GROUP_RULES_PATH = DATA_DIR / "group_rules.json"
 INTERVAL_MODEL_MAX_MINUTES = 360
@@ -71,6 +73,10 @@ DEFAULT_CONFIG = {
         "end": "07:00",
         "min_priority": 4,
     },
+    "notification_priorities": {
+        "warning": 4,   # high — storage warnings, overdue GC/verification, missed backups
+        "critical": 5,  # urgent — critical storage, verification failure, datastore offline
+    },
     "schedule_learning": {
         "enabled": True,
         "timezone": "local",
@@ -79,6 +85,7 @@ DEFAULT_CONFIG = {
         "time_tolerance_minutes": 30,
         "due_grace_minutes": 30,
         "stale_after_days": 8,
+        "snapshot_retention_count": 24,
     },
     "alert_cooldown_minutes": 60,
     "daemon_interval_seconds": 1800,  # 30 minutes default for daemon mode
@@ -484,6 +491,10 @@ def load_config():
         merged = {**DEFAULT_CONFIG, **cfg}
         merged["thresholds"] = {**DEFAULT_CONFIG["thresholds"], **cfg.get("thresholds", {})}
         merged["quiet_hours"] = {**DEFAULT_CONFIG["quiet_hours"], **cfg.get("quiet_hours", {})}
+        merged["notification_priorities"] = {
+            **DEFAULT_CONFIG["notification_priorities"],
+            **cfg.get("notification_priorities", {}),
+        }
         merged["schedule_learning"] = {
             **DEFAULT_CONFIG["schedule_learning"],
             **cfg.get("schedule_learning", {}),
@@ -573,7 +584,7 @@ def build_snapshot_record(snapshot):
     }
 
 
-def build_backup_group_record(namespace, group, group_snapshots):
+def build_backup_group_record(namespace, group, group_snapshots, snapshot_cap=MAX_CURRENT_SNAPSHOT_DETAILS):
     """Build one normalized backup-group record from API data."""
     backup_type = group.get("backup_type")
     backup_id = str(group.get("backup_id", ""))
@@ -600,11 +611,11 @@ def build_backup_group_record(namespace, group, group_snapshots):
         "last_backup_at": unix_to_iso(last_backup),
         "backup_count": backup_count,
         "protected_snapshot_count": sum(1 for entry in group_snapshots if entry["protected"]),
-        "current_snapshots": normalize_snapshot_entries(group_snapshots, MAX_CURRENT_SNAPSHOT_DETAILS),
+        "current_snapshots": normalize_snapshot_entries(group_snapshots, snapshot_cap),
     }
 
 
-def extract_namespace_backup_groups(namespace, namespace_data):
+def extract_namespace_backup_groups(namespace, namespace_data, snapshot_cap=MAX_CURRENT_SNAPSHOT_DETAILS):
     """Group snapshots by PBS backup group within one namespace."""
     snapshots_by_group = {}
     for snapshot in namespace_data.get("snapshots") or []:
@@ -627,7 +638,7 @@ def extract_namespace_backup_groups(namespace, namespace_data):
             continue
 
         group_snapshots = snapshots_by_group.pop((backup_type, backup_id), [])
-        groups.append(build_backup_group_record(namespace, group, group_snapshots))
+        groups.append(build_backup_group_record(namespace, group, group_snapshots, snapshot_cap))
 
     for (backup_type, backup_id), group_snapshots in snapshots_by_group.items():
         synthetic_group = {
@@ -637,13 +648,16 @@ def extract_namespace_backup_groups(namespace, namespace_data):
             "backup_count": len(group_snapshots),
             "comment": None,
         }
-        groups.append(build_backup_group_record(namespace, synthetic_group, group_snapshots))
+        groups.append(build_backup_group_record(namespace, synthetic_group, group_snapshots, snapshot_cap))
 
     return groups
 
 
 def fetch_backup_inventory(config, datastore_id):
     """Fetch full PBS backup inventory for a datastore, grouped by namespace."""
+    snapshot_cap = max(1, coerce_int(
+        (config.get("schedule_learning") or {}).get("snapshot_retention_count")
+    ) or MAX_CURRENT_SNAPSHOT_DETAILS)
     base_path = f"/monitoring/v1/datastores/{datastore_id}/backups"
     overview = api_get(config, base_path)
     namespace_entries = overview.get("namespaces") or [{"ns": "", "comment": None}]
@@ -656,7 +670,7 @@ def fetch_backup_inventory(config, datastore_id):
     for namespace_meta in namespace_entries:
         namespace_value = namespace_meta.get("ns", "")
         namespace_data = api_get(config, base_path, params={"ns": namespace_value})
-        groups.extend(extract_namespace_backup_groups(namespace_value, namespace_data))
+        groups.extend(extract_namespace_backup_groups(namespace_value, namespace_data, snapshot_cap))
 
     snapshot_count = sum(group["backup_count"] for group in groups)
     return {
@@ -1439,9 +1453,12 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
     datastore_id = ds.get("id", "")
     group_rules = group_rules if group_rules is not None else default_group_rules()
     rules_changed = False
+    snapshot_cap = max(1, coerce_int(
+        (config.get("schedule_learning") or {}).get("snapshot_retention_count")
+    ) or MAX_CURRENT_SNAPSHOT_DETAILS)
 
     if raw_summary["snapshot_count"] == 0 and metric_backup_count > 0:
-        return [], f"inventory skipped (metrics={metric_backup_count}, browser=0)"
+        return [], f"inventory skipped (metrics={metric_backup_count}, browser=0)", False
 
     previous_summary = migrate_inventory_summary(ds_state.get("inventory_summary"))
     observed_at = datetime.now(timezone.utc).isoformat()
@@ -1450,6 +1467,19 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
     visible_namespaces = set()
     visible_group_count = 0
     visible_snapshot_count = 0
+    # Track groups seen for the first time this run so we can skip missed-backup
+    # evaluation: on first observation we load the full historical snapshot list
+    # but have no prior baseline, which would produce false-positive alerts.
+    new_group_keys: set = set()
+
+    # Prune config for snapshot disappearance detection.
+    # keep_last is the minimum number of snapshots PBS must retain per group after
+    # any prune run, regardless of other bucket settings.  If the observed count
+    # drops below min(prev_count, keep_last) the loss cannot be explained by
+    # normal pruning and we raise an alert.
+    prune_cfg = ds.get("prune") or {}
+    keep_last = max(0, coerce_int(prune_cfg.get("keep_last")) or 0)
+    snapshot_disappearances: list = []  # (group_key, curr_count, expected_min, vanished_times, group_record)
 
     for group_record in backup_inventory.get("groups") or []:
         if is_group_ignored(
@@ -1464,11 +1494,35 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         group_key = group_record["group_key"]
         current_group_keys.add(group_key)
         existing_group = backup_groups.get(group_key, {})
+        if not existing_group.get("first_observed_at"):
+            new_group_keys.add(group_key)
 
         current_snapshots = normalize_snapshot_entries(
             group_record.get("current_snapshots"),
-            MAX_CURRENT_SNAPSHOT_DETAILS,
+            snapshot_cap,
         )
+
+        # ── Detect unexpected snapshot loss relative to keep_last ──
+        if group_key not in new_group_keys and keep_last > 0:
+            prev_count = coerce_int(existing_group.get("current_snapshot_count")) or 0
+            curr_count = (
+                coerce_int(group_record.get("backup_count"))
+                if coerce_int(group_record.get("backup_count")) is not None
+                else len(current_snapshots)
+            )
+            expected_min = min(prev_count, keep_last)
+            if curr_count < expected_min:
+                prev_times = {
+                    s["backup_time"]
+                    for s in (existing_group.get("current_snapshots") or [])
+                    if s.get("backup_time")
+                }
+                curr_times = {s["backup_time"] for s in current_snapshots if s.get("backup_time")}
+                vanished = sorted(prev_times - curr_times, reverse=True)
+                snapshot_disappearances.append(
+                    (group_key, curr_count, expected_min, vanished, group_record)
+                )
+
         observed_snapshots = merge_snapshot_histories(
             existing_group.get("observed_snapshots"),
             current_snapshots,
@@ -1527,12 +1581,43 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
     ds_state["inventory_summary"] = summary
 
     alerts = []
-    if previous_summary["snapshot_count"] > 0 and summary["snapshot_count"] == 0:
-        name = ds.get("name", ds.get("id", "unknown"))
+    ds_name = ds.get("name", ds.get("id", "unknown"))
+
+    # ── Snapshot disappearance alerts ──
+    for group_key, curr_count, expected_min, vanished_times, group_record in snapshot_disappearances:
+        group_state = backup_groups.get(group_key, {})
+        group_display = (
+            group_state.get("display_name")
+            or f"{group_record['backup_type']}/{group_record['backup_id']}"
+        )
+        ns = group_record.get("namespace") or ""
+        ns_str = f" in namespace '{ns}'" if ns else ""
+        loss = expected_min - curr_count
+        time_detail = ""
+        if vanished_times:
+            sample = ", ".join(
+                datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                for t in vanished_times[:3]
+            )
+            extra = f" (+{len(vanished_times) - 3} more)" if len(vanished_times) > 3 else ""
+            time_detail = f" Missing: {sample}{extra}."
         alerts.append(Alert(
-            name,
+            ds_name,
+            "Snapshots Unexpectedly Removed",
+            f"{loss} snapshot(s) for '{group_display}'{ns_str} on '{ds_name}' disappeared "
+            f"outside the prune policy (keep_last={keep_last}, expected >={expected_min}, "
+            f"got {curr_count}).{time_detail}",
+            priority=4,
+            tags=["warning", "package"],
+            key=f"{ds.get('id', 'unknown')}:{group_key}:unexpected_snapshot_removal",
+        ))
+
+    # ── All Backups Gone ──
+    if previous_summary["snapshot_count"] > 0 and summary["snapshot_count"] == 0:
+        alerts.append(Alert(
+            ds_name,
             "All Backups Gone",
-            f"Backup inventory on '{name}' is now empty. Previously observed "
+            f"Backup inventory on '{ds_name}' is now empty. Previously observed "
             f"{previous_summary['snapshot_count']} snapshots across "
             f"{previous_summary['group_count']} groups.",
             priority=5,
@@ -1574,6 +1659,10 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         if schedule_model_has_definition(learned_model):
             learned_group_count += 1
         active_slot_count += effective_model.get("active_slot_count", 0)
+        if group_key in new_group_keys:
+            # First observation this run: we have snapshot history but no prior baseline.
+            # Skip missed-backup evaluation to avoid false-positive alerts on startup.
+            continue
         alerts.extend(evaluate_missed_backup_alerts(ds, group_state, effective_model, config, tzinfo))
 
     ds_state["schedule_summary"] = {
@@ -1769,6 +1858,31 @@ def _ntfy_header_safe(value):
     return normalized.encode("latin-1", errors="ignore").decode("latin-1")
 
 
+def append_notification_log(log_path, entry):
+    """Append one entry to the notification log, capping at MAX_NOTIFICATION_LOG_ENTRIES.
+
+    entry must be a JSON-serialisable dict. Silently ignores write errors so
+    that a broken log file never prevents alerting from functioning.
+    """
+    log_path = Path(log_path)
+    try:
+        if log_path.exists():
+            with open(log_path) as f:
+                entries = json.load(f)
+            if not isinstance(entries, list):
+                entries = []
+        else:
+            entries = []
+        entries.append(entry)
+        # Keep only the most-recent entries
+        if len(entries) > MAX_NOTIFICATION_LOG_ENTRIES:
+            entries = entries[-MAX_NOTIFICATION_LOG_ENTRIES:]
+        with open(log_path, "w") as f:
+            json.dump(entries, f, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARN] Could not write notification log: {exc}", file=sys.stderr)
+
+
 def send_ntfy(config, alert):
     """Send a single alert via ntfy."""
     # Check if ntfy is configured - don't send to external services without user configuration
@@ -1927,9 +2041,17 @@ def run_check(config, state):
             print("    ✓ All checks passed")
 
     # Send alerts
+    prio_cfg = config.get("notification_priorities", {})
+    warn_prio = max(1, min(5, int(prio_cfg.get("warning") or 4)))
+    crit_prio = max(1, min(5, int(prio_cfg.get("critical") or 5)))
     sent = 0
     skipped = 0
     for alert in all_alerts:
+        # Apply configured severity → priority mapping (4 = warning tier, 5 = critical tier)
+        if alert.priority >= 5:
+            alert.priority = crit_prio
+        elif alert.priority >= 4:
+            alert.priority = warn_prio
         if quiet and alert.priority < config["quiet_hours"].get("min_priority", 4):
             skipped += 1
             continue
@@ -1937,7 +2059,17 @@ def run_check(config, state):
             skipped += 1
             continue
         if send_ntfy(config, alert):
-            state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            state.setdefault("last_alerts", {})[alert.key] = now_iso
+            append_notification_log(NOTIFICATION_LOG_PATH, {
+                "timestamp": now_iso,
+                "source": "alerting",
+                "title": alert.title,
+                "message": alert.message,
+                "priority": alert.priority,
+                "datastore_name": alert.datastore_name,
+                "alert_key": alert.key,
+            })
             sent += 1
 
     print(f"\nAlerts: {len(all_alerts)} detected, {sent} sent, {skipped} skipped (cooldown/quiet)")
