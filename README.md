@@ -269,15 +269,6 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `storage_crit_percent` | Storage critical threshold in percent |
 | `gc_max_age_hours` | GC considered overdue after X hours |
 | `verification_max_age_days` | Verification considered overdue after X days |
-| `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
-| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800). Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
-
-The following can also be set as environment variables (in `.env` or the shell):
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Set automatically in Docker containers (`/app/data`). |
-
 | `quiet_hours.enabled` | Enable quiet hours (true/false) |
 | `quiet_hours.min_priority` | Only send alerts at or above this priority during quiet hours |
 | `schedule_learning.enabled` | Enable learned backup-window detection |
@@ -288,7 +279,14 @@ The following can also be set as environment variables (in `.env` or the shell):
 | `schedule_learning.due_grace_minutes` | How long a learned backup window may be late before a missed-backup alert is emitted. Default: `30` |
 | `schedule_learning.stale_after_days` | Extra days beyond the normal weekly slot cadence before a learned slot is treated as stale |
 | `schedule_learning.snapshot_retention_count` | How many recent snapshots per backup group are stored in state (default: 24). Used for schedule learning and snapshot-loss detection — raise this for groups with many daily backups |
-| `alert_cooldown_minutes` | Minimum time between repeated alerts of the same type |
+| `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
+| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800). Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
+
+The following can also be set as environment variables (in `.env` or the shell):
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Set automatically in Docker containers (`/app/data`). |
 
 ### Alert Priorities (ntfy)
 
