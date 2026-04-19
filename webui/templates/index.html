@@ -2773,7 +2773,7 @@
                   <td style="padding:0.3rem 0.5rem;white-space:nowrap">${escHtml(srcLabel(e.source))}</td>
                   <td style="padding:0.3rem 0.5rem;color:${prioColor(e.priority)};font-weight:600;white-space:nowrap">${e.priority ?? '—'}</td>
                   <td style="padding:0.3rem 0.5rem">${escHtml(e.title || '—')}</td>
-                  <td style="padding:0.3rem 0.5rem;color:var(--text-dim);max-width:22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(e.message || '')}">${escHtml(e.message || '—')}</td>
+                  <td style="padding:0.3rem 0.5rem;color:var(--text-dim);max-width:28rem;white-space:pre-wrap;word-break:break-word">${escHtml(e.message || '—')}</td>
                   <td style="padding:0.3rem 0.5rem;white-space:nowrap;color:var(--text-dim)">${escHtml(e.datastore_name || '—')}</td>`;
                 tbody.appendChild(tr);
             }
