@@ -1506,7 +1506,6 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
     metrics = ds.get("metrics") or {}
     gc = ds.get("gc") or {}
     verification = ds.get("verification") or {}
-    autoscaling = ds.get("autoscaling") or {}
     immutable = ds.get("immutable_backup") or {}
     replication = ds.get("replication") or {}
 
@@ -1831,7 +1830,7 @@ def run_check(config, state):
                 print(f"    ⚠ {a.title}: {a.message}")
             all_alerts.extend(alerts)
         else:
-            print(f"    ✓ All checks passed")
+            print("    ✓ All checks passed")
 
     # Send alerts
     sent = 0
