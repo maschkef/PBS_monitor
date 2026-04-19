@@ -4,13 +4,16 @@ LABEL org.opencontainers.image.source=https://github.com/maschkef/PBS_monitor
 LABEL org.opencontainers.image.description="PBS Monitor Alerting Service"
 LABEL org.opencontainers.image.licenses=MIT
 
-# Install gosu for privilege dropping in the entrypoint
-RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+# Install gosu and apply OS security patches (e.g. openssl CVE-2026-28390)
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (used after privilege drop in entrypoint)
 RUN groupadd -r pbs && useradd -r -g pbs pbs
 WORKDIR /app
+
+# Upgrade pip-bundled tools to fix vendored CVEs (jaraco.context, wheel)
+RUN pip install --no-cache-dir --upgrade setuptools wheel
 
 # Install dependencies
 COPY alerting/requirements.txt .
