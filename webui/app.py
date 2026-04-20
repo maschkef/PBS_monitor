@@ -312,7 +312,12 @@ def login():
             app.logger.info("LOGIN SUCCESS  ip=%s", request.remote_addr)
             return redirect(url_for("index"))
         _audit("login_failure")
-        app.logger.warning("LOGIN FAILURE  ip=%s", request.remote_addr)
+        app.logger.warning(
+            "LOGIN FAILURE  ip=%s  x-forwarded-for=%r  x-real-ip=%r",
+            request.remote_addr,
+            request.headers.get("X-Forwarded-For", ""),
+            request.headers.get("X-Real-IP", ""),
+        )
         error = "Invalid password"
 
     nonce = secrets.token_hex(16)
