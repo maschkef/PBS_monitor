@@ -16,6 +16,7 @@ Cron example (every 5 minutes):
 """
 
 import argparse
+import contextlib
 import json
 import shutil
 import os
@@ -185,10 +186,17 @@ def load_state():
 
 
 def save_state(state):
-    """Persist state to disk."""
+    """Persist state to disk atomically."""
     state["version"] = STATE_VERSION
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+    tmp = STATE_PATH.with_name(STATE_PATH.name + ".tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, STATE_PATH)
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 # ─── API Client ──────────────────────────────────────────────────────────────
@@ -357,10 +365,17 @@ def load_group_rules():
 
 
 def save_group_rules(group_rules):
-    """Persist group rules to disk."""
+    """Persist group rules to disk atomically."""
     group_rules["version"] = GROUP_RULES_VERSION
-    with open(GROUP_RULES_PATH, "w") as f:
-        json.dump(group_rules, f, indent=2)
+    tmp = GROUP_RULES_PATH.with_name(GROUP_RULES_PATH.name + ".tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(group_rules, f, indent=2)
+        os.replace(tmp, GROUP_RULES_PATH)
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 # ─── Schedule / rule sync helpers ────────────────────────────────────────────

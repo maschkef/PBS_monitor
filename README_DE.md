@@ -125,6 +125,12 @@ Die folgenden Variablen können in `.env` gesetzt werden:
 | `WEBUI_HOST` | `127.0.0.1` | Bind-Adresse. Auf `0.0.0.0` setzen um auf allen Interfaces erreichbar zu sein |
 | `WEBUI_READ_ONLY` | `0` | Auf `1` setzen um alle Schreiboperationen zu deaktivieren (Konfig-Änderungen, Regeländerungen, Gruppen ignorieren, Live-Test) |
 | `FLASK_DEBUG` | `0` | Auf `1` setzen um Flask Debug-Modus zu aktivieren. **Nicht** im Produktivbetrieb verwenden |
+| `WEBUI_SECURE_COOKIES` | `0` | Auf `1` setzen um den `Secure`-Flag auf Session-Cookies zu setzen. Aktivieren wenn das Dashboard über HTTPS ausgeliefert wird (z. B. hinter einem TLS-terminierenden Reverse Proxy) |
+| `WEBUI_HIDE_SERVER_PATHS` | `0` | Auf `1` setzen um serverseitige Dateisystempfade aus dem `/api/webui/info`-Endpoint auszublenden (Alerting-Datenverzeichnis, Python-Executable). Empfohlen wenn das Dashboard öffentlich erreichbar ist |
+| `WEBUI_PROXY_COUNT` | `0` | Anzahl der vertrauenswürdigen Reverse-Proxy-Hops zwischen Internet und Flask. Damit verwenden Rate-Limiting und Audit-Logs die echte Client-IP statt einer Proxy-IP. Beispiel: `1` für einen einzelnen Traefik davor, `2` für nginx → Traefik → Flask |
+
+> [!TIP]
+> **Reverse-Proxy-Setup:** Wenn Flask hinter einem oder mehreren Proxys läuft, `WEBUI_PROXY_COUNT` auf die Anzahl der Proxy-Hops setzen, sodass Rate-Limiting und Login-Audit-Logs die echte Client-IP aus `X-Forwarded-For` verwenden. Nur so viele Hops vertrauen wie tatsächlich selbst betrieben — den Wert exakt auf die Anzahl der eigenen Proxys setzen (z. B. `WEBUI_PROXY_COUNT=2` für nginx → Traefik → Flask). Zusätzlich `WEBUI_SECURE_COOKIES=1` aktivieren, wenn TLS vom Proxy terminiert wird.
 
 ### Dashboard-Sektionen
 

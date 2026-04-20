@@ -11,11 +11,13 @@ import sys
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +32,13 @@ from webui import alerting_ui as _alerting_ui  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
 
 app = Flask(__name__, static_folder="static")
+
+# When running behind a reverse proxy (e.g. Traefik), wrap the app with
+# ProxyFix so that request.remote_addr reflects the real client IP from
+# X-Forwarded-For instead of the proxy's Docker-internal address.
+# This makes both rate-limiting and audit logging work correctly.
+if WEBUI_PROXY_COUNT > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=WEBUI_PROXY_COUNT, x_proto=WEBUI_PROXY_COUNT, x_host=WEBUI_PROXY_COUNT)
 
 limiter = Limiter(
     get_remote_address,
@@ -65,6 +74,19 @@ WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "").strip()
 # When set, overrides ntfy_token from config.json without ever writing the
 # secret to disk.  Follows the same pattern as WEBUI_SECRET_KEY.
 NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "").strip()
+# Set to 1 when the app is served via HTTPS (Traefik/reverse-proxy with TLS).
+# Enforces the Secure flag on the session cookie so it is never sent over HTTP.
+WEBUI_SECURE_COOKIES = os.environ.get("WEBUI_SECURE_COOKIES", "").lower() in ("1", "true", "yes")
+# Set to 1 to omit absolute server paths from /api/webui/info responses.
+WEBUI_HIDE_SERVER_PATHS = os.environ.get("WEBUI_HIDE_SERVER_PATHS", "").lower() in ("1", "true", "yes")
+# Number of reverse-proxy hops in front of Flask (e.g. 1 for a single Traefik
+# instance).  When non-zero, Flask reads the real client IP from the
+# X-Forwarded-For header rather than using the Docker-internal proxy address.
+# Only set this when you control the proxy and trust its headers.
+try:
+    WEBUI_PROXY_COUNT = int(os.environ.get("WEBUI_PROXY_COUNT", "0"))
+except ValueError:
+    WEBUI_PROXY_COUNT = 0
 
 
 # ── Re-exports for backward compatibility (tests import these from webapp) ─────
@@ -104,6 +126,7 @@ def _configure_secret_key() -> str:
 app.secret_key = _configure_secret_key()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = WEBUI_SECURE_COOKIES
 
 
 @app.after_request
@@ -112,9 +135,11 @@ def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
@@ -232,6 +257,19 @@ def read_only_guard():
     return None
 
 
+def _write_json_atomic(path: Path, data) -> None:
+    """Atomically write *data* as JSON to *path* via a same-directory temp file."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
 def api_get(path, params=None):
     """Make authenticated GET request to the monitoring API."""
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -248,7 +286,7 @@ def api_get_public(path):
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("10 per minute")
+@limiter.limit("5 per minute; 20 per hour")
 def login():
     """Login page — only active when WEBUI_PASSWORD is configured."""
     if not auth_enabled():
@@ -271,8 +309,10 @@ def login():
             session["authenticated"] = True
             session["csrf_token"] = secrets.token_hex(32)
             _audit("login_success")
+            app.logger.info("LOGIN SUCCESS  ip=%s", request.remote_addr)
             return redirect(url_for("index"))
         _audit("login_failure")
+        app.logger.warning("LOGIN FAILURE  ip=%s", request.remote_addr)
         error = "Invalid password"
 
     nonce = secrets.token_hex(16)
@@ -678,8 +718,7 @@ def ignore_group():
         normalized_ignored_groups.append(ignored_group)
 
     raw_config["ignored_groups"] = normalized_ignored_groups
-    with open(ALERTING_CONFIG_PATH, "w") as f:
-        json.dump(raw_config, f, indent=2)
+    _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 
     rule_key = alert_monitor.make_rule_key(datastore_id, namespace, backup_type, backup_id)
     group_rules = load_visual_group_rules()[0]
@@ -733,8 +772,7 @@ def unignore_group():
         )
     ]
     raw_config["ignored_groups"] = new_list
-    with open(ALERTING_CONFIG_PATH, "w") as f:
-        json.dump(raw_config, f, indent=2)
+    _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 
     removed_count = len(normalized) - len(new_list)
     rule_key_un = alert_monitor.make_rule_key(datastore_id, namespace, backup_type, backup_id)
@@ -748,13 +786,15 @@ def webui_info():
     """Return web UI metadata (read-only flag, paths) for the frontend."""
     # Detect Docker environment
     is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV") == "true"
-    
-    return jsonify({
+
+    info = {
         "read_only": WEBUI_READ_ONLY,
-        "alerting_path": str(PROJECT_ROOT / "alerting"),
-        "python_executable": sys.executable,
         "is_docker": is_docker,
-    })
+    }
+    if not WEBUI_HIDE_SERVER_PATHS:
+        info["alerting_path"] = str(PROJECT_ROOT / "alerting")
+        info["python_executable"] = sys.executable
+    return jsonify(info)
 
 
 @app.route("/api/alerting/config")
@@ -853,8 +893,7 @@ def save_alerting_config():
                 if val is not None and 1 <= val <= 5:
                     raw_np[sev] = val
 
-    with open(ALERTING_CONFIG_PATH, "w") as f:
-        json.dump(raw_config, f, indent=2)
+    _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 
     changed_keys = [k for k in payload if k != "ntfy_token"]
     _audit("config_save", changed_keys=changed_keys)
@@ -954,9 +993,11 @@ def alerting_test_live():
         with contextlib.redirect_stdout(output):
             alert_monitor.run_check(config, state)
         _audit("test_live")
-        return jsonify({"ok": True, "output": output.getvalue()})
+        out = output.getvalue()
+        return jsonify({"ok": True, "output": out[-8192:] if len(out) > 8192 else out})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "output": output.getvalue()}), 500
+        out = output.getvalue()
+        return jsonify({"ok": False, "error": str(e), "output": out[-8192:] if len(out) > 8192 else out}), 500
 
 
 @app.route("/api/alerting/test/notify", methods=["POST"])
@@ -991,7 +1032,7 @@ def alerting_test_notify():
     default_prio = 4 if severity == "warning" else 5
     priority = max(1, min(5, int(prio_cfg.get(severity) or default_prio)))
 
-    url = f"{ntfy_url}/{ntfy_topic}"
+    url = f"{ntfy_url}/{quote(ntfy_topic, safe='')}"
     severity_label = severity.capitalize()
     tag = "warning" if severity == "warning" else "rotating_light"
     headers = {
@@ -1051,8 +1092,7 @@ def clear_notification_log():
     if guard:
         return guard
     try:
-        with open(ALERTING_LOG_PATH, "w") as f:
-            json.dump([], f)
+        _write_json_atomic(ALERTING_LOG_PATH, [])
         _audit("notification_log_clear")
         return jsonify({"ok": True})
     except Exception as e:

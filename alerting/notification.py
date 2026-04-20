@@ -11,7 +11,7 @@ import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import requests
 
@@ -140,7 +140,7 @@ def send_ntfy(config, alert):
         print(f"  [ERROR] ntfy URL rejected (SSRF guard): {exc}", file=sys.stderr)
         return False
 
-    url = f"{ntfy_url}/{ntfy_topic}"
+    url = f"{ntfy_url}/{quote(ntfy_topic, safe='')}"
     try:
         resp = requests.post(url, data=alert.message.encode("utf-8"), headers=headers, timeout=10)
         resp.raise_for_status()

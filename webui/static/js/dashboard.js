@@ -642,22 +642,22 @@
                         <input id="timezone-${domId}" class="header-select" style="min-width:180px;" value="${timezoneValue}">
                     </div>
                     <div style="display:flex;gap:0.6rem;justify-content:flex-end;margin-top:0.9rem;flex-wrap:wrap;">
-                        <button class="btn btn-secondary" onclick='applyLearnedToForm("${domId}", ${JSON.stringify(learned).replace(/'/g, '&apos;')})'>Use Learned</button>
-                        <button class="btn btn-secondary" onclick='ignoreGroup(${JSON.stringify({
+                        <button class="btn btn-secondary" onclick='applyLearnedToForm("${domId}", ${jsonAttr(learned)})'>Use Learned</button>
+                        <button class="btn btn-secondary" onclick='ignoreGroup(${jsonAttr({
                             datastore_id: group.datastore_id,
                             namespace: group.namespace === 'root' ? '' : group.namespace,
                             backup_type: group.backup_type,
                             backup_id: group.backup_id,
                             display_name: group.label,
-                        }).replace(/'/g, '&apos;')})'>Ignore</button>
-                        <button class="btn" onclick='saveGroupRule(${JSON.stringify({
+                        })})'>Ignore</button>
+                        <button class="btn" onclick='saveGroupRule(${jsonAttr({
                             datastore_id: group.datastore_id,
                             namespace: group.namespace === 'root' ? '' : group.namespace,
                             backup_type: group.backup_type,
                             backup_id: group.backup_id,
                             display_name: group.label,
                             domId,
-                        }).replace(/'/g, '&apos;')})'>Save</button>
+                        })})'>Save</button>
                     </div>
                 </div>
             </details>`;
@@ -815,12 +815,12 @@
                         ${subtitle ? `<div class="learned-group-subtitle">${escHtml(subtitle)}</div>` : ''}
                         <div class="learned-group-subtitle">namespace ${escHtml(ns)}</div>
                     </div>
-                    <button class="btn btn-secondary" onclick='unignoreGroup(${JSON.stringify({
+                    <button class="btn btn-secondary" onclick='unignoreGroup(${jsonAttr({
                         datastore_id: ig.datastore_id,
                         namespace: ig.namespace || '',
                         backup_type: ig.backup_type,
                         backup_id: ig.backup_id,
-                    }).replace(/'/g, "&apos;")})'>Unignore</button>
+                    })})'>Unignore</button>
                 </div>`;
             }).join('');
             return `<details style="margin-top:0.6rem;">
@@ -881,7 +881,7 @@
 
             const issuesHtml = ds.issues.map(i => {
                 const cls = ds.health === 'critical' ? 'critical' : 'warning';
-                return `<span class="issue-badge ${cls}">${i}</span>`;
+                return `<span class="issue-badge ${cls}">${escHtml(i)}</span>`;
             }).join('');
 
             return `
@@ -1278,6 +1278,17 @@
 
         function escHtml(str) {
             return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        // Serialize an object to JSON safe for single-quote-delimited onclick attributes.
+        // Encodes &, <, > in addition to ' so that embedded HTML tags cannot break
+        // out of the attribute or mislead the HTML parser.
+        function jsonAttr(obj) {
+            return JSON.stringify(obj)
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, '&apos;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
         }
 
         async function loadConfig() {
