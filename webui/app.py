@@ -33,13 +33,6 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 app = Flask(__name__, static_folder="static")
 
-# When running behind a reverse proxy (e.g. Traefik), wrap the app with
-# ProxyFix so that request.remote_addr reflects the real client IP from
-# X-Forwarded-For instead of the proxy's Docker-internal address.
-# This makes both rate-limiting and audit logging work correctly.
-if WEBUI_PROXY_COUNT > 0:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=WEBUI_PROXY_COUNT, x_proto=WEBUI_PROXY_COUNT, x_host=WEBUI_PROXY_COUNT)
-
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -87,6 +80,13 @@ try:
     WEBUI_PROXY_COUNT = int(os.environ.get("WEBUI_PROXY_COUNT", "0"))
 except ValueError:
     WEBUI_PROXY_COUNT = 0
+
+# When running behind a reverse proxy (e.g. Traefik), wrap the app with
+# ProxyFix so that request.remote_addr reflects the real client IP from
+# X-Forwarded-For instead of the proxy's Docker-internal address.
+# This makes both rate-limiting and audit logging work correctly.
+if WEBUI_PROXY_COUNT > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=WEBUI_PROXY_COUNT, x_proto=WEBUI_PROXY_COUNT, x_host=WEBUI_PROXY_COUNT)
 
 
 # ── Re-exports for backward compatibility (tests import these from webapp) ─────
