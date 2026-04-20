@@ -2,20 +2,15 @@
 """PBS Monitor Web UI — Ad-hoc status dashboard for remote-backups.com datastores."""
 
 import contextlib
-import copy
 import io
-import ipaddress
 import json
 import logging
 import os
-import re
 import secrets
-import socket
 import sys
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
@@ -28,10 +23,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from alerting import monitor as alert_monitor  # noqa: E402
+from webui import normalizers as _normalizers  # noqa: E402
+from webui import validators as _validators  # noqa: E402
+from webui import alerting_ui as _alerting_ui  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 
 limiter = Limiter(
     get_remote_address,
@@ -69,13 +67,28 @@ WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "").strip()
 NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "").strip()
 
 
-def _configure_secret_key() -> str:
-    """Return the Flask secret key from environment, or a volatile fallback.
+# ── Re-exports for backward compatibility (tests import these from webapp) ─────
+# Sentinel and pure helpers live in validators.py; expose them here so that
+# existing tests referencing ``webapp._TOKEN_SENTINEL`` etc. keep working.
+_TOKEN_SENTINEL = _validators._TOKEN_SENTINEL
+_validate_ntfy_url = _validators._validate_ntfy_url
+_validate_group_rule_payload = _validators._validate_group_rule_payload
 
-    If WEBUI_PASSWORD is set (auth is active) but WEBUI_SECRET_KEY is not,
-    sessions will not survive a server restart.  A warning is printed so the
-    operator knows to set WEBUI_SECRET_KEY for a stable deployment.
-    """
+
+def _redact_config(cfg: dict) -> dict:
+    """Return a copy of cfg safe for browser consumption (secrets replaced with sentinel)."""
+    return _validators._redact_config(cfg, ntfy_token_override=NTFY_TOKEN)
+
+
+def _validate_config_payload(payload: dict) -> None:
+    """Validate a user-supplied alerting config payload; raises ValueError on bad input."""
+    _validators._validate_config_payload(payload, alert_monitor.coerce_int)
+
+
+# ── Secret key configuration ──────────────────────────────────────────────────
+
+def _configure_secret_key() -> str:
+    """Return the Flask secret key from environment, or a volatile fallback."""
     if WEBUI_SECRET_KEY:
         return WEBUI_SECRET_KEY
     if WEBUI_PASSWORD:
@@ -114,11 +127,6 @@ def add_security_headers(response):
     return response
 
 
-# Sentinel returned to the browser instead of actual secret values.
-# The frontend must submit this exact string back for the server to recognise
-# that the user did not change the secret (i.e., preserve the stored value).
-_TOKEN_SENTINEL = "***CONFIGURED***"
-
 # ── Audit logging ─────────────────────────────────────────────────────────────
 _AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", "").strip()
 _audit_logger = logging.getLogger("pbs_monitor.audit")
@@ -144,51 +152,11 @@ def _audit(action: str, **kwargs) -> None:
     _audit_logger.info(json.dumps(record, separators=(",", ":")))
 
 
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
 def auth_enabled() -> bool:
     """Return True when password-based authentication is configured."""
     return bool(WEBUI_PASSWORD)
-
-
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("fe80::/10"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("fc00::/7"),
-]
-
-
-def _validate_ntfy_url(url: str) -> None:
-    """Raise ValueError if url is not a safe, public http/https endpoint.
-
-    Prevents SSRF by rejecting loopback, link-local, private-range, and
-    cloud-metadata addresses as well as non-http/https schemes.
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        raise ValueError("Invalid ntfy URL.")
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("ntfy URL must use http or https.")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("ntfy URL must contain a hostname.")
-    try:
-        results = socket.getaddrinfo(hostname, None)
-    except OSError:
-        raise ValueError("ntfy URL hostname could not be resolved.")
-    for _family, _type, _proto, _canonname, sockaddr in results:
-        raw_addr = sockaddr[0]
-        try:
-            addr = ipaddress.ip_address(raw_addr)
-        except ValueError:
-            continue
-        for net in _PRIVATE_NETWORKS:
-            if addr in net:
-                raise ValueError("ntfy URL must not point to a private or reserved address.")
 
 
 def _get_or_create_csrf_token() -> str:
@@ -213,11 +181,7 @@ def require_auth(f):
 
 
 def require_csrf(f):
-    """Decorator: validate X-CSRF-Token header for all state-changing routes.
-
-    Only enforced when auth is enabled (CSRF is only meaningful in a
-    session-authenticated context).
-    """
+    """Decorator: validate X-CSRF-Token header for all state-changing routes."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not auth_enabled():
@@ -230,131 +194,42 @@ def require_csrf(f):
     return decorated
 
 
-def _redact_config(cfg: dict) -> dict:
-    """Return a copy of cfg safe for browser consumption.
+# ── Thin wrappers around alerting_ui helpers (inject module-level paths) ──────
 
-    Secrets are replaced with a sentinel so the frontend can distinguish
-    'token is configured' from 'token is empty' without the actual value
-    ever leaving the server.
-    """
-    redacted = dict(cfg)
-    effective_token = NTFY_TOKEN or redacted.get("ntfy_token", "")
-    redacted["ntfy_token_set"] = bool(effective_token)
-    if effective_token:
-        redacted["ntfy_token"] = _TOKEN_SENTINEL
-    return redacted
+def load_visual_alerting_config() -> dict:
+    return _alerting_ui.load_visual_alerting_config(ALERTING_CONFIG_PATH)
 
 
-# HH:MM — strict: hours 00-23, minutes 00-59
-_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-
-# Max lengths for free-text string fields in the alerting config payload.
-_CONFIG_STR_MAX: dict[str, int] = {
-    "ntfy_url": 2048,
-    "ntfy_topic": 256,
-    "ntfy_token": 512,
-}
-
-# Max lengths for string fields in the group-rule payload.
-_RULE_STR_MAX: dict[str, int] = {
-    "datastore_id": 128,
-    "namespace": 128,
-    "backup_type": 32,
-    "backup_id": 256,
-    "display_name": 256,
-    "timezone": 64,
-}
+def load_visual_alerting_state() -> tuple:
+    return _alerting_ui.load_visual_alerting_state(ALERTING_STATE_PATH)
 
 
-def _validate_config_payload(payload: dict) -> None:
-    """Validate a user-supplied alerting config payload.
-
-    Raises ValueError with a human-readable message for any invalid field so
-    the route can return a 400 response without writing anything to disk.
-    """
-    for key, maxlen in _CONFIG_STR_MAX.items():
-        if key in payload:
-            val = payload[key]
-            if not isinstance(val, str):
-                raise ValueError(f"{key} must be a string.")
-            if len(val) > maxlen:
-                raise ValueError(f"{key} must not exceed {maxlen} characters.")
-
-    if "alert_cooldown_minutes" in payload:
-        v = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
-        if v is None or v < 0:
-            raise ValueError("alert_cooldown_minutes must be a non-negative integer.")
-
-    if "daemon_interval_seconds" in payload:
-        v = alert_monitor.coerce_int(payload["daemon_interval_seconds"])
-        if v is None or v < 60:
-            raise ValueError("daemon_interval_seconds must be at least 60.")
-
-    if "thresholds" in payload:
-        if not isinstance(payload["thresholds"], dict):
-            raise ValueError("thresholds must be an object.")
-        thr = payload["thresholds"]
-        for k in ("storage_warn_percent", "storage_crit_percent"):
-            if k in thr:
-                v = alert_monitor.coerce_int(thr[k])
-                if v is None or not (1 <= v <= 100):
-                    raise ValueError(f"thresholds.{k} must be between 1 and 100.")
-        for k in ("gc_max_age_hours", "verification_max_age_days"):
-            if k in thr:
-                v = alert_monitor.coerce_int(thr[k])
-                if v is None or v <= 0:
-                    raise ValueError(f"thresholds.{k} must be a positive integer.")
-
-    if "quiet_hours" in payload:
-        if not isinstance(payload["quiet_hours"], dict):
-            raise ValueError("quiet_hours must be an object.")
-        qh = payload["quiet_hours"]
-        for time_key in ("start", "end"):
-            if time_key in qh:
-                if not isinstance(qh[time_key], str) or not _TIME_RE.match(qh[time_key]):
-                    raise ValueError(f"quiet_hours.{time_key} must be in HH:MM format (00:00–23:59).")
-        if "min_priority" in qh:
-            v = alert_monitor.coerce_int(qh["min_priority"])
-            if v is None or not (1 <= v <= 5):
-                raise ValueError("quiet_hours.min_priority must be between 1 and 5.")
-
-    if "schedule_learning" in payload:
-        if not isinstance(payload["schedule_learning"], dict):
-            raise ValueError("schedule_learning must be an object.")
-        sl = payload["schedule_learning"]
-        if "timezone" in sl:
-            if not isinstance(sl["timezone"], str) or len(sl["timezone"]) > 64:
-                raise ValueError("schedule_learning.timezone must be a string of at most 64 characters.")
-        for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
-                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
-            if int_key in sl:
-                v = alert_monitor.coerce_int(sl[int_key])
-                if v is None or v <= 0:
-                    raise ValueError(f"schedule_learning.{int_key} must be a positive integer.")
-
-    if "notification_priorities" in payload:
-        if not isinstance(payload["notification_priorities"], dict):
-            raise ValueError("notification_priorities must be an object.")
-        np_ = payload["notification_priorities"]
-        for sev in ("warning", "critical"):
-            if sev in np_:
-                v = alert_monitor.coerce_int(np_[sev])
-                if v is None or not (1 <= v <= 5):
-                    raise ValueError(f"notification_priorities.{sev} must be between 1 and 5.")
+def load_visual_group_rules() -> tuple:
+    return _alerting_ui.load_visual_group_rules()
 
 
-def _validate_group_rule_payload(payload: dict) -> None:
-    """Validate a user-supplied group-rule payload.
+def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, rules_source, *, fetch_inventory=True):
+    return _alerting_ui.build_visual_alerting(
+        detail, alerting_config, alerting_state, group_rules, rules_source,
+        ALERTING_STATE_PATH, fetch_inventory=fetch_inventory,
+    )
 
-    Raises ValueError with a human-readable message for any invalid field.
-    """
-    for key, maxlen in _RULE_STR_MAX.items():
-        val = payload.get(key)
-        if val is not None:
-            if not isinstance(val, str):
-                raise ValueError(f"{key} must be a string.")
-            if len(val) > maxlen:
-                raise ValueError(f"{key} must not exceed {maxlen} characters.")
+
+# ── Convenience aliases for normalizer functions used directly in routes ───────
+format_bytes = _normalizers.format_bytes
+time_ago = _normalizers.time_ago
+time_until = _normalizers.time_until
+normalize_namespace = _normalizers.normalize_namespace
+should_hide_zfs_recv = _normalizers.should_hide_zfs_recv
+
+
+# ── Misc route helpers ────────────────────────────────────────────────────────
+
+def read_only_guard():
+    """Return a 403 JSON response when WEBUI_READ_ONLY is active, else None."""
+    if WEBUI_READ_ONLY:
+        return jsonify({"error": "Dashboard befindet sich im Read-Only-Modus."}), 403
+    return None
 
 
 def api_get(path, params=None):
@@ -370,442 +245,6 @@ def api_get_public(path):
     resp = requests.get(f"{API_BASE}{path}", timeout=10)
     resp.raise_for_status()
     return resp.json()
-
-
-def format_bytes(b):
-    """Format bytes to human readable string (base-1000 / SI units)."""
-    if b is None:
-        return "N/A"
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if abs(b) < 1000:
-            return f"{b:.1f} {unit}"
-        b /= 1000
-    return f"{b:.1f} PB"
-
-
-def format_binary_bytes(b):
-    """Format bytes using IEC units for technical backup browser data."""
-    if b is None:
-        return "N/A"
-    if b == 0:
-        return "0 B"
-    value = float(b)
-    for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB']:
-        if abs(value) < 1024:
-            return f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} PiB"
-
-
-def unix_to_iso(timestamp):
-    """Convert a UNIX timestamp to an ISO 8601 string."""
-    if timestamp is None:
-        return None
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
-
-
-def normalize_backup_file(file_entry):
-    """Normalize file metadata returned by backup browsing."""
-    size = file_entry.get("size")
-    return {
-        "filename": file_entry.get("filename", "unknown"),
-        "size": size,
-        "size_human": format_binary_bytes(size),
-        "csum": file_entry.get("csum"),
-    }
-
-
-def normalize_backup_snapshot(snapshot):
-    """Normalize a single PBS snapshot returned by backup browsing."""
-    files = [normalize_backup_file(file_entry) for file_entry in snapshot.get("files") or []]
-    backup_time = snapshot.get("backup_time")
-
-    # The remote-backups.com monitoring API does not include a per-snapshot verification
-    # field in BackupSnapshotEntry. Verification status is only available at datastore level.
-    # If the field is ever added to the API response, this code will handle it correctly.
-    raw_verification = snapshot.get("verification")
-    if isinstance(raw_verification, dict):
-        verification_state = raw_verification.get("state")
-    elif isinstance(raw_verification, str):
-        verification_state = raw_verification
-    else:
-        verification_state = None
-
-    return {
-        "backup_type": snapshot.get("backup_type"),
-        "backup_id": str(snapshot.get("backup_id", "")),
-        "backup_time": backup_time,
-        "backup_time_iso": unix_to_iso(backup_time),
-        "size": snapshot.get("size"),
-        "size_human": format_binary_bytes(snapshot.get("size")),
-        "protected": bool(snapshot.get("protected", False)),
-        "comment": snapshot.get("comment"),
-        "file_count": len(files),
-        "files": files,
-        "verification_state": verification_state,
-    }
-
-
-def is_trivial_zfs_recv_entry(entry):
-    """Return True for internal-looking ZFS receive metadata snapshots.
-
-    The monitoring API can expose tiny snapshot records under zfs-recv even
-    when the user does not actively use ZFS receive. Hide the section only if
-    every entry looks like such a minimal metadata artifact.
-    """
-    referenced_bytes = entry.get("referencedBytes")
-    if referenced_bytes is None:
-        return False
-
-    return (
-        entry.get("type") == "snapshot"
-        and entry.get("usedBytes") == 0
-        and entry.get("depth") == -1
-        and referenced_bytes <= 131072
-    )
-
-
-def should_hide_zfs_recv(payload):
-    """Suppress zfs-recv if it only contains trivial metadata entries."""
-    return isinstance(payload, list) and payload and all(
-        is_trivial_zfs_recv_entry(entry) for entry in payload
-    )
-
-
-def normalize_backup_group(group, snapshots):
-    """Attach snapshots to a PBS backup group and add display helpers."""
-    last_backup = group.get("last_backup")
-    sorted_snapshots = sorted(
-        snapshots,
-        key=lambda item: item.get("backup_time") or 0,
-        reverse=True,
-    )
-    latest_comment = next(
-        (
-            snapshot.get("comment")
-            for snapshot in sorted_snapshots
-            if snapshot.get("comment")
-        ),
-        None,
-    )
-    distinct_comments = []
-    for snapshot in sorted_snapshots:
-        comment = snapshot.get("comment")
-        if comment and comment not in distinct_comments:
-            distinct_comments.append(comment)
-
-    return {
-        "backup_type": group.get("backup_type"),
-        "backup_id": str(group.get("backup_id", "")),
-        "group_key": f"{group.get('backup_type', 'other')}/{group.get('backup_id', 'unknown')}",
-        "display_name": latest_comment or group.get("comment"),
-        "last_backup": last_backup,
-        "last_backup_iso": unix_to_iso(last_backup),
-        "backup_count": group.get("backup_count", len(sorted_snapshots)),
-        "comment": group.get("comment"),
-        "latest_comment": latest_comment,
-        "distinct_comments": distinct_comments,
-        "snapshot_count": len(sorted_snapshots),
-        "snapshots": sorted_snapshots,
-    }
-
-
-def normalize_namespace(namespace_meta, namespace_data):
-    """Normalize a namespace payload into a grouped browser structure."""
-    snapshots_by_group = {}
-    for snapshot in namespace_data.get("snapshots") or []:
-        normalized_snapshot = normalize_backup_snapshot(snapshot)
-        key = (normalized_snapshot["backup_type"], normalized_snapshot["backup_id"])
-        snapshots_by_group.setdefault(key, []).append(normalized_snapshot)
-
-    groups = []
-    for group in namespace_data.get("groups") or []:
-        key = (group.get("backup_type"), str(group.get("backup_id", "")))
-        group_snapshots = snapshots_by_group.pop(key, [])
-        groups.append(normalize_backup_group(group, group_snapshots))
-
-    for (backup_type, backup_id), group_snapshots in snapshots_by_group.items():
-        synthetic_group = {
-            "backup_type": backup_type,
-            "backup_id": backup_id,
-            "last_backup": group_snapshots[0].get("backup_time") if group_snapshots else None,
-            "backup_count": len(group_snapshots),
-            "comment": None,
-        }
-        groups.append(normalize_backup_group(synthetic_group, group_snapshots))
-
-    groups.sort(
-        key=lambda item: (
-            -(item.get("last_backup") or 0),
-            item.get("backup_type") or "",
-            item.get("backup_id") or "",
-        )
-    )
-
-    namespace_value = namespace_meta.get("ns", "")
-    return {
-        "ns": namespace_value,
-        "label": namespace_value or "root",
-        "comment": namespace_meta.get("comment"),
-        "group_count": len(groups),
-        "snapshot_count": sum(group.get("snapshot_count", 0) for group in groups),
-        "groups": groups,
-    }
-
-
-def time_ago(iso_str):
-    """Convert ISO timestamp to human-readable 'time ago' string."""
-    if not iso_str:
-        return "never"
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    diff = now - dt
-    seconds = int(diff.total_seconds())
-    if seconds < 0:
-        return format_time_until(abs(seconds))
-    if seconds < 60:
-        return f"{seconds}s ago"
-    if seconds < 3600:
-        return f"{seconds // 60}m ago"
-    if seconds < 86400:
-        return f"{seconds // 3600}h ago"
-    return f"{seconds // 86400}d ago"
-
-
-def format_time_until(seconds):
-    """Format seconds until a future event."""
-    if seconds < 3600:
-        return f"in {seconds // 60}m"
-    if seconds < 86400:
-        return f"in {seconds // 3600}h"
-    return f"in {seconds // 86400}d"
-
-
-def time_until(iso_str):
-    """Convert ISO timestamp to 'time until' string."""
-    if not iso_str:
-        return "N/A"
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    diff = dt - now
-    seconds = int(diff.total_seconds())
-    if seconds < 0:
-        return "overdue"
-    return format_time_until(seconds)
-
-
-def load_visual_alerting_config():
-    """Load alerting configuration without creating files as a side effect."""
-    config = copy.deepcopy(alert_monitor.DEFAULT_CONFIG)
-    if not ALERTING_CONFIG_PATH.exists():
-        return config
-
-    with open(ALERTING_CONFIG_PATH) as f:
-        raw_config = json.load(f)
-
-    merged = {**config, **raw_config}
-    merged["thresholds"] = {**config["thresholds"], **raw_config.get("thresholds", {})}
-    merged["quiet_hours"] = {**config["quiet_hours"], **raw_config.get("quiet_hours", {})}
-    merged["schedule_learning"] = {
-        **config["schedule_learning"],
-        **raw_config.get("schedule_learning", {}),
-    }
-    merged["ignored_groups"] = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
-    return merged
-
-
-def load_visual_alerting_state():
-    """Load alerting state for preview purposes without persisting UI changes."""
-    if not ALERTING_STATE_PATH.exists():
-        return alert_monitor.default_state(), "ephemeral"
-    return alert_monitor.load_state(), "persisted"
-
-
-def load_visual_group_rules():
-    """Load persisted per-group schedule rules for preview and editing."""
-    if not alert_monitor.GROUP_RULES_PATH.exists():
-        return alert_monitor.default_group_rules(), "ephemeral"
-    return alert_monitor.load_group_rules(), "persisted"
-
-
-def read_only_guard():
-    """Return a 403 JSON response when WEBUI_READ_ONLY is active, else None."""
-    if WEBUI_READ_ONLY:
-        return jsonify({"error": "Dashboard befindet sich im Read-Only-Modus."}), 403
-    return None
-
-
-def priority_to_health(priority):
-    """Map an alert priority to dashboard health."""
-    if priority >= 4:
-        return "critical"
-    if priority >= 3:
-        return "warning"
-    return "healthy"
-
-
-def serialize_schedule_model(schedule_model):
-    """Serialize a schedule model for the UI."""
-    if not isinstance(schedule_model, dict):
-        schedule_model = {}
-
-    return {
-        "kind": schedule_model.get("kind", "none"),
-        "status": schedule_model.get("status", "unconfigured"),
-        "timezone": schedule_model.get("timezone"),
-        "interval_minutes": schedule_model.get("interval_minutes"),
-        "interval_anchor_minute": schedule_model.get("interval_anchor_minute"),
-        "interval_human": schedule_model.get("interval_human"),
-        "slot_count": schedule_model.get("slot_count", 0),
-        "active_slot_count": schedule_model.get("active_slot_count", 0),
-        "slots": [
-            {
-                "weekday": slot.get("weekday"),
-                "weekday_name": slot.get("weekday_name"),
-                "minute_of_day": slot.get("minute_of_day"),
-                "time": slot.get("time"),
-                "sample_count": slot.get("sample_count", 0),
-                "status": slot.get("status"),
-            }
-            for slot in schedule_model.get("slots") or []
-        ],
-        "last_observed_at": schedule_model.get("last_observed_at"),
-    }
-
-
-def collect_schedule_groups(ds_state, tzinfo=None):
-    """Collect schedule information for all backup groups in one datastore."""
-    if tzinfo is None:
-        tzinfo = datetime.now().astimezone().tzinfo
-
-    group_alert_counts = {}
-    for alert in ds_state.get("active_group_alerts") or []:
-        rule_key = alert.get("group_rule_key")
-        if not rule_key:
-            continue
-        group_alert_counts[rule_key] = group_alert_counts.get(rule_key, 0) + 1
-
-    groups = []
-    for group_state in (ds_state.get("backup_groups") or {}).values():
-        group_rule = alert_monitor.normalize_group_rule(group_state.get("group_rule"))
-        configured_schedule = alert_monitor.build_schedule_model_from_rule(
-            group_rule,
-            (group_state.get("schedule_model") or {}).get("timezone") or "local",
-        )
-        effective_model = group_state.get("schedule_model") or {}
-        next_expected_at = alert_monitor.compute_next_expected_backup(
-            group_state, effective_model, tzinfo
-        )
-        groups.append({
-            "rule_key": group_state.get("group_rule_key"),
-            "label": group_state.get("display_name") or f"{group_state.get('backup_type')}/{group_state.get('backup_id')}",
-            "datastore_id": group_rule.get("datastore_id"),
-            "namespace": group_state.get("namespace") or "root",
-            "backup_type": group_state.get("backup_type"),
-            "backup_id": group_state.get("backup_id"),
-            "last_backup_at": group_state.get("last_backup_at"),
-            "next_expected_at": next_expected_at,
-            "locked": bool(group_rule.get("locked")),
-            "group_alert_count": group_alert_counts.get(group_state.get("group_rule_key"), 0),
-            "group_rule": group_rule,
-            "effective_schedule": serialize_schedule_model(effective_model),
-            "learned_schedule": serialize_schedule_model(group_state.get("learned_schedule_model") or {}),
-            "configured_schedule": serialize_schedule_model(configured_schedule),
-        })
-
-    groups.sort(key=lambda item: (-item["group_alert_count"], -int(item["locked"]), item["namespace"], item["label"]))
-    return groups
-
-
-def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, rules_source, *, fetch_inventory=True):
-    """Evaluate alerting status for one datastore without sending notifications.
-
-    Set fetch_inventory=False to skip live backup-inventory API calls and rely
-    on persisted alerting state only (used for lightweight auto-refresh).
-    """
-    backup_inventory = None
-    inventory_error = None
-    if fetch_inventory and detail.get("metrics"):
-        try:
-            backup_inventory = alert_monitor.fetch_backup_inventory(alerting_config, detail.get("id", ""))
-        except (requests.RequestException, RuntimeError) as e:
-            inventory_error = str(e)
-
-    alerts, backup_status = alert_monitor.check_datastore(
-        detail,
-        alerting_config,
-        alerting_state,
-        backup_inventory=backup_inventory,
-        group_rules=group_rules,
-        persist_group_rules=False,
-    )
-    ds_state = alerting_state["datastores"].get(detail.get("id", ""), {})
-    schedule_summary = ds_state.get("schedule_summary") or {}
-
-    serialized_alerts = [
-        {
-            "title": alert.title,
-            "message": alert.message,
-            "priority": alert.priority,
-            "tags": alert.tags,
-            "scope": getattr(alert, "scope", "datastore"),
-            "group_rule_key": getattr(alert, "group_rule_key", None),
-        }
-        for alert in alerts
-    ]
-    max_priority = max((alert["priority"] for alert in serialized_alerts), default=0)
-    ds_state["active_group_alerts"] = [
-        alert
-        for alert in serialized_alerts
-        if alert.get("scope") == "group" and alert.get("group_rule_key")
-    ]
-
-    tzinfo = alert_monitor.get_schedule_timezone(alerting_config)
-    ds_id = detail.get("id", "")
-
-    # Build a lookup of display names from the current backup-group state
-    _bg_display_names = {}
-    for group_state in (ds_state.get("backup_groups") or {}).values():
-        rk = alert_monitor.make_rule_key(
-            ds_id,
-            group_state.get("namespace"),
-            group_state.get("backup_type"),
-            group_state.get("backup_id"),
-        )
-        if group_state.get("display_name"):
-            _bg_display_names[rk] = group_state["display_name"]
-
-    ds_ignored_groups = []
-    for ig in (alerting_config.get("ignored_groups") or []):
-        if ig.get("datastore_id") != ds_id:
-            continue
-        enriched_ig = dict(ig)
-        if not enriched_ig.get("display_name"):
-            lookup_key = alert_monitor.make_rule_key(
-                ds_id,
-                ig.get("namespace"),
-                ig.get("backup_type"),
-                ig.get("backup_id"),
-            )
-            enriched_ig["display_name"] = _bg_display_names.get(lookup_key)
-        ds_ignored_groups.append(enriched_ig)
-
-    return {
-        "health": priority_to_health(max_priority),
-        "alerts": serialized_alerts,
-        "alert_count": len(serialized_alerts),
-        "max_priority": max_priority,
-        "backup_status": backup_status,
-        "inventory_error": inventory_error,
-        "state_source": "persisted" if ALERTING_STATE_PATH.exists() else "ephemeral",
-        "rules_source": rules_source,
-        "ignored_groups": ds_ignored_groups,
-        "schedule_learning": {
-            "learned_group_count": schedule_summary.get("learned_group_count", 0),
-            "active_slot_count": schedule_summary.get("active_slot_count", 0),
-            "groups": collect_schedule_groups(ds_state, tzinfo=tzinfo),
-        },
-    }
 
 
 @app.route("/login", methods=["GET", "POST"])

@@ -39,7 +39,7 @@ def _fake_getaddrinfo(address: str):
 
 def _mock_resolve_as(ip_str: str):
     """Context manager: patch socket.getaddrinfo to resolve any host to *ip_str*."""
-    return patch("webui.app.socket.getaddrinfo", return_value=_fake_getaddrinfo(ip_str))
+    return patch("webui.validators.socket.getaddrinfo", return_value=_fake_getaddrinfo(ip_str))
 
 
 # ── Accepted URLs ─────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ class TestInvalidHostname:
             _validate_ntfy_url("https:///path")
 
     def test_unresolvable_hostname_rejected(self):
-        with patch("webui.app.socket.getaddrinfo", side_effect=OSError("Name not found")):
+        with patch("webui.validators.socket.getaddrinfo", side_effect=OSError("Name not found")):
             with pytest.raises(ValueError, match="resolved"):
                 _validate_ntfy_url("https://does-not-exist-xyz.invalid/topic")
 
