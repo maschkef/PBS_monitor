@@ -79,8 +79,12 @@ _PRIVATE_NETWORKS_MONITOR = [
 ]
 
 
-def _validate_ntfy_url_monitor(url: str) -> None:
-    """Raise ValueError if url is not a safe, public http/https endpoint."""
+def _validate_ntfy_url_monitor(url: str, allow_private: bool = True) -> None:
+    """Raise ValueError if url is not a safe, public http/https endpoint.
+
+    Set ``allow_private=True`` to permit self-hosted ntfy servers on private
+    or local-network addresses.
+    """
     try:
         parsed = urlparse(url)
     except Exception:
@@ -90,6 +94,8 @@ def _validate_ntfy_url_monitor(url: str) -> None:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("ntfy URL must contain a hostname.")
+    if allow_private:
+        return
     try:
         results = socket.getaddrinfo(hostname, None)
     except OSError:
@@ -129,7 +135,7 @@ def send_ntfy(config, alert):
         headers["Authorization"] = f"Bearer {effective_token}"
 
     try:
-        _validate_ntfy_url_monitor(ntfy_url)
+        _validate_ntfy_url_monitor(ntfy_url, allow_private=bool(config.get("ntfy_allow_private_url", False)))
     except ValueError as exc:
         print(f"  [ERROR] ntfy URL rejected (SSRF guard): {exc}", file=sys.stderr)
         return False

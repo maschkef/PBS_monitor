@@ -1271,6 +1271,13 @@
             <small id="cfg-ntfy_token_hint" style="display:none;color:var(--green)">&#10003; Token is configured. Leave blank to keep it, type a new value to replace it.</small>
           </div>
           <div class="form-group">
+            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+              <input type="checkbox" id="cfg-ntfy_allow_private" style="width:auto;margin:0">
+              Allow private/local IP addresses for ntfy URL
+            </label>
+            <small style="color:var(--text-dim)">Enable when using a self-hosted ntfy instance on your local network.</small>
+          </div>
+          <div class="form-group">
             <label>Alert Cooldown (minutes)</label>
             <input type="number" id="cfg-cooldown" min="0" step="1">
           </div>

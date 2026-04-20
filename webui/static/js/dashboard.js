@@ -1287,6 +1287,7 @@
                 _ntfyUrl = c.ntfy_url || null;
                 document.getElementById('cfg-ntfy_url').value = c.ntfy_url || '';
                 document.getElementById('cfg-ntfy_topic').value = c.ntfy_topic || '';
+                document.getElementById('cfg-ntfy_allow_private').checked = c.ntfy_allow_private_url !== false;
                 // Never pre-fill the token field with the sentinel — keep it empty and
                 // show a hint instead. The server will preserve the existing token when
                 // the field is submitted empty.
@@ -1346,6 +1347,7 @@
             const payload = {
                 ntfy_url: document.getElementById('cfg-ntfy_url').value.trim(),
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
+                ntfy_allow_private_url: document.getElementById('cfg-ntfy_allow_private').checked,
                 // Only include ntfy_token when the user has actually typed something;
                 // omitting it preserves the previously stored secret on the server.
                 ...(tokenFieldValue !== '' ? { ntfy_token: tokenFieldValue } : {}),

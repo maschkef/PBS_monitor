@@ -47,11 +47,14 @@ _RULE_STR_MAX: dict[str, int] = {
 }
 
 
-def _validate_ntfy_url(url: str) -> None:
+def _validate_ntfy_url(url: str, allow_private: bool = True) -> None:
     """Raise ValueError if url is not a safe, public http/https endpoint.
 
     Prevents SSRF by rejecting loopback, link-local, private-range, and
     cloud-metadata addresses as well as non-http/https schemes.
+
+    Set ``allow_private=True`` to permit self-hosted ntfy servers on private
+    or local-network addresses.
     """
     try:
         parsed = urlparse(url)
@@ -62,6 +65,8 @@ def _validate_ntfy_url(url: str) -> None:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("ntfy URL must contain a hostname.")
+    if allow_private:
+        return
     try:
         results = socket.getaddrinfo(hostname, None)
     except OSError:
@@ -173,6 +178,10 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 v = coerce_int_fn(np_[sev])
                 if v is None or not (1 <= v <= 5):
                     raise ValueError(f"notification_priorities.{sev} must be between 1 and 5.")
+
+    if "ntfy_allow_private_url" in payload:
+        if not isinstance(payload["ntfy_allow_private_url"], bool):
+            raise ValueError("ntfy_allow_private_url must be a boolean.")
 
 
 def _validate_group_rule_payload(payload: dict) -> None:

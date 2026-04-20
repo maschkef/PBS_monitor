@@ -784,6 +784,9 @@ def save_alerting_config():
         if submitted != _TOKEN_SENTINEL:
             raw_config["ntfy_token"] = submitted
 
+    if "ntfy_allow_private_url" in payload:
+        raw_config["ntfy_allow_private_url"] = bool(payload["ntfy_allow_private_url"])
+
     if "alert_cooldown_minutes" in payload:
         val = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
         if val is not None and val >= 0:
@@ -967,7 +970,7 @@ def alerting_test_notify():
         return jsonify({"ok": False, "error": "ntfy_url and ntfy_topic must be configured."}), 400
 
     try:
-        _validate_ntfy_url(ntfy_url)
+        _validate_ntfy_url(ntfy_url, allow_private=bool(config.get("ntfy_allow_private_url", False)))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
