@@ -81,12 +81,21 @@ try:
 except ValueError:
     WEBUI_PROXY_COUNT = 0
 
-# When running behind a reverse proxy (e.g. Traefik), wrap the app with
-# ProxyFix so that request.remote_addr reflects the real client IP from
-# X-Forwarded-For instead of the proxy's Docker-internal address.
-# This makes both rate-limiting and audit logging work correctly.
+# When running behind a reverse proxy (e.g. Traefik), wrap the app so that
+# request.remote_addr reflects the real client IP.
+# ProxyFix handles X-Forwarded-For / X-Forwarded-Proto / X-Forwarded-Host.
+# The outer wrapper additionally honours X-Real-IP (the header Traefik sets
+# by default), so REMOTE_ADDR is correct even when X-Forwarded-For is absent.
 if WEBUI_PROXY_COUNT > 0:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=WEBUI_PROXY_COUNT, x_proto=WEBUI_PROXY_COUNT, x_host=WEBUI_PROXY_COUNT)
+    _proxified = ProxyFix(app.wsgi_app, x_for=WEBUI_PROXY_COUNT, x_proto=WEBUI_PROXY_COUNT, x_host=WEBUI_PROXY_COUNT)
+
+    def _real_ip_middleware(environ, start_response):
+        real_ip = environ.get("HTTP_X_REAL_IP", "").strip()
+        if real_ip:
+            environ["REMOTE_ADDR"] = real_ip
+        return _proxified(environ, start_response)
+
+    app.wsgi_app = _real_ip_middleware
 
 
 # ── Re-exports for backward compatibility (tests import these from webapp) ─────
