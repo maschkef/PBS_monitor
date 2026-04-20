@@ -193,6 +193,23 @@ jobs:
       contents: write
     
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Extract tag annotation
+      id: tag_meta
+      run: |
+        SUBJECT=$(git tag -l --format='%(contents:subject)' "${{ github.ref_name }}")
+        BODY=$(git tag -l --format='%(contents:body)' "${{ github.ref_name }}")
+        echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
+        {
+          echo "body<<EOF"
+          echo "$BODY"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+
     - name: Download release assets
       uses: actions/download-artifact@v8
       with:
@@ -210,9 +227,13 @@ jobs:
           release-assets/.env.example
           release-assets/quickstart.sh
           release-assets/README-DOCKER.md
-        generate_release_notes: true
+        generate_release_notes: false
         prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') || contains(github.ref, 'rc') }}
         body: |
+          ${{ steps.tag_meta.outputs.body }}
+
+          ---
+
           ## 🐳 Docker Support
 
           This release includes Docker support for easy deployment.
