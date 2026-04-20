@@ -99,6 +99,32 @@ Open the dashboard: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 
 > **Production note:** By default the app is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/) (included in `requirements.txt`), which avoids the Flask development-server warning. Set `FLASK_DEBUG=1` in `.env` to switch back to the Flask dev server with auto-reload.
 
+### Authentication
+
+The Web UI is open by default. To protect it with a password, set `WEBUI_PASSWORD` in `.env`:
+
+```ini
+WEBUI_PASSWORD=your-secure-password
+# Optional, but recommended for stable sessions across restarts:
+# Generate a key with: python3 -c "import secrets; print(secrets.token_hex(32))"
+WEBUI_SECRET_KEY=paste-generated-key-here
+```
+
+When `WEBUI_PASSWORD` is set, the dashboard redirects unauthenticated visitors to a login page. Leave it empty if authentication is handled at the network edge (e.g. Traefik + OAuth2 proxy).
+
+### Web UI Environment Variables
+
+The following variables can be set in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBUI_PASSWORD` | *(empty)* | Dashboard password. Leave empty to disable authentication |
+| `WEBUI_SECRET_KEY` | *(auto-generated)* | Flask session signing key. Auto-generated at startup if unset (sessions invalidated on restart) |
+| `WEBUI_PORT` | `5111` | Port the web server listens on |
+| `WEBUI_HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` to expose on all interfaces |
+| `WEBUI_READ_ONLY` | `0` | Set to `1` to disable all write operations (config edits, rule changes, ignore-group, live test) |
+| `FLASK_DEBUG` | `0` | Set to `1` to enable Flask debug mode. Do **not** use in production |
+
 ### Dashboard Sections
 
 Each datastore is displayed as a card with four sections:
@@ -287,6 +313,7 @@ The following can also be set as environment variables (in `.env` or the shell):
 | Environment Variable | Description |
 |---------------------|-------------|
 | `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Set automatically in Docker containers (`/app/data`). |
+| `NTFY_TOKEN` | Override the `ntfy_token` stored in `config.json`. Prefer this over storing the token on disk (e.g. `NTFY_TOKEN=tk_yoursecrettoken`). |
 
 ### Alert Priorities (ntfy)
 
@@ -345,6 +372,7 @@ PBS_monitor/
 ├── README_DE.md                    # German documentation
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml                  # CI: lint, tests, Docker smoke-test
 │       └── docker-publish.yml      # CI/CD: build and publish Docker images
 ├── docker/                         # Docker deployment files
 │   ├── quick-deploy.sh             # One-command deployment script
@@ -352,13 +380,32 @@ PBS_monitor/
 │   │   └── Dockerfile
 │   └── webui/
 │       └── Dockerfile
+├── tests/                          # Automated test suite
+│   ├── conftest.py
+│   ├── test_auth.py
+│   ├── test_csrf.py
+│   ├── test_input_validation.py
+│   ├── test_secret_redaction.py
+│   ├── test_security_headers.py
+│   ├── test_ssrf.py
+│   └── requirements.txt
 ├── webui/                          # Tool 1: Web Dashboard
-│   ├── app.py                      # Flask server
+│   ├── app.py                      # Flask server (routes, session handling)
+│   ├── alerting_ui.py              # Alerting-related UI routes and helpers
+│   ├── normalizers.py              # Input normalisation helpers
+│   ├── validators.py               # Input validation and SSRF protection
 │   ├── requirements.txt
+│   ├── static/
+│   │   └── js/
+│   │       └── dashboard.js        # Dashboard JavaScript
 │   └── templates/
-│       └── index.html              # Single-page dashboard
+│       ├── index.html              # Single-page dashboard
+│       └── login.html              # Login page (used when WEBUI_PASSWORD is set)
 └── alerting/                       # Tool 2: Monitoring + Alerting
-    ├── monitor.py                  # Monitoring script
+    ├── monitor.py                  # Main monitoring script (entry point)
+    ├── normalization.py            # Data normalisation helpers
+    ├── notification.py             # ntfy notification dispatch
+    ├── schedule.py                 # Schedule learning and missed-backup detection
     ├── requirements.txt
     ├── config.json.example         # Alerting configuration template
     ├── config.json                 # Local config (gitignored)

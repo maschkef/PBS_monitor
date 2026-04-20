@@ -100,6 +100,32 @@ Dashboard öffnen: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 
 > **Produktivbetrieb:** Die App wird standardmäßig von [Waitress](https://docs.pylonsproject.org/projects/waitress/) ausgeliefert (in `requirements.txt` enthalten), wodurch die Flask-Development-Server-Warnung entfällt. Mit `FLASK_DEBUG=1` in `.env` kann bei Bedarf wieder auf den Flask Dev-Server mit Auto-Reload umgeschaltet werden.
 
+### Authentifizierung
+
+Die Web UI ist standardmäßig offen zugänglich. Um sie mit einem Passwort zu schützen, `WEBUI_PASSWORD` in `.env` setzen:
+
+```ini
+WEBUI_PASSWORD=dein-sicheres-passwort
+# Optional, aber empfohlen für stabile Sessions über Neustarts hinweg:
+# Key generieren mit: python3 -c "import secrets; print(secrets.token_hex(32))"
+WEBUI_SECRET_KEY=generierten-key-hier-eintragen
+```
+
+Wenn `WEBUI_PASSWORD` gesetzt ist, werden nicht eingeloggte Besucher zur Login-Seite weitergeleitet. Leer lassen, wenn die Zugangskontrolle bereits auf Netzwerkebene erfolgt (z. B. Traefik + OAuth2-Proxy).
+
+### Web UI Umgebungsvariablen
+
+Die folgenden Variablen können in `.env` gesetzt werden:
+
+| Variable | Standard | Beschreibung |
+|----------|----------|--------------|
+| `WEBUI_PASSWORD` | *(leer)* | Dashboard-Passwort. Leer lassen um Authentifizierung zu deaktivieren |
+| `WEBUI_SECRET_KEY` | *(auto-generiert)* | Flask Session-Signing-Key. Wird beim Start automatisch generiert wenn nicht gesetzt (Sessions werden bei Neustart ungültig) |
+| `WEBUI_PORT` | `5111` | Port auf dem der Webserver lauscht |
+| `WEBUI_HOST` | `127.0.0.1` | Bind-Adresse. Auf `0.0.0.0` setzen um auf allen Interfaces erreichbar zu sein |
+| `WEBUI_READ_ONLY` | `0` | Auf `1` setzen um alle Schreiboperationen zu deaktivieren (Konfig-Änderungen, Regeländerungen, Gruppen ignorieren, Live-Test) |
+| `FLASK_DEBUG` | `0` | Auf `1` setzen um Flask Debug-Modus zu aktivieren. **Nicht** im Produktivbetrieb verwenden |
+
 ### Dashboard-Sektionen
 
 Das Dashboard zeigt pro Datastore eine Karte mit vier Sektionen:
@@ -285,6 +311,7 @@ Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` ode
 | Umgebungsvariable | Beschreibung |
 |-------------------|--------------|
 | `ALERTING_DATA_DIR` | Überschreibt das Verzeichnis, in dem `config.json`, `state.json` und `group_rules.json` gespeichert werden. Standard: das `alerting/`-Verzeichnis des Scripts. In Docker-Containern wird dieser Wert automatisch gesetzt (`/app/data`). |
+| `NTFY_TOKEN` | Überschreibt den `ntfy_token` aus `config.json`. Dieser Weg ist dem Speichern des Tokens auf der Festplatte vorzuziehen (z. B. `NTFY_TOKEN=tk_yoursecrettoken`). |
 
 ### Alert-Prioritäten (ntfy)
 
@@ -345,6 +372,7 @@ PBS_monitor/
 ├── README_DE.md                    # Deutsche Dokumentation
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml                  # CI: Lint, Tests, Docker-Smoke-Test
 │       └── docker-publish.yml      # CI/CD: Docker-Images bauen und veröffentlichen
 ├── docker/                         # Docker-Deployment-Dateien
 │   ├── quick-deploy.sh             # Ein-Befehl-Deploy-Script
@@ -352,13 +380,32 @@ PBS_monitor/
 │   │   └── Dockerfile
 │   └── webui/
 │       └── Dockerfile
+├── tests/                          # Automatisierte Tests
+│   ├── conftest.py
+│   ├── test_auth.py
+│   ├── test_csrf.py
+│   ├── test_input_validation.py
+│   ├── test_secret_redaction.py
+│   ├── test_security_headers.py
+│   ├── test_ssrf.py
+│   └── requirements.txt
 ├── webui/                          # Tool 1: Web Dashboard
-│   ├── app.py                      # Flask Server
+│   ├── app.py                      # Flask Server (Routen, Session-Handling)
+│   ├── alerting_ui.py              # Alerting-bezogene UI-Routen und Hilfsfunktionen
+│   ├── normalizers.py              # Eingabe-Normalisierungshilfsfunktionen
+│   ├── validators.py               # Eingabeprüfung und SSRF-Schutz
 │   ├── requirements.txt
+│   ├── static/
+│   │   └── js/
+│   │       └── dashboard.js        # Dashboard-JavaScript
 │   └── templates/
-│       └── index.html              # Single-Page Dashboard
+│       ├── index.html              # Single-Page Dashboard
+│       └── login.html              # Login-Seite (bei gesetztem WEBUI_PASSWORD)
 └── alerting/                       # Tool 2: Monitoring + Alerting
-    ├── monitor.py                  # Monitoring Script
+    ├── monitor.py                  # Haupt-Monitoring-Script (Einstiegspunkt)
+    ├── normalization.py            # Datennormalisierungs-Hilfsfunktionen
+    ├── notification.py             # ntfy-Benachrichtigungs-Versand
+    ├── schedule.py                 # Schedule-Learning und Missed-Backup-Erkennung
     ├── requirements.txt
     ├── config.json.example         # Vorlage für Alerting-Konfiguration
     ├── config.json                 # Lokale Konfig (gitignored)
