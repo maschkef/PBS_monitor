@@ -192,7 +192,7 @@ jobs:
 
       - name: Smoke – app source files are read-only for runtime user
         run: |
-          result=$(docker exec pbs-webui-smoke sh -c \
+          result=$(docker exec --user pbs pbs-webui-smoke sh -c \
             'test -w /app/webui/app.py && echo writable || echo readonly')
           [ "$result" = "readonly" ] || { echo "app.py is writable by the runtime user"; exit 1; }
 
