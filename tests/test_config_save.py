@@ -4,7 +4,7 @@ Scenarios covered
 -----------------
 - Valid fields (ntfy_url, ntfy_topic, alert_cooldown_minutes, daemon_interval_seconds,
   thresholds, quiet_hours, schedule_learning, notification_priorities) are persisted.
-- Invalid / out-of-range numeric values are silently ignored (not persisted).
+- Invalid / out-of-range values are explicitly rejected with 400.
 - Existing keys not present in the POST payload are preserved.
 - Read-only mode returns 403 regardless of auth/CSRF.
 - Empty payload returns 200 without touching the file.
@@ -114,7 +114,7 @@ class TestConfigSave:
 
     # ── Invalid values are silently ignored ───────────────────────────────────
 
-    def test_negative_cooldown_is_not_persisted(self, monkeypatch, client_auth, tmp_path):
+    def test_negative_cooldown_is_rejected(self, monkeypatch, client_auth, tmp_path):
         write_config(tmp_path, {"alert_cooldown_minutes": 60})
         csrf = self._setup(client_auth, tmp_path, monkeypatch)
         rv = client_auth.post(
@@ -122,11 +122,12 @@ class TestConfigSave:
             json={"alert_cooldown_minutes": -10},
             headers={"X-CSRF-Token": csrf},
         )
-        # Route should still succeed (200) but silently drop the invalid value.
-        assert rv.status_code == 200
+        assert rv.status_code == 400
+        assert "alert_cooldown_minutes" in rv.get_json().get("error", "")
+        # Original value must not be overwritten.
         assert read_config(tmp_path).get("alert_cooldown_minutes") == 60
 
-    def test_daemon_interval_below_minimum_is_not_persisted(self, monkeypatch, client_auth, tmp_path):
+    def test_daemon_interval_below_minimum_is_rejected(self, monkeypatch, client_auth, tmp_path):
         write_config(tmp_path, {"daemon_interval_seconds": 300})
         csrf = self._setup(client_auth, tmp_path, monkeypatch)
         rv = client_auth.post(
@@ -134,10 +135,11 @@ class TestConfigSave:
             json={"daemon_interval_seconds": 5},  # below minimum of 60
             headers={"X-CSRF-Token": csrf},
         )
-        assert rv.status_code == 200
+        assert rv.status_code == 400
+        assert "daemon_interval_seconds" in rv.get_json().get("error", "")
         assert read_config(tmp_path).get("daemon_interval_seconds") == 300
 
-    def test_priority_out_of_range_is_not_persisted(self, monkeypatch, client_auth, tmp_path):
+    def test_priority_out_of_range_is_rejected(self, monkeypatch, client_auth, tmp_path):
         write_config(tmp_path, {"notification_priorities": {"warning": 3}})
         csrf = self._setup(client_auth, tmp_path, monkeypatch)
         rv = client_auth.post(
@@ -145,7 +147,8 @@ class TestConfigSave:
             json={"notification_priorities": {"warning": 99}},  # out of 1-5 range
             headers={"X-CSRF-Token": csrf},
         )
-        assert rv.status_code == 200
+        assert rv.status_code == 400
+        assert "notification_priorities.warning" in rv.get_json().get("error", "")
         assert read_config(tmp_path)["notification_priorities"]["warning"] == 3
 
     # ── Existing keys are preserved on partial update ─────────────────────────

@@ -1950,8 +1950,9 @@ def send_ntfy(config, alert):
         "Priority": str(alert.priority),
         "Tags": _ntfy_header_safe(",".join(alert.tags) if alert.tags else "backup"),
     }
-    if config.get("ntfy_token"):
-        headers["Authorization"] = f"Bearer {config['ntfy_token']}"
+    effective_token = os.environ.get("NTFY_TOKEN", "").strip() or config.get("ntfy_token", "")
+    if effective_token:
+        headers["Authorization"] = f"Bearer {effective_token}"
 
     try:
         _validate_ntfy_url_monitor(ntfy_url)

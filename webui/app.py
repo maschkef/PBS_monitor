@@ -8,6 +8,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import sys
@@ -63,6 +64,9 @@ WEBUI_READ_ONLY = os.environ.get("WEBUI_READ_ONLY", "").lower() in ("1", "true",
 FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
 WEBUI_PASSWORD = os.environ.get("WEBUI_PASSWORD", "").strip()
 WEBUI_SECRET_KEY = os.environ.get("WEBUI_SECRET_KEY", "").strip()
+# When set, overrides ntfy_token from config.json without ever writing the
+# secret to disk.  Follows the same pattern as WEBUI_SECRET_KEY.
+NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "").strip()
 
 
 def _configure_secret_key() -> str:
@@ -234,10 +238,123 @@ def _redact_config(cfg: dict) -> dict:
     ever leaving the server.
     """
     redacted = dict(cfg)
-    redacted["ntfy_token_set"] = bool(redacted.get("ntfy_token"))
-    if redacted.get("ntfy_token"):
+    effective_token = NTFY_TOKEN or redacted.get("ntfy_token", "")
+    redacted["ntfy_token_set"] = bool(effective_token)
+    if effective_token:
         redacted["ntfy_token"] = _TOKEN_SENTINEL
     return redacted
+
+
+# HH:MM — strict: hours 00-23, minutes 00-59
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+# Max lengths for free-text string fields in the alerting config payload.
+_CONFIG_STR_MAX: dict[str, int] = {
+    "ntfy_url": 2048,
+    "ntfy_topic": 256,
+    "ntfy_token": 512,
+}
+
+# Max lengths for string fields in the group-rule payload.
+_RULE_STR_MAX: dict[str, int] = {
+    "datastore_id": 128,
+    "namespace": 128,
+    "backup_type": 32,
+    "backup_id": 256,
+    "display_name": 256,
+    "timezone": 64,
+}
+
+
+def _validate_config_payload(payload: dict) -> None:
+    """Validate a user-supplied alerting config payload.
+
+    Raises ValueError with a human-readable message for any invalid field so
+    the route can return a 400 response without writing anything to disk.
+    """
+    for key, maxlen in _CONFIG_STR_MAX.items():
+        if key in payload:
+            val = payload[key]
+            if not isinstance(val, str):
+                raise ValueError(f"{key} must be a string.")
+            if len(val) > maxlen:
+                raise ValueError(f"{key} must not exceed {maxlen} characters.")
+
+    if "alert_cooldown_minutes" in payload:
+        v = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
+        if v is None or v < 0:
+            raise ValueError("alert_cooldown_minutes must be a non-negative integer.")
+
+    if "daemon_interval_seconds" in payload:
+        v = alert_monitor.coerce_int(payload["daemon_interval_seconds"])
+        if v is None or v < 60:
+            raise ValueError("daemon_interval_seconds must be at least 60.")
+
+    if "thresholds" in payload:
+        if not isinstance(payload["thresholds"], dict):
+            raise ValueError("thresholds must be an object.")
+        thr = payload["thresholds"]
+        for k in ("storage_warn_percent", "storage_crit_percent"):
+            if k in thr:
+                v = alert_monitor.coerce_int(thr[k])
+                if v is None or not (1 <= v <= 100):
+                    raise ValueError(f"thresholds.{k} must be between 1 and 100.")
+        for k in ("gc_max_age_hours", "verification_max_age_days"):
+            if k in thr:
+                v = alert_monitor.coerce_int(thr[k])
+                if v is None or v <= 0:
+                    raise ValueError(f"thresholds.{k} must be a positive integer.")
+
+    if "quiet_hours" in payload:
+        if not isinstance(payload["quiet_hours"], dict):
+            raise ValueError("quiet_hours must be an object.")
+        qh = payload["quiet_hours"]
+        for time_key in ("start", "end"):
+            if time_key in qh:
+                if not isinstance(qh[time_key], str) or not _TIME_RE.match(qh[time_key]):
+                    raise ValueError(f"quiet_hours.{time_key} must be in HH:MM format (00:00–23:59).")
+        if "min_priority" in qh:
+            v = alert_monitor.coerce_int(qh["min_priority"])
+            if v is None or not (1 <= v <= 5):
+                raise ValueError("quiet_hours.min_priority must be between 1 and 5.")
+
+    if "schedule_learning" in payload:
+        if not isinstance(payload["schedule_learning"], dict):
+            raise ValueError("schedule_learning must be an object.")
+        sl = payload["schedule_learning"]
+        if "timezone" in sl:
+            if not isinstance(sl["timezone"], str) or len(sl["timezone"]) > 64:
+                raise ValueError("schedule_learning.timezone must be a string of at most 64 characters.")
+        for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
+                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
+            if int_key in sl:
+                v = alert_monitor.coerce_int(sl[int_key])
+                if v is None or v <= 0:
+                    raise ValueError(f"schedule_learning.{int_key} must be a positive integer.")
+
+    if "notification_priorities" in payload:
+        if not isinstance(payload["notification_priorities"], dict):
+            raise ValueError("notification_priorities must be an object.")
+        np_ = payload["notification_priorities"]
+        for sev in ("warning", "critical"):
+            if sev in np_:
+                v = alert_monitor.coerce_int(np_[sev])
+                if v is None or not (1 <= v <= 5):
+                    raise ValueError(f"notification_priorities.{sev} must be between 1 and 5.")
+
+
+def _validate_group_rule_payload(payload: dict) -> None:
+    """Validate a user-supplied group-rule payload.
+
+    Raises ValueError with a human-readable message for any invalid field.
+    """
+    for key, maxlen in _RULE_STR_MAX.items():
+        val = payload.get(key)
+        if val is not None:
+            if not isinstance(val, str):
+                raise ValueError(f"{key} must be a string.")
+            if len(val) > maxlen:
+                raise ValueError(f"{key} must not exceed {maxlen} characters.")
 
 
 def api_get(path, params=None):
@@ -1014,6 +1131,12 @@ def save_group_rule():
         return guard
     """Persist a manual or locked schedule rule for one backup group."""
     payload = request.get_json(silent=True) or {}
+
+    try:
+        _validate_group_rule_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     datastore_id = payload.get("datastore_id") or ""
     namespace = payload.get("namespace") or ""
     backup_type = payload.get("backup_type") or ""
@@ -1201,6 +1324,12 @@ def save_alerting_config():
         return guard
 
     payload = request.get_json(silent=True) or {}
+
+    try:
+        _validate_config_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     raw_config = {}
     if ALERTING_CONFIG_PATH.exists():
         with open(ALERTING_CONFIG_PATH) as f:
@@ -1393,7 +1522,7 @@ def alerting_test_notify():
     config = alert_monitor.load_config()
     ntfy_url = config.get("ntfy_url", "").rstrip("/")
     ntfy_topic = config.get("ntfy_topic", "")
-    ntfy_token = config.get("ntfy_token", "")
+    ntfy_token = NTFY_TOKEN or config.get("ntfy_token", "")
 
     if not ntfy_url or not ntfy_topic:
         return jsonify({"ok": False, "error": "ntfy_url and ntfy_topic must be configured."}), 400
