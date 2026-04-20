@@ -61,6 +61,7 @@ from alerting.schedule import (
     cluster_day_occurrences,        # noqa: F401 — re-export
     find_recent_due,                # noqa: F401 — re-export
     compute_anchor_aligned_due,     # noqa: F401 — re-export
+    compute_next_expected_backup,   # noqa: F401 — re-export
     detect_interval_schedule,       # noqa: F401 — re-export
     detect_daily_schedule,          # noqa: F401 — re-export
     evaluate_schedule_model,
