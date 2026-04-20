@@ -204,7 +204,7 @@ jobs:
       - name: Smoke – runtime process umask is 0027
         run: |
           umask_val=$(docker exec pbs-webui-smoke \
-            sh -c 'grep "^Umask:" /proc/1/status | awk "{print $2}"')
+            sh -c 'grep "^Umask:" /proc/1/status | cut -f2')
           [ "$umask_val" = "0027" ] || { echo "Expected umask 0027, got $umask_val"; exit 1; }
 
       - name: Dump container logs on failure
