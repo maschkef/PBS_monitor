@@ -23,9 +23,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alerting/ ./alerting/
 COPY .env.example .
 
-# Create data directory; ownership is fixed at runtime by the entrypoint
-# so that host-mounted volumes (initially root-owned) become writable
-RUN mkdir -p /app/data
+# Application code is owned by root and not writable by the pbs runtime user.
+# This is already true by default (COPY produces root:root 644/755 files), but
+# made explicit here to document the intent and guard against accidental changes.
+RUN chmod -R a-w /app/alerting
+
+# Create data directory with restricted permissions.
+# The entrypoint re-chowns this to pbs:pbs at runtime so bind-mounted host
+# directories (initially root-owned) become writable by the application.
+RUN mkdir -p /app/data && chmod 750 /app/data
 
 # Entrypoint: runs as root, chowns /app/data, then execs as pbs
 COPY docker/entrypoint.sh /entrypoint.sh
