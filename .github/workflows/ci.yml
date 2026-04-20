@@ -187,8 +187,8 @@ jobs:
 
       - name: Smoke – process runs as non-root
         run: |
-          user=$(docker exec pbs-webui-smoke id -un)
-          [ "$user" != "root" ] || { echo "Container process is running as root"; exit 1; }
+          uid=$(docker exec pbs-webui-smoke sh -c 'awk "/^Uid:/{print \$2}" /proc/1/status')
+          [ "$uid" != "0" ] || { echo "Container process is running as root"; exit 1; }
 
       - name: Smoke – app source files are read-only for runtime user
         run: |

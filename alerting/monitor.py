@@ -20,9 +20,8 @@ import json
 import shutil
 import os
 import signal
-import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -40,7 +39,6 @@ from alerting.normalization import (
     is_group_ignored,
     normalize_snapshot_entries,
     merge_snapshot_histories,
-    empty_inventory_summary,
     default_datastore_state,
     default_state,
     default_group_rules,
@@ -51,7 +49,6 @@ from alerting.normalization import (
 )
 from alerting.schedule import (
     Alert,
-    parse_iso,
     get_schedule_timezone,
     format_schedule_time,   # noqa: F401 — re-export
     weekday_name,           # noqa: F401 — re-export
@@ -64,7 +61,6 @@ from alerting.schedule import (
     cluster_day_occurrences,        # noqa: F401 — re-export
     find_recent_due,                # noqa: F401 — re-export
     compute_anchor_aligned_due,     # noqa: F401 — re-export
-    compute_next_expected_backup,
     detect_interval_schedule,       # noqa: F401 — re-export
     detect_daily_schedule,          # noqa: F401 — re-export
     evaluate_schedule_model,
