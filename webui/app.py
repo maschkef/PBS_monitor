@@ -420,6 +420,8 @@ def get_datastores_metrics():
 def get_datastores():
     """Fetch all datastores with full details."""
     rescale_range = request.args.get("rescale_range", "90d")
+    if rescale_range not in {"7d", "30d", "90d", "180d", "365d"}:
+        return jsonify({"error": "Invalid rescale_range. Allowed: 7d, 30d, 90d, 180d, 365d."}), 400
     alerting_config = load_visual_alerting_config()
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
@@ -440,7 +442,10 @@ def get_datastores():
 
         # Fetch rescale log
         try:
-            rescale_log = api_get(f"/monitoring/v1/datastores/{ds_id}/rescale-log?range={rescale_range}")
+            rescale_log = api_get(
+                f"/monitoring/v1/datastores/{ds_id}/rescale-log",
+                params={"range": rescale_range},
+            )
         except requests.RequestException:
             rescale_log = []
 
@@ -638,6 +643,10 @@ def ignore_group():
         return guard
     """Persist one backup group in the active ignored_groups config."""
     payload = request.get_json(silent=True) or {}
+    try:
+        _validators._validate_ignore_group_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     datastore_id = payload.get("datastore_id") or ""
     namespace = payload.get("namespace") or ""
     backup_type = payload.get("backup_type") or ""
@@ -697,6 +706,10 @@ def unignore_group():
     if guard:
         return guard
     payload = request.get_json(silent=True) or {}
+    try:
+        _validators._validate_ignore_group_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     datastore_id = payload.get("datastore_id") or ""
     namespace = payload.get("namespace") or ""
     backup_type = payload.get("backup_type") or ""

@@ -196,3 +196,21 @@ def _validate_group_rule_payload(payload: dict) -> None:
                 raise ValueError(f"{key} must be a string.")
             if len(val) > maxlen:
                 raise ValueError(f"{key} must not exceed {maxlen} characters.")
+
+
+def _validate_ignore_group_payload(payload: dict) -> None:
+    """Validate a user-supplied ignore/unignore-group payload.
+
+    Raises ValueError with a human-readable message for any invalid field.
+    Reuses _RULE_STR_MAX limits for the overlapping fields (timezone is not
+    applicable and is skipped).
+    """
+    for key, maxlen in _RULE_STR_MAX.items():
+        if key == "timezone":
+            continue
+        val = payload.get(key)
+        if val is not None:
+            if not isinstance(val, str):
+                raise ValueError(f"{key} must be a string.")
+            if len(val) > maxlen:
+                raise ValueError(f"{key} must not exceed {maxlen} characters.")

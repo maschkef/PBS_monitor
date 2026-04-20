@@ -84,7 +84,7 @@ class TestInvalidHostname:
     def test_unresolvable_hostname_rejected(self):
         with patch("webui.validators.socket.getaddrinfo", side_effect=OSError("Name not found")):
             with pytest.raises(ValueError, match="resolved"):
-                _validate_ntfy_url("https://does-not-exist-xyz.invalid/topic")
+                _validate_ntfy_url("https://does-not-exist-xyz.invalid/topic", allow_private=False)
 
 
 # ── Rejected: private / reserved addresses ────────────────────────────────────
@@ -97,12 +97,12 @@ class TestPrivateAddresses:
     def test_loopback_ipv4_rejected(self, ip):
         with _mock_resolve_as(ip):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url(f"https://somehost.example.com/")
+                _validate_ntfy_url(f"https://somehost.example.com/", allow_private=False)
 
     def test_loopback_ipv6_rejected(self):
         with _mock_resolve_as("::1"):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://somehost.example.com/")
+                _validate_ntfy_url("https://somehost.example.com/", allow_private=False)
 
     @pytest.mark.parametrize("ip", [
         "10.0.0.1",
@@ -114,27 +114,27 @@ class TestPrivateAddresses:
     def test_rfc1918_private_range_rejected(self, ip):
         with _mock_resolve_as(ip):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://internal.example.com/")
+                _validate_ntfy_url("https://internal.example.com/", allow_private=False)
 
     def test_cloud_metadata_ip_rejected(self):
         with _mock_resolve_as("169.254.169.254"):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://metadata.internal/")
+                _validate_ntfy_url("https://metadata.internal/", allow_private=False)
 
     def test_link_local_ipv4_rejected(self):
         with _mock_resolve_as("169.254.0.1"):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://somehost.example.com/")
+                _validate_ntfy_url("https://somehost.example.com/", allow_private=False)
 
     def test_ula_ipv6_rejected(self):
         with _mock_resolve_as("fc00::1"):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://somehost.example.com/")
+                _validate_ntfy_url("https://somehost.example.com/", allow_private=False)
 
     def test_link_local_ipv6_rejected(self):
         with _mock_resolve_as("fe80::1"):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url("https://somehost.example.com/")
+                _validate_ntfy_url("https://somehost.example.com/", allow_private=False)
 
 
 # ── Rejected: literal IP in URL ───────────────────────────────────────────────
@@ -152,4 +152,4 @@ class TestLiteralIPInUrl:
         host = urlparse(url).hostname
         with _mock_resolve_as(host):
             with pytest.raises(ValueError, match="private or reserved"):
-                _validate_ntfy_url(url)
+                _validate_ntfy_url(url, allow_private=False)
