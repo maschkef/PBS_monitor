@@ -896,8 +896,8 @@
                     </div>
                     <div class="ds-header-side">
                         <div class="ds-issues">${issuesHtml}</div>
-                        <button class="btn btn-secondary" onclick="toggleAlertingPanel(${JSON.stringify(ds.id)})">${alertingLabel}</button>
-                        <button class="btn btn-secondary" onclick="toggleBackupBrowser(${JSON.stringify(ds.id)})">${browserLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleAlertingPanel(${escHtml(JSON.stringify(ds.id))})">${alertingLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleBackupBrowser(${escHtml(JSON.stringify(ds.id))})">${browserLabel}</button>
                     </div>
                 </div>
                 <div class="ds-body">
