@@ -35,7 +35,7 @@ jobs:
 
     - name: Extract metadata for alerting image
       id: meta-alerting
-      uses: docker/metadata-action@v5
+      uses: docker/metadata-action@v6
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_ALERTING }}
         tags: |
@@ -47,7 +47,7 @@ jobs:
 
     - name: Extract metadata for webui image  
       id: meta-webui
-      uses: docker/metadata-action@v5
+      uses: docker/metadata-action@v6
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WEBUI }}
         tags: |
