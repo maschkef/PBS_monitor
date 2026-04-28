@@ -4,9 +4,7 @@ All functions here are pure (no Flask context required) and raise ``ValueError``
 on invalid input so callers can return a clean 400 response.
 """
 
-import ipaddress
 import re
-import socket
 from urllib.parse import urlparse
 
 
@@ -14,17 +12,6 @@ from urllib.parse import urlparse
 # The frontend must submit this exact string back for the server to recognise
 # that the user did not change the secret (i.e., preserve the stored value).
 _TOKEN_SENTINEL = "***CONFIGURED***"
-
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("fe80::/10"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("fc00::/7"),
-]
 
 # HH:MM — strict: hours 00-23, minutes 00-59
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -48,14 +35,7 @@ _RULE_STR_MAX: dict[str, int] = {
 
 
 def _validate_ntfy_url(url: str, allow_private: bool = True) -> None:
-    """Raise ValueError if url is not a safe, public http/https endpoint.
-
-    Prevents SSRF by rejecting loopback, link-local, private-range, and
-    cloud-metadata addresses as well as non-http/https schemes.
-
-    Set ``allow_private=True`` to permit self-hosted ntfy servers on private
-    or local-network addresses.
-    """
+    """Raise ValueError if url is not a valid http/https endpoint."""
     try:
         parsed = urlparse(url)
     except Exception:
@@ -65,21 +45,6 @@ def _validate_ntfy_url(url: str, allow_private: bool = True) -> None:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("ntfy URL must contain a hostname.")
-    if allow_private:
-        return
-    try:
-        results = socket.getaddrinfo(hostname, None)
-    except OSError:
-        raise ValueError("ntfy URL hostname could not be resolved.")
-    for _family, _type, _proto, _canonname, sockaddr in results:
-        raw_addr = sockaddr[0]
-        try:
-            addr = ipaddress.ip_address(raw_addr)
-        except ValueError:
-            continue
-        for net in _PRIVATE_NETWORKS:
-            if addr in net:
-                raise ValueError("ntfy URL must not point to a private or reserved address.")
 
 
 def _redact_config(cfg: dict, ntfy_token_override: str = "") -> dict:
@@ -178,10 +143,6 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 v = coerce_int_fn(np_[sev])
                 if v is None or not (1 <= v <= 5):
                     raise ValueError(f"notification_priorities.{sev} must be between 1 and 5.")
-
-    if "ntfy_allow_private_url" in payload:
-        if not isinstance(payload["ntfy_allow_private_url"], bool):
-            raise ValueError("ntfy_allow_private_url must be a boolean.")
 
 
 def _validate_group_rule_payload(payload: dict) -> None:

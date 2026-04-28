@@ -6,10 +6,8 @@
   "ntfy_url": "https://ntfy.sh",
   "ntfy_topic": "",
   "ntfy_token": "",
-  "ntfy_allow_private_url": true,
-  
-  "_comment_ignored": "List of objects describing backup groups to ignore.",
-  "ignored_groups": [],
+
+  "_comment_ignored": "List of objects describing backup groups to ignore.",  "ignored_groups": [],
   
   "_comment_thresholds": "Warning and critical thresholds for datastore events.",
   "thresholds": {

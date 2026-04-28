@@ -6,11 +6,11 @@ This file is the main entry point for the Flask-based Web User Interface of the 
 ## Application Setup & Security
 
 ### Security Configuration
-- **Rate Limiting:** `flask_limiter` is configured globally. The default limit is 200 requests per minute.
+- **Rate Limiting:** `flask_limiter` is configured globally. The default limit is 200 requests per minute, with specific stricter limits on login (10/min) and testing endpoints (10/min) to prevent brute force while remaining usable for a single admin.
 - **Reverse Proxy Support:** Handles `X-Forwarded-For` and `X-Real-IP` if `WEBUI_PROXY_COUNT > 0` using Werkzeug's `ProxyFix`.
 - **Cookies & Sessions:** Uses a random 32-byte hex `secret_key` for session signing. Cookies are flagged `HttpOnly`, `SameSite=Lax`, and `Secure` (if `WEBUI_SECURE_COOKIES` is 1).
-- **Security Headers:** The `@app.after_request` decorator injects strict headers like `X-Frame-Options: DENY`, `Content-Security-Policy`, and `Permissions-Policy`.
-- **Audit Logging:** Emits structured JSON logs for security-relevant actions (logins, config changes, testing) to `sys.stderr` or a file specified by `AUDIT_LOG_PATH`.
+- **Security Headers:** The `@app.after_request` decorator injects strict headers like `X-Frame-Options: DENY`, and `Permissions-Policy`. The `Content-Security-Policy` header is restrictive by default but can be overridden via the `WEBUI_CSP` environment variable to support embedding or reverse-proxy injections.
+- **Audit Logging:** Emits simple text-based log lines to the Flask standard logger for security-relevant actions (logins, config changes, testing) to maintain an audit trail without enterprise SIEM overhead.
 
 ### Authentication Middlewares
 - **`@require_auth`**: Decorates routes to demand a valid session. Redirects to `/login` for HTML routes, or returns `401 Unauthorized` for `/api/` JSON routes. Can be bypassed entirely if no `WEBUI_PASSWORD` is set.

@@ -40,8 +40,8 @@ This module contains pure functions to validate HTTP JSON payloads received from
 - **`_TIME_RE`**: A strict regex validating 24-hour time formats (`HH:MM`).
 - **`_CONFIG_STR_MAX`** & **`_RULE_STR_MAX`**: Dictionaries defining strict length limits for API payload fields to prevent DoS via large inputs.
 
-### `_validate_ntfy_url(url, allow_private)`
-Parses the user-provided `ntfy_url`. Acts as a Server-Side Request Forgery (SSRF) guard by rejecting local, loopback, private IP ranges (e.g. 192.168.x.x), and non HTTP/HTTPS URLs. Bypassed if `allow_private=True`.
+### `_validate_ntfy_url(url)`
+Parses the user-provided `ntfy_url`. Ensures that the URL has a valid HTTP/HTTPS scheme and a hostname.
 
 ### `_redact_config(cfg, ntfy_token_override)`
 Takes a live configuration dictionary and replaces `ntfy_token` with `_TOKEN_SENTINEL`. Sets a boolean `ntfy_token_set` to help the frontend render appropriately without leaking the token itself.

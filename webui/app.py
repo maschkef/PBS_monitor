@@ -146,7 +146,7 @@ def add_security_headers(response):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Content-Security-Policy"] = (
+    response.headers["Content-Security-Policy"] = os.environ.get("WEBUI_CSP", (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
@@ -157,33 +157,19 @@ def add_security_headers(response):
         "base-uri 'self'; "
         "form-action 'self'; "
         "frame-ancestors 'none';"
-    )
+    ))
     return response
 
 
 # ── Audit logging ─────────────────────────────────────────────────────────────
-_AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", "").strip()
-_audit_logger = logging.getLogger("pbs_monitor.audit")
-_audit_logger.setLevel(logging.INFO)
-_audit_logger.propagate = False
-if _AUDIT_LOG_PATH:
-    _audit_handler: logging.Handler = logging.FileHandler(_AUDIT_LOG_PATH, encoding="utf-8")
-else:
-    _audit_handler = logging.StreamHandler(sys.stderr)
-_audit_handler.setFormatter(logging.Formatter("%(message)s"))
-_audit_logger.addHandler(_audit_handler)
-
 
 def _audit(action: str, **kwargs) -> None:
-    """Emit a structured JSON audit log line for a security-relevant event."""
-    record: dict = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "action": action,
-        "remote_addr": request.remote_addr,
-        "user_agent": (request.headers.get("User-Agent", "") or "")[:200],
-    }
-    record.update(kwargs)
-    _audit_logger.info(json.dumps(record, separators=(",", ":")))
+    """Emit a simple log line for a security-relevant event."""
+    details = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+    msg = f"Audit: {action} (IP: {request.remote_addr})"
+    if details:
+        msg += f" - {details}"
+    app.logger.info(msg)
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -295,7 +281,7 @@ def api_get_public(path):
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("5 per minute; 20 per hour")
+@limiter.limit("10 per minute; 50 per hour")
 def login():
     """Login page — only active when WEBUI_PASSWORD is configured."""
     if not auth_enabled():
@@ -851,9 +837,6 @@ def save_alerting_config():
         if submitted != _TOKEN_SENTINEL:
             raw_config["ntfy_token"] = submitted
 
-    if "ntfy_allow_private_url" in payload:
-        raw_config["ntfy_allow_private_url"] = bool(payload["ntfy_allow_private_url"])
-
     if "alert_cooldown_minutes" in payload:
         val = alert_monitor.coerce_int(payload["alert_cooldown_minutes"])
         if val is not None and val >= 0:
@@ -917,7 +900,7 @@ def save_alerting_config():
 @app.route("/api/alerting/test/dry-run", methods=["POST"])
 @require_auth
 @require_csrf
-@limiter.limit("5 per minute")
+@limiter.limit("10 per minute")
 def alerting_test_dry_run():
     """Simulate a full alerting run and return what would be sent — without sending."""
     alerting_config = load_visual_alerting_config()
@@ -993,7 +976,7 @@ def alerting_test_dry_run():
 @app.route("/api/alerting/test/live", methods=["POST"])
 @require_auth
 @require_csrf
-@limiter.limit("5 per minute")
+@limiter.limit("10 per minute")
 def alerting_test_live():
     """Run a real alerting check and send notifications via ntfy."""
     guard = read_only_guard()
@@ -1017,7 +1000,7 @@ def alerting_test_live():
 @app.route("/api/alerting/test/notify", methods=["POST"])
 @require_auth
 @require_csrf
-@limiter.limit("5 per minute")
+@limiter.limit("10 per minute")
 def alerting_test_notify():
     """Send a single test notification to verify the ntfy configuration."""
     guard = read_only_guard()
@@ -1038,7 +1021,7 @@ def alerting_test_notify():
         return jsonify({"ok": False, "error": "ntfy_url and ntfy_topic must be configured."}), 400
 
     try:
-        _validate_ntfy_url(ntfy_url, allow_private=bool(config.get("ntfy_allow_private_url", False)))
+        _validate_ntfy_url(ntfy_url)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 

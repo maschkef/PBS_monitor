@@ -74,7 +74,6 @@ from alerting.notification import (
     format_bytes,
     _ntfy_header_safe,              # noqa: F401 — re-export
     append_notification_log,
-    _validate_ntfy_url_monitor,     # noqa: F401 — re-export
     send_ntfy,
     is_quiet_hours,
     should_alert,

@@ -3,10 +3,8 @@
 Imports only from the standard library plus the alerting.normalization module.
 """
 
-import ipaddress
 import json
 import os
-import socket
 import sys
 import unicodedata
 from datetime import datetime, timezone
@@ -65,52 +63,6 @@ def append_notification_log(log_path, entry):
         print(f"  [WARN] Could not write notification log: {exc}", file=sys.stderr)
 
 
-# ── SSRF guard ────────────────────────────────────────────────────────────────
-
-_PRIVATE_NETWORKS_MONITOR = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("fe80::/10"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("fc00::/7"),
-]
-
-
-def _validate_ntfy_url_monitor(url: str, allow_private: bool = True) -> None:
-    """Raise ValueError if url is not a safe, public http/https endpoint.
-
-    Set ``allow_private=True`` to permit self-hosted ntfy servers on private
-    or local-network addresses.
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        raise ValueError("Invalid ntfy URL.")
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("ntfy URL must use http or https.")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("ntfy URL must contain a hostname.")
-    if allow_private:
-        return
-    try:
-        results = socket.getaddrinfo(hostname, None)
-    except OSError:
-        raise ValueError("ntfy URL hostname could not be resolved.")
-    for _family, _type, _proto, _canonname, sockaddr in results:
-        raw_addr = sockaddr[0]
-        try:
-            addr = ipaddress.ip_address(raw_addr)
-        except ValueError:
-            continue
-        for net in _PRIVATE_NETWORKS_MONITOR:
-            if addr in net:
-                raise ValueError("ntfy URL must not point to a private or reserved address.")
-
-
 # ── ntfy sender ───────────────────────────────────────────────────────────────
 
 def send_ntfy(config, alert):
@@ -133,12 +85,6 @@ def send_ntfy(config, alert):
     effective_token = os.environ.get("NTFY_TOKEN", "").strip() or config.get("ntfy_token", "")
     if effective_token:
         headers["Authorization"] = f"Bearer {effective_token}"
-
-    try:
-        _validate_ntfy_url_monitor(ntfy_url, allow_private=bool(config.get("ntfy_allow_private_url", False)))
-    except ValueError as exc:
-        print(f"  [ERROR] ntfy URL rejected (SSRF guard): {exc}", file=sys.stderr)
-        return False
 
     url = f"{ntfy_url}/{quote(ntfy_topic, safe='')}"
     try:
