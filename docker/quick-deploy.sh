@@ -47,7 +47,7 @@ cd "$PROJECT_DIR"
 echo "📥 Downloading configuration files..."
 
 # Download docker-compose.yml
-if ! curl -sLf -o docker-compose.yml "https://github.com/maschkef/PBS_monitor/releases/latest/download/docker-compose.yml"; then
+if ! curl -sLf -o docker-compose.yml "https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker-compose.yml"; then
     echo -e "${RED}❌ Failed to download docker-compose.yml${NC}"
     exit 1
 fi
