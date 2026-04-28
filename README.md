@@ -73,6 +73,7 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **GC & verification status** as badges with timestamps (last run, next scheduled)
 - **Retention policy** — overview of prune configuration (keep last/hourly/daily/weekly/monthly/yearly)
 - **Autoscaling configuration** — thresholds and mode
+- **Light / Dark Mode** — automatically adapts to your system theme, with a manual toggle (🌓) available in the header
 - **Immutable backup & replication status**
 - **Backup browser** — explore PBS namespaces, backup groups, individual snapshots, and other protocols (rsync, sftp, zfs-recv) directly in the UI; each snapshot shows its verification status (verified / verify failed / unverified)
 - **Alerting configuration** — when the alerting component is active, the Web UI provides a complete interface to configure all alerting settings: schedules, thresholds, ignored groups, ntfy settings, quiet hours, notification priorities, and more

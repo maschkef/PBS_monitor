@@ -74,6 +74,7 @@ Ein grafisches Dashboard um den Status aller Datastores auf einen Blick zu prüf
 - **GC- & Verification-Status** als Badges mit Zeitangaben (letzte Ausführung, nächster Lauf)
 - **Retention-Policy** — Übersicht der Prune-Konfiguration (keep last/hourly/daily/weekly/monthly/yearly)
 - **Autoscaling-Konfiguration** — Schwellwerte und Modus
+- **Light / Dark Mode** — passt sich automatisch an das System-Theme an, inkl. manuellem Toggle (🌓) im Header
 - **Immutable Backup & Replication Status**
 - **Backup Browser** — PBS-Namespaces, spezifische Backup-Gruppen, Snapshots und andere Protokolle (rsync, sftp, zfs-recv) direkt in der UI durchsuchen; jeder Snapshot zeigt seinen Verifikationsstatus (verified / verify failed / unverified)
 - **Alerting-Konfiguration** — wenn das Alerting-System aktiv ist, bietet die Web UI eine vollständige Oberfläche zur Konfiguration aller Alerting-Einstellungen: Zeitpläne, Schwellwerte, ignorierte Gruppen, ntfy-Einstellungen, Ruhezeiten, Benachrichtigungs-Prioritäten und mehr

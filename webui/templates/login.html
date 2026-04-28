@@ -4,6 +4,16 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>PBS Monitor — Login</title>
+  <script>
+      (function() {
+          var theme = localStorage.getItem('theme');
+          if (theme === 'light') {
+              document.documentElement.classList.add('theme-light');
+          } else if (theme === 'dark') {
+              document.documentElement.classList.add('theme-dark');
+          }
+      })();
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -19,6 +29,36 @@
       --error-border: #7a2a2a;
       --error-text:   #ff8080;
       --input-bg:     #0f1929;
+    }
+
+    :root.theme-light {
+      --bg:           #f4f4f8;
+      --surface:      #ffffff;
+      --border:       #d1d1db;
+      --text:         #1a1a24;
+      --text-muted:   #55556a;
+      --accent:       #2563eb;
+      --accent-hover: #3b82f6;
+      --error-bg:     #fef2f2;
+      --error-border: #f87171;
+      --error-text:   #dc2626;
+      --input-bg:     #ffffff;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root:not(.theme-dark) {
+        --bg:           #f4f4f8;
+        --surface:      #ffffff;
+        --border:       #d1d1db;
+        --text:         #1a1a24;
+        --text-muted:   #55556a;
+        --accent:       #2563eb;
+        --accent-hover: #3b82f6;
+        --error-bg:     #fef2f2;
+        --error-border: #f87171;
+        --error-text:   #dc2626;
+        --input-bg:     #ffffff;
+      }
     }
 
     body {
