@@ -541,11 +541,10 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         # ── Detect unexpected snapshot loss relative to keep_last ──
         if group_key not in new_group_keys and keep_last > 0:
             prev_count = coerce_int(existing_group.get("current_snapshot_count")) or 0
-            curr_count = (
-                coerce_int(group_record.get("backup_count"))
-                if coerce_int(group_record.get("backup_count")) is not None
-                else len(current_snapshots)
-            )
+            
+            curr_count_raw = coerce_int(group_record.get("backup_count"))
+            curr_count = curr_count_raw if curr_count_raw is not None else len(current_snapshots)
+            
             expected_min = min(prev_count, keep_last)
             if curr_count < expected_min:
                 prev_times = {

@@ -787,7 +787,7 @@ def webui_info():
     # Detect Docker environment
     is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV") == "true"
 
-    info = {
+    info: dict = {
         "read_only": WEBUI_READ_ONLY,
         "is_docker": is_docker,
     }
