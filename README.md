@@ -31,9 +31,8 @@ Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monit
 > curl -sL https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker/quick-deploy.sh | bash
 > 
 > # Option 2: Traditional docker-compose workflow
-> git clone https://github.com/maschkef/PBS_monitor.git
-> cd PBS_monitor
-> cp .env.example .env
+> wget https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker-compose.yml
+> wget https://raw.githubusercontent.com/maschkef/PBS_monitor/main/.env.example -O .env
 > # Edit .env and set API_KEY, then:
 > docker compose up -d
 > ```
