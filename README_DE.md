@@ -295,6 +295,7 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `ntfy_topic` | **Konfigurieren um Push-Benachrichtigungen zu aktivieren** (z.B. "meine-alerts"). Leer lassen um externe Benachrichtigungen zu deaktivieren |
 | `ntfy_token` | Optional. Bearer Token für private ntfy-Instanzen |
 | `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`) |
+| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL (z.B. Healthchecks.io / Uptime Kuma), die nach jedem erfolgreichen Check aufgerufen wird |
 | `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen |
 | `storage_warn_percent` | Speicher-Warnung ab diesem Prozentsatz |
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |

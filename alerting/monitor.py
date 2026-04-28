@@ -1007,6 +1007,14 @@ def run_check(config, state):
     print(f"\nAlerts: {len(all_alerts)} detected, {sent} sent, {skipped} skipped (cooldown/quiet)")
     save_state(state)
 
+    heartbeat_url = config.get("heartbeat_url", "").strip()
+    if heartbeat_url:
+        try:
+            requests.get(heartbeat_url, timeout=10)
+            print(f"Pinged heartbeat URL: {heartbeat_url}")
+        except requests.RequestException as e:
+            print(f"Failed to ping heartbeat URL: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="PBS Monitor — Alerting for remote-backups.com")

@@ -6,6 +6,9 @@
   "ntfy_url": "https://ntfy.sh",
   "ntfy_topic": "",
   "ntfy_token": "",
+  
+  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "heartbeat_url": "",
 
   "_comment_ignored": "List of objects describing backup groups to ignore.",  "ignored_groups": [],
   

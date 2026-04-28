@@ -70,6 +70,7 @@ The master execution cycle run per interval.
 6. Filters out recently fired alerts using `should_alert` (cooldown period).
 7. Dispatches the remaining alerts via `send_ntfy` and appends them to the notification log.
 8. Commits the updated `state.json`.
+9. Pings the optional `heartbeat_url` (if configured and reachable).
 
 ### `main()`
 Parses CLI arguments. If `--daemon <seconds>` is provided, sets up `SIGINT`/`SIGTERM` handlers and runs `run_check` in an infinite loop punctuated by `time.sleep`. Otherwise, runs `run_check` exactly once.

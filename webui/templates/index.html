@@ -1271,6 +1271,11 @@
             <small id="cfg-ntfy_token_hint" style="display:none;color:var(--green)">&#10003; Token is configured. Leave blank to keep it, type a new value to replace it.</small>
           </div>
           <div class="form-group">
+            <label>Heartbeat URL (Ping)</label>
+            <input type="text" id="cfg-heartbeat_url" placeholder="https://hc-ping.com/your-uuid">
+            <small style="grid-column: 2;">Optional HTTP GET ping after a successful check (e.g. Uptime Kuma / Healthchecks).</small>
+          </div>
+          <div class="form-group">
             <label>Alert Cooldown (minutes)</label>
             <input type="number" id="cfg-cooldown" min="0" step="1">
           </div>

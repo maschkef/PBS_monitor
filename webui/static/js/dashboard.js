@@ -1357,6 +1357,7 @@
             const payload = {
                 ntfy_url: document.getElementById('cfg-ntfy_url').value.trim(),
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
+                heartbeat_url: document.getElementById('cfg-heartbeat_url').value.trim(),
                 // Only include ntfy_token when the user has actually typed something;
                 // omitting it preserves the previously stored secret on the server.
                 ...(tokenFieldValue !== '' ? { ntfy_token: tokenFieldValue } : {}),
@@ -1587,3 +1588,4 @@
                 btn.textContent = '📬 Send test notification';
             }
         }
+}

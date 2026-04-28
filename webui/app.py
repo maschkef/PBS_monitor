@@ -827,7 +827,7 @@ def save_alerting_config():
         with open(ALERTING_CONFIG_PATH) as f:
             raw_config = json.load(f)
 
-    for key in ("ntfy_url", "ntfy_topic"):
+    for key in ("ntfy_url", "ntfy_topic", "heartbeat_url"):
         if key in payload:
             raw_config[key] = str(payload[key])
     # ntfy_token: only update when the user submitted a real value, not the

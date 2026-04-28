@@ -21,6 +21,7 @@ _CONFIG_STR_MAX: dict[str, int] = {
     "ntfy_url": 2048,
     "ntfy_topic": 256,
     "ntfy_token": 512,
+    "heartbeat_url": 2048,
 }
 
 # Max lengths for string fields in the group-rule payload.
