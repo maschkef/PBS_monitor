@@ -42,3 +42,4 @@ remote-backupscom-monitoring-api.yaml
 docker-test/*
 temp/*
 TODO.md
+GEMINI.md
