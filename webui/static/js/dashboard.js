@@ -1588,4 +1588,3 @@
                 btn.textContent = '📬 Send test notification';
             }
         }
-}
