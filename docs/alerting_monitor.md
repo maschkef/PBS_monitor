@@ -3,15 +3,16 @@
 ## Overview
 This is the primary daemon/script that orchestrates the entire backend monitoring process. It connects to the `remote-backups.com` API, fetches the current state of Proxmox Backup Server (PBS) datastores, evaluates them against configuration thresholds (storage space, GC, verification) and historical backup schedules, and dispatches `ntfy` alerts upon discovering anomalies.
 
-It heavily imports from `normalization.py`, `schedule.py`, and `notification.py` to maintain a stateless core logic flow, mapping only API payloads and disk I/O in this file.
+It imports from `normalization.py`, `schedule.py`, and `notification.py` to keep the core schedule, migration, and notification logic in focused modules while this file handles API payloads, orchestration, and disk I/O.
 
 ## Core Setup & Configuration
 
 ### File I/O Management
-The script determines `DATA_DIR` either via the `ALERTING_DATA_DIR` environment variable (for Docker mounts) or defaults to the script's directory. It manages three key JSON files:
-- `config.json`: User configurations (API Base, Thresholds, ntfy).
+The script determines `DATA_DIR` either via the `ALERTING_DATA_DIR` environment variable (for Docker mounts) or defaults to the script's directory. It manages these JSON files:
+- `config.json`: User configuration (API base, thresholds, ntfy, heartbeat URL, daemon interval, quiet hours, ignored groups).
 - `state.json`: Persistent monitoring state (inventory history, snapshot data).
 - `group_rules.json`: Explicit, user-defined schedules or rules for specific backup groups.
+- `notification_log.json`: Rolling history of sent alerts and test notifications.
 
 ### `load_config()`, `load_state()`, `load_group_rules()`
 Reads their respective JSON files. If missing, config creates a default from `config.json.example`, while state and rules return empty default structures. Calls the respective `migrate_*` functions from `normalization.py` to transparently upgrade legacy formats.
@@ -43,10 +44,11 @@ The most critical data-fusion function. It compares the newly fetched `backup_in
 **Key Logic:**
 1. Triggers snapshot extraction logic.
 2. Identifies if snapshots unexpectedly disappeared (e.g., dropped below `keep_last` limits). Generates `Snapshots Unexpectedly Removed` or `All Backups Gone` alerts.
-3. Automatically learns or evaluates backup schedules by delegating to `evaluate_schedule_model`.
-4. Evaluates missed backups via `evaluate_missed_backup_alerts`.
-5. Updates and normalizes the live `ds_state` (updating `current_snapshots` and `observed_snapshots` history rings).
-6. Determines if explicitly defined `group_rules` changed and need saving.
+3. Skips ignored groups while processing live inventory and purges ignored groups from persisted state so muted groups do not continue to drive learned schedules.
+4. Updates and normalizes the live `ds_state` (updating `current_snapshots` and `observed_snapshots` history rings).
+5. Automatically learns or evaluates backup schedules by delegating to `evaluate_schedule_model`.
+6. Evaluates missed backups via `evaluate_missed_backup_alerts`.
+7. Determines if explicitly defined `group_rules` changed and need saving.
 
 ### `check_datastore(ds, config, state, backup_inventory, group_rules, persist_group_rules)`
 Evaluates high-level datastore health:
@@ -73,4 +75,4 @@ The master execution cycle run per interval.
 9. Pings the optional `heartbeat_url` (if configured and reachable).
 
 ### `main()`
-Parses CLI arguments. If `--daemon <seconds>` is provided, sets up `SIGINT`/`SIGTERM` handlers and runs `run_check` in an infinite loop punctuated by `time.sleep`. Otherwise, runs `run_check` exactly once.
+Parses CLI arguments. If `--daemon <seconds>` is provided with a positive value, that value is used as the loop interval. If `--daemon` is provided without a value or as `--daemon 0`, the loop interval is read from `daemon_interval_seconds` in config and falls back to the built-in default. In daemon mode, `config.json` is reloaded before every check so Web UI changes to thresholds, ignored groups, notification settings, and the daemon interval apply to the next loop. Otherwise, runs `run_check` exactly once.

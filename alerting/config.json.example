@@ -48,5 +48,8 @@
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
-  "alert_cooldown_minutes": 60
+  "alert_cooldown_minutes": 60,
+
+  "_comment_daemon": "Interval for daemon mode checks in seconds.",
+  "daemon_interval_seconds": 1800
 }

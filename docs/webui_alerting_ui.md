@@ -48,4 +48,4 @@ The primary orchestrator for UI datastore health.
 3. Translates the returned `Alert` class instances into flat dictionaries.
 4. Identifies the highest priority alert to set the overall datastore `health` status.
 5. Augments the datastore's `ignored_groups` configuration with friendly display names matched from the current state.
-6. Packs the results, alongside the output of `collect_schedule_groups`, into a massive dictionary that `app.py` passes directly to `dashboard.html`.
+6. Packs the results, alongside the output of `collect_schedule_groups`, into the alerting payload returned by the `/api/datastores` and `/api/datastores/metrics` endpoints.

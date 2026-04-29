@@ -28,7 +28,7 @@ These endpoints fetch data to populate the frontend tables.
 
 - **`/api/datastores`**: The heavy "full load" endpoint. Proxies to `/monitoring/v1/datastores`, fetching details (rescale logs, metric history, GC, replication). Calls `alerting_ui.build_visual_alerting` to map the backend rules into visual `issues` and `health` labels.
 - **`/api/datastores/metrics`**: A lightweight, fast-refresh variant of `/api/datastores`. Skips deep backup inventory fetches and rescale logs, evaluating alerts strictly against the cached `state.json`.
-- **`/api/datastores/<id>/backups`**: Proxies requests for the Backup Browser view. Groups results using `normalizers.normalize_namespace`. Fetches legacy protocol metrics (rsync, sftp, zfs-recv).
+- **`/api/datastores/<id>/backups`**: Proxies requests for the Backup Browser view. Groups PBS namespaces and snapshots using `normalizers.normalize_namespace`, including per-snapshot verification state when present. Also fetches rsync, sftp, and zfs-recv protocol data and hides trivial zfs-recv metadata-only payloads.
 - **`/api/health`** & **`/api/platform-stats`**: Proxies to public unauthenticated `remote-backups.com` APIs.
 - **`/api/alerting/config` (GET)**: Returns the current config.json with secrets stripped (using `validators._redact_config`).
 - **`/api/alerting/notification-log` (GET)**: Reads and returns the notification history log.
@@ -44,6 +44,8 @@ These routes modify configuration and state. They enforce CSRF tokens and the `r
   Configures or overrides a specific scheduled backup rule (interval, daily, weekly, or none) for a datastore group. Persists to `group_rules.json`.
 - **`/api/alerting/ignore-group` (POST) / `/api/alerting/unignore-group` (POST)**:
   Adds or removes a specific backup group from the `ignored_groups` array in `config.json`, silencing alerts for it.
+- **`/api/alerting/notification-log` (DELETE)**:
+  Clears the rolling `notification_log.json` history.
 
 ### Testing Endpoints
 - **`/api/alerting/test/dry-run`**: Triggers a simulated run of `monitor.py` logic. Calculates active alerts but stops before invoking `send_ntfy`.

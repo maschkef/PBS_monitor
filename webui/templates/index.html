@@ -1473,7 +1473,7 @@
             <p style="font-size:0.9rem;color:var(--yellow);margin-bottom:1rem;padding:0.75rem;background:rgba(255,193,7,0.1);border-left:3px solid var(--yellow);border-radius:4px;">
               ⚠️ <strong>Docker Deployment Detected</strong><br>
               When using Docker, the alerting service runs as a daemon automatically. No cron job setup is needed.<br>
-              The alerting container runs <code>monitor.py --daemon</code> with the configured interval.
+              The alerting container runs <code>monitor.py --daemon 0</code> with the configured interval.
             </p>
           </div>
           <div id="cron-setup">

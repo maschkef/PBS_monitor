@@ -60,6 +60,11 @@ cd PBS_monitor
 # API Key konfigurieren
 cp .env.example .env
 # .env editieren und API_KEY eintragen
+
+# Virtuelle Umgebung erstellen und aktivieren
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r webui/requirements.txt -r alerting/requirements.txt
 ```
 
 ---
@@ -92,9 +97,8 @@ Ein grafisches Dashboard um den Status aller Datastores auf einen Blick zu prüf
 ### Starten
 
 ```bash
-cd webui
-pip install -r requirements.txt
-python app.py
+# Aus dem Repository-Root, mit aktivierter virtueller Umgebung
+python -m webui.app
 ```
 
 Dashboard öffnen: [http://127.0.0.1:5111](http://127.0.0.1:5111)
@@ -129,6 +133,7 @@ Die folgenden Variablen können in `.env` gesetzt werden:
 | `WEBUI_SECURE_COOKIES` | `0` | Auf `1` setzen um den `Secure`-Flag auf Session-Cookies zu setzen. Aktivieren wenn das Dashboard über HTTPS ausgeliefert wird (z. B. hinter einem TLS-terminierenden Reverse Proxy) |
 | `WEBUI_HIDE_SERVER_PATHS` | `0` | Auf `1` setzen um serverseitige Dateisystempfade aus dem `/api/webui/info`-Endpoint auszublenden (Alerting-Datenverzeichnis, Python-Executable). Empfohlen wenn das Dashboard öffentlich erreichbar ist |
 | `WEBUI_PROXY_COUNT` | `0` | Anzahl der vertrauenswürdigen Reverse-Proxy-Hops vor Flask. Wenn ungleich 0, liest Flask die echte Client-IP aus `X-Real-IP` (von Traefik standardmäßig gesetzt) oder aus `X-Forwarded-For`. Auf die Anzahl der selbst betriebenen Proxys setzen, z. B. `1` für einen einzelnen Traefik, `2` für nginx → Traefik → Flask |
+| `WEBUI_CSP` | *(eingebaute Policy)* | Optionaler Override für den `Content-Security-Policy`-Response-Header. Nur setzen, wenn ein Reverse Proxy oder Embedding-Setup eine eigene Policy benötigt |
 
 > [!TIP]
 > **Reverse-Proxy-Setup:** `WEBUI_PROXY_COUNT` auf die Anzahl der selbst betriebenen Proxy-Hops setzen. Wenn gesetzt, prüft Flask zuerst `X-Real-IP` (wird von Traefik direkt auf die Client-IP gesetzt) und fällt auf `X-Forwarded-For` zurück. So zeigen Rate-Limiting und Login-Audit-Logs immer die echte Client-IP. Zusätzlich `WEBUI_SECURE_COOKIES=1` aktivieren, wenn TLS vom Proxy (z. B. Traefik) terminiert wird.
@@ -178,11 +183,8 @@ auf einem Server per Cron laufen kann.
 ### Setup
 
 ```bash
-cd alerting
-pip install -r requirements.txt
-
 # Initiale Konfiguration erstellen (optional)
-cp config.json.example config.json
+cp alerting/config.json.example alerting/config.json
 ```
 
 ### Konfiguration
@@ -191,7 +193,7 @@ cp config.json.example config.json
 
 Wenn du das Web UI Tool verwendest (siehe oben), kannst du alle Alerting-Einstellungen über die Weboberfläche konfigurieren:
 
-1. Web UI starten: `cd ../webui && python app.py`
+1. Web UI aus dem Repository-Root starten: `python -m webui.app`
 2. [http://127.0.0.1:5111](http://127.0.0.1:5111) öffnen
 3. Zahnrad-Symbol (⚙️) klicken um **Alerting-Konfiguration** zu öffnen
 4. Push-Benachrichtigungen konfigurieren:
@@ -207,25 +209,29 @@ Wenn du das Web UI Tool verwendest (siehe oben), kannst du alle Alerting-Einstel
 Alternativ die `alerting/config.json` direkt bearbeiten. Alle verfügbaren Parameter sind in der [Konfigurationsdatei-Referenz](#konfigurationsdatei-referenz) weiter unten beschrieben:
 
 ```bash
-cp config.json.example config.json
-# alerting/config.json bearbeiten und mindestens API-Key und (optional) ntfy_topic setzen
+cp alerting/config.json.example alerting/config.json
+# alerting/config.json bearbeiten und mindestens ntfy_topic setzen, wenn Push-Benachrichtigungen gewünscht sind
+# Monitoring-API-Token separat über API_KEY in der Umgebung oder .env setzen
 ```
 
 ### Nutzung
 
 ```bash
 # Einmaliger Check
-python monitor.py
+python -m alerting.monitor
 
-# Daemon-Modus (alle 30 Minuten)
-python monitor.py --daemon 1800
+# Daemon-Modus (nutzt daemon_interval_seconds aus der Config)
+python -m alerting.monitor --daemon
+
+# Daemon-Modus mit explizitem Override (alle 30 Minuten)
+python -m alerting.monitor --daemon 1800
 ```
 
 ### Cron-Job (empfohlen)
 
 ```bash
 # Alle 30 Minuten prüfen
-*/30 * * * * cd /path/to/PBS_monitor/alerting && /usr/bin/python3 monitor.py >> /var/log/pbs-monitor.log 2>&1
+*/30 * * * * cd /path/to/PBS_monitor && /path/to/PBS_monitor/.venv/bin/python -m alerting.monitor >> /var/log/pbs-monitor.log 2>&1
 ```
 
 ### Konfigurationsdatei-Referenz
@@ -241,6 +247,9 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
   "ntfy_url": "https://ntfy.sh",
   "ntfy_topic": "",
   "ntfy_token": "",
+
+  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "heartbeat_url": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
@@ -312,13 +321,14 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `schedule_learning.stale_after_days` | Zusätzliche Tage über die normale wöchentliche Slot-Kadenz hinaus, bevor ein gelernter Slot als veraltet gilt |
 | `schedule_learning.snapshot_retention_count` | Wie viele der neuesten Snapshots pro Backup-Gruppe im State gespeichert werden (Standard: 24). Wird für Schedule-Learning und Snapshot-Verlust-Erkennung verwendet — bei Gruppen mit vielen täglichen Backups erhöhen |
 | `alert_cooldown_minutes` | Mindestzeit zwischen wiederholten Alerts gleichen Typs |
-| `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon` oder Docker-Container, Sekunden, Standard: 1800). In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
+| `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon`, `--daemon 0` oder Docker-Container, Sekunden, Standard: 1800). Ein positiver CLI-Wert wie `--daemon 600` überschreibt diese Einstellung. In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
 
 Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` oder der Shell):
 
 | Umgebungsvariable | Beschreibung |
 |-------------------|--------------|
-| `ALERTING_DATA_DIR` | Überschreibt das Verzeichnis, in dem `config.json`, `state.json` und `group_rules.json` gespeichert werden. Standard: das `alerting/`-Verzeichnis des Scripts. In Docker-Containern wird dieser Wert automatisch gesetzt (`/app/data`). |
+| `API_KEY` | Monitoring-API-Token für remote-backups.com. Für beide Tools erforderlich. |
+| `ALERTING_DATA_DIR` | Überschreibt das Verzeichnis, in dem `config.json`, `state.json` und `group_rules.json` gespeichert werden. Standard: das `alerting/`-Verzeichnis des Scripts. Kann in `.env` oder in der Shell gesetzt werden. In Docker-Containern wird dieser Wert automatisch gesetzt (`/app/data`). |
 | `NTFY_TOKEN` | Überschreibt den `ntfy_token` aus `config.json`. Dieser Weg ist dem Speichern des Tokens auf der Festplatte vorzuziehen (z. B. `NTFY_TOKEN=tk_yoursecrettoken`). |
 
 ### Alert-Prioritäten (ntfy)
@@ -338,9 +348,13 @@ Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` ode
 Die Monitoring API ist read-only. Sie liefert inzwischen live PBS-Namespaces, Backup-Gruppen und Snapshots, aber Folgendes ist darüber weiterhin **nicht** verfügbar:
 
 - Ob ein Snapshot aus einem automatischen oder manuellen Lauf stammt
-- Per-Snapshot Verification-Status
 - Konfigurierte Backup-Schedules oder -Frequenzen pro Gruppe
 - I/O-Graphen oder langfristige Zeitreihen-Daten
+
+Per-Snapshot-Verification-Status wird in der Web UI angezeigt, wenn die
+Backup-Inventar-Antwort ihn enthält. Das Alerting bewertet weiterhin den
+Datastore-weiten Verification-Status und gelernte Backup-Fenster, nicht den
+Per-Snapshot-Status als Schedule-Signal.
 
 Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace und Gruppe und lernt daraus konservative Wochentag-/Zeit-Slots oder kurze Intervalle. Aktuell kann das Backup-Alerting erkennen:
 - ✅ Ob alle sichtbaren PBS-Backups verschwunden sind
@@ -375,6 +389,7 @@ Das Alerting persistiert deshalb jetzt die Backup-Browser-Daten pro Namespace un
 PBS_monitor/
 ├── .env.example                    # Vorlage für API Key
 ├── .gitignore
+├── docker-compose.yml               # Docker-Compose-Deployment
 ├── LICENSE
 ├── README.md                       # Englische Dokumentation
 ├── README_DE.md                    # Deutsche Dokumentation
@@ -388,14 +403,23 @@ PBS_monitor/
 │   │   └── Dockerfile
 │   └── webui/
 │       └── Dockerfile
+├── docs/                           # Technische Moduldokumentation
+│   ├── architecture.md
+│   ├── alerting_monitor.md
+│   ├── alerting_normalization.md
+│   ├── alerting_notification.md
+│   ├── alerting_schedule.md
+│   ├── webui_alerting_ui.md
+│   ├── webui_app.md
+│   └── webui_utils.md
 ├── tests/                          # Automatisierte Tests
 │   ├── conftest.py
 │   ├── test_auth.py
+│   ├── test_config_save.py
 │   ├── test_csrf.py
 │   ├── test_input_validation.py
 │   ├── test_secret_redaction.py
 │   ├── test_security_headers.py
-│   ├── test_ssrf.py
 │   └── requirements.txt
 ├── webui/                          # Tool 1: Web Dashboard
 │   ├── app.py                      # Flask Server (Routen, Session-Handling)

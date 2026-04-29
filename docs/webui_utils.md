@@ -38,7 +38,7 @@ This module contains pure functions to validate HTTP JSON payloads received from
 ### Constants
 - **`_TOKEN_SENTINEL` (`"***CONFIGURED***"`)**: A masked string sent to the frontend to represent an existing secret (like `ntfy_token`). It prevents exposing secrets.
 - **`_TIME_RE`**: A strict regex validating 24-hour time formats (`HH:MM`).
-- **`_CONFIG_STR_MAX`** & **`_RULE_STR_MAX`**: Dictionaries defining strict length limits for API payload fields to prevent DoS via large inputs.
+- **`_CONFIG_STR_MAX`** & **`_RULE_STR_MAX`**: Dictionaries defining strict length limits for API payload fields, including `heartbeat_url`, to prevent oversized inputs.
 
 ### `_validate_ntfy_url(url)`
 Parses the user-provided `ntfy_url`. Ensures that the URL has a valid HTTP/HTTPS scheme and a hostname.
@@ -48,6 +48,6 @@ Takes a live configuration dictionary and replaces `ntfy_token` with `_TOKEN_SEN
 
 ### Payload Validators
 These functions validate incoming JSON requests against expected schemas and bounds.
-- **`_validate_config_payload(payload, coerce_int_fn)`**: Exhaustively checks the `config.json` payload. Validates string lengths, bounds checks integers (like `daemon_interval_seconds >= 60`), validates nested structures (`thresholds`, `quiet_hours`, `schedule_learning`, `notification_priorities`), and verifies regex for time values.
+- **`_validate_config_payload(payload, coerce_int_fn)`**: Exhaustively checks the `config.json` payload. Validates string lengths for ntfy and heartbeat fields, bounds checks integers (like `daemon_interval_seconds >= 60`), validates nested structures (`thresholds`, `quiet_hours`, `schedule_learning`, `notification_priorities`), and verifies regex for time values.
 - **`_validate_group_rule_payload(payload)`**: Validates group rule payload constraints (datastore_id, namespace, timezone lengths) against `_RULE_STR_MAX`.
-- **`_validate_ignore_group_payload(payload)`**: Validates payload parameters when a user clicks "Ignore" on a backup group in the UI.
+- **`_validate_ignore_group_payload(payload)`**: Validates payload parameters when a user clicks "Ignore" or "Unignore" on a backup group in the UI.

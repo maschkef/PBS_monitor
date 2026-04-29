@@ -59,6 +59,11 @@ cd PBS_monitor
 # Configure API key
 cp .env.example .env
 # Edit .env and set your API_KEY
+
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r webui/requirements.txt -r alerting/requirements.txt
 ```
 
 ---
@@ -91,9 +96,8 @@ A graphical dashboard to check the status of all datastores at a glance.
 ### Start
 
 ```bash
-cd webui
-pip install -r requirements.txt
-python app.py
+# From the repository root, with the virtual environment activated
+python -m webui.app
 ```
 
 Open the dashboard: [http://127.0.0.1:5111](http://127.0.0.1:5111)
@@ -128,6 +132,7 @@ The following variables can be set in `.env`:
 | `WEBUI_SECURE_COOKIES` | `0` | Set to `1` to add the `Secure` flag to session cookies. Enable when the dashboard is served over HTTPS (e.g., behind a TLS-terminating reverse proxy) |
 | `WEBUI_HIDE_SERVER_PATHS` | `0` | Set to `1` to omit server-side file system paths from the `/api/webui/info` endpoint (alerting data directory, Python executable). Recommended when the dashboard is publicly reachable |
 | `WEBUI_PROXY_COUNT` | `0` | Number of trusted reverse proxy hops in front of Flask. When non-zero, Flask reads the real client IP from `X-Real-IP` (set by Traefik by default) or from `X-Forwarded-For`. Set to the number of proxies you control, e.g. `1` for a single Traefik, `2` for nginx → Traefik → Flask |
+| `WEBUI_CSP` | *(built-in policy)* | Optional override for the `Content-Security-Policy` response header. Only set this when a reverse proxy or embedding setup requires a custom policy |
 
 > [!TIP]
 > **Reverse proxy setup:** Set `WEBUI_PROXY_COUNT` to the number of proxy hops you control. When set, Flask first checks `X-Real-IP` (which Traefik sets directly to the client IP) and falls back to `X-Forwarded-For`. This ensures rate-limiting and login audit logs always show the real client IP. Also enable `WEBUI_SECURE_COOKIES=1` when TLS is terminated by the proxy (e.g. Traefik).
@@ -177,11 +182,8 @@ on a server via cron.
 ### Setup
 
 ```bash
-cd alerting
-pip install -r requirements.txt
-
 # Create initial configuration (optional)
-cp config.json.example config.json
+cp alerting/config.json.example alerting/config.json
 ```
 
 ### Configuration
@@ -190,7 +192,7 @@ cp config.json.example config.json
 
 If you're running the Web UI tool (see above), you can configure all alerting settings through the web interface:
 
-1. Start the Web UI: `cd ../webui && python app.py` 
+1. Start the Web UI from the repository root: `python -m webui.app`
 2. Open [http://127.0.0.1:5111](http://127.0.0.1:5111)
 3. Click the gear icon (⚙️) to open **Alerting Configuration**
 4. Configure push notifications:
@@ -206,25 +208,29 @@ If you're running the Web UI tool (see above), you can configure all alerting se
 Alternatively, edit `alerting/config.json` directly. See the [Configuration File Reference](#configuration-file-reference) section below for all available parameters:
 
 ```bash
-cp config.json.example config.json
-# Edit alerting/config.json and set at minimum your API key and (optionally) ntfy_topic
+cp alerting/config.json.example alerting/config.json
+# Edit alerting/config.json and set at minimum ntfy_topic if you want push notifications
+# Set the Monitoring API token separately via API_KEY in the environment or .env
 ```
 
 ### Usage
 
 ```bash
 # Single check
-python monitor.py
+python -m alerting.monitor
 
-# Daemon mode (every 30 minutes)
-python monitor.py --daemon 1800
+# Daemon mode (uses daemon_interval_seconds from config)
+python -m alerting.monitor --daemon
+
+# Daemon mode with an explicit override (every 30 minutes)
+python -m alerting.monitor --daemon 1800
 ```
 
 ### Cron Job (recommended)
 
 ```bash
 # Check every 30 minutes
-*/30 * * * * cd /path/to/PBS_monitor/alerting && /usr/bin/python3 monitor.py >> /var/log/pbs-monitor.log 2>&1
+*/30 * * * * cd /path/to/PBS_monitor && /path/to/PBS_monitor/.venv/bin/python -m alerting.monitor >> /var/log/pbs-monitor.log 2>&1
 ```
 
 ### Configuration File Reference
@@ -240,6 +246,9 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
   "ntfy_url": "https://ntfy.sh",
   "ntfy_topic": "",
   "ntfy_token": "",
+
+  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "heartbeat_url": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
@@ -314,13 +323,14 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `schedule_learning.stale_after_days` | Extra days beyond the normal weekly slot cadence before a learned slot is treated as stale |
 | `schedule_learning.snapshot_retention_count` | How many recent snapshots per backup group are stored in state (default: 24). Used for schedule learning and snapshot-loss detection — raise this for groups with many daily backups |
 | `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
-| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon` or Docker container, seconds, default: 1800). Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
+| `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon`, `--daemon 0`, or Docker container, seconds, default: 1800). A positive CLI value such as `--daemon 600` overrides this setting. Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
 
 The following can also be set as environment variables (in `.env` or the shell):
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Set automatically in Docker containers (`/app/data`). |
+| `API_KEY` | Monitoring API token for remote-backups.com. Required by both tools. |
+| `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Can be set in `.env` or the shell. Set automatically in Docker containers (`/app/data`). |
 | `NTFY_TOKEN` | Override the `ntfy_token` stored in `config.json`. Prefer this over storing the token on disk (e.g. `NTFY_TOKEN=tk_yoursecrettoken`). |
 
 ### Alert Priorities (ntfy)
@@ -338,9 +348,13 @@ The following can also be set as environment variables (in `.env` or the shell):
 The Monitoring API is read-only. It now exposes live PBS namespaces, backup groups, and snapshots, but the following is still **not** available through this API:
 
 - Whether a snapshot came from an automatic or manual run
-- Per-snapshot verification status
 - Configured backup schedules or frequencies per group
 - I/O graphs or long-term time-series data
+
+Per-snapshot verification status is displayed in the Web UI when the backup
+inventory payload contains it, but the alerting script still evaluates
+datastore-level verification status and learned backup windows rather than
+treating per-snapshot verification as a scheduling signal.
 
 The alerting script now persists backup-browser inventory per namespace and group and learns conservative weekday/time slots or short intervals from that history. Current backup alerting can detect:
 - ✅ Whether all visible PBS backups have disappeared
@@ -375,6 +389,7 @@ The alerting script now persists backup-browser inventory per namespace and grou
 PBS_monitor/
 ├── .env.example                    # API key template
 ├── .gitignore
+├── docker-compose.yml               # Docker Compose deployment
 ├── LICENSE
 ├── README.md                       # English documentation
 ├── README_DE.md                    # German documentation
@@ -388,14 +403,23 @@ PBS_monitor/
 │   │   └── Dockerfile
 │   └── webui/
 │       └── Dockerfile
+├── docs/                           # Technical module documentation
+│   ├── architecture.md
+│   ├── alerting_monitor.md
+│   ├── alerting_normalization.md
+│   ├── alerting_notification.md
+│   ├── alerting_schedule.md
+│   ├── webui_alerting_ui.md
+│   ├── webui_app.md
+│   └── webui_utils.md
 ├── tests/                          # Automated test suite
 │   ├── conftest.py
 │   ├── test_auth.py
+│   ├── test_config_save.py
 │   ├── test_csrf.py
 │   ├── test_input_validation.py
 │   ├── test_secret_redaction.py
 │   ├── test_security_headers.py
-│   ├── test_ssrf.py
 │   └── requirements.txt
 ├── webui/                          # Tool 1: Web Dashboard
 │   ├── app.py                      # Flask server (routes, session handling)

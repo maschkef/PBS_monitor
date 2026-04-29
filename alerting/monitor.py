@@ -8,11 +8,12 @@ can learn schedules from real snapshot history instead of aggregate counts.
 State is persisted to a JSON file between runs.
 
 Usage:
-    python monitor.py                  # single check
-    python monitor.py --daemon 1800    # check every 1800 seconds (30 minutes)
+    python -m alerting.monitor                  # single check
+    python -m alerting.monitor --daemon 1800    # check every 1800 seconds (30 minutes)
+    python -m alerting.monitor --daemon         # use daemon_interval_seconds from config
 
 Cron example (every 5 minutes):
-    */5 * * * * cd /path/to/alerting && python monitor.py
+    */5 * * * * cd /path/to/PBS_monitor && .venv/bin/python -m alerting.monitor
 """
 
 import argparse
@@ -84,6 +85,8 @@ from alerting.notification import (
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR.parent / ".env"
 
+load_dotenv(ENV_PATH)
+
 # Support a configurable data directory (e.g. for Docker deployments where
 # config/state must be stored in a mounted volume separate from the code).
 # Defaults to the script directory for non-Docker use.
@@ -93,8 +96,6 @@ DATA_DIR = Path(_data_dir_env) if _data_dir_env else SCRIPT_DIR
 CONFIG_PATH = DATA_DIR / "config.json"
 STATE_PATH = DATA_DIR / "state.json"
 NOTIFICATION_LOG_PATH = DATA_DIR / "notification_log.json"
-
-load_dotenv(ENV_PATH)
 
 STATE_VERSION = 2
 MAX_CURRENT_SNAPSHOT_DETAILS = 24
@@ -1018,16 +1019,28 @@ def run_check(config, state):
 def main():
     parser = argparse.ArgumentParser(description="PBS Monitor — Alerting for remote-backups.com")
     parser.add_argument(
-        "--daemon", type=int, metavar="SECONDS",
-        help="Run continuously, checking every N seconds",
+        "--daemon", nargs="?", const=0, type=int, metavar="SECONDS",
+        help=(
+            "Run continuously, checking every N seconds. "
+            "Use --daemon without a value or --daemon 0 to read daemon_interval_seconds from config."
+        ),
     )
     args = parser.parse_args()
 
-    config = load_config()
     state = load_state()
 
-    if args.daemon:
-        print(f"Running in daemon mode, interval: {args.daemon}s")
+    if args.daemon is not None:
+        config = load_config()
+        interval_override = args.daemon if args.daemon > 0 else None
+
+        def resolve_daemon_interval(current_config):
+            configured_interval = coerce_int(current_config.get("daemon_interval_seconds"))
+            interval = interval_override or configured_interval
+            if interval is None or interval < 60:
+                return DEFAULT_CONFIG["daemon_interval_seconds"]
+            return interval
+
+        print(f"Running in daemon mode, interval: {resolve_daemon_interval(config)}s")
         running = True
 
         def handle_signal(sig, frame):
@@ -1039,12 +1052,15 @@ def main():
         signal.signal(signal.SIGTERM, handle_signal)
 
         while running:
+            config = load_config()
+            interval = resolve_daemon_interval(config)
             run_check(config, state)
-            for _ in range(args.daemon):
+            for _ in range(interval):
                 if not running:
                     break
                 time.sleep(1)
     else:
+        config = load_config()
         run_check(config, state)
 
 

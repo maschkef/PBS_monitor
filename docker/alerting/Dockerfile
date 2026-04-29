@@ -47,4 +47,4 @@ ENV ALERTING_DATA_DIR=/app/data
 WORKDIR /app/alerting
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "monitor.py", "--daemon", "1800"]
+CMD ["python", "monitor.py", "--daemon", "0"]
