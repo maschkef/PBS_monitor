@@ -1,9 +1,6 @@
 services:
   webui:
     image: ghcr.io/maschkef/pbs_monitor-webui:latest
-    build:
-      context: .
-      dockerfile: docker/webui/Dockerfile
     container_name: pbs-monitor-webui
     restart: unless-stopped
     ports:
@@ -11,21 +8,15 @@ services:
     env_file:
       - .env
     volumes:
-      - alerting-data:/app/data
+      - ./config:/app/data
     depends_on:
       - alerting
 
   alerting:
     image: ghcr.io/maschkef/pbs_monitor-alerting:latest
-    build:
-      context: .
-      dockerfile: docker/alerting/Dockerfile
     container_name: pbs-monitor-alerting
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - alerting-data:/app/data
-
-volumes:
-  alerting-data:
+      - ./config:/app/data

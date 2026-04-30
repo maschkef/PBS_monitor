@@ -31,10 +31,13 @@ Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monit
 > curl -sL https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker/quick-deploy.sh | bash
 > 
 > # Option 2: Traditional docker-compose workflow
+> mkdir pbs-monitor && cd pbs-monitor
 > wget https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker-compose.yml
 > wget https://raw.githubusercontent.com/maschkef/PBS_monitor/main/.env.example -O .env
-> # Edit .env and set API_KEY, then:
+> nano .env  # Edit and set your API_KEY
 > docker compose up -d
+> 
+> # Access the Web UI at http://localhost:5111
 > ```
 > 
 > See release assets for documentation: [Latest Release](https://github.com/maschkef/PBS_monitor/releases/latest)
@@ -46,9 +49,15 @@ Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monit
 
 ## Prerequisites
 
+**For Docker deployment (recommended):**
+- Docker and Docker Compose
+
+**For manual installation:**
 - Python 3.9+
-- A [remote-backups.com](https://remote-backups.com) account with at least one datastore
-- A Monitoring API token (generate at [Dashboard → Settings → Security](https://dashboard.remote-backups.com/settings/security))
+
+**General:**
+- A remote-backups.com account with at least one datastore
+- A Monitoring API token (generate at Dashboard → Settings → Security)
 
 ## Setup
 
@@ -58,7 +67,7 @@ cd PBS_monitor
 
 # Configure API key
 cp .env.example .env
-# Edit .env and set your API_KEY
+nano .env  # Edit and set your API_KEY
 
 # Create and activate a virtual environment
 python3 -m venv .venv
