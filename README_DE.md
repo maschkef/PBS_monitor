@@ -29,7 +29,7 @@ Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/m
 > **Schnellstart:**
 > ```bash
 > # Option 1: Ein-Befehl-Bereitstellung
-> curl -sL https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker/quick-deploy.sh | bash
+> wget -qO quick-deploy.sh https://raw.githubusercontent.com/maschkef/PBS_monitor/main/docker/quick-deploy.sh && bash quick-deploy.sh
 > 
 > # Option 2: Traditioneller docker-compose Workflow
 > mkdir pbs-monitor && cd pbs-monitor
@@ -120,9 +120,9 @@ Die Web UI ist standardmäßig offen zugänglich. Um sie mit einem Passwort zu s
 
 ```ini
 WEBUI_PASSWORD=dein-sicheres-passwort
-# Optional, aber empfohlen für stabile Sessions über Neustarts hinweg:
-# Key generieren mit: python3 -c "import secrets; print(secrets.token_hex(32))"
-WEBUI_SECRET_KEY=generierten-key-hier-eintragen
+# Optional, für stabile Sessions über Neustarts hinweg:
+# Einen beliebigen langen Zufallstext eintragen. Wenn leer, wird beim Start automatisch ein Schlüssel generiert (Sessions gehen bei Neustart verloren).
+WEBUI_SECRET_KEY=
 ```
 
 Wenn `WEBUI_PASSWORD` gesetzt ist, werden nicht eingeloggte Besucher zur Login-Seite weitergeleitet. Leer lassen, wenn die Zugangskontrolle bereits auf Netzwerkebene erfolgt (z. B. Traefik + OAuth2-Proxy).
@@ -191,10 +191,7 @@ auf einem Server per Cron laufen kann.
 
 ### Setup
 
-```bash
-# Initiale Konfiguration erstellen (optional)
-cp alerting/config.json.example alerting/config.json
-```
+Wenn du das Dashboard oder das Alerting-Skript ohne Konfigurationsdatei startest, wird automatisch eine Standardkonfiguration erstellt, die du dann in der Web UI oder direkt in der Datei bearbeiten kannst.
 
 ### Konfiguration
 
@@ -218,7 +215,6 @@ Wenn du das Web UI Tool verwendest (siehe oben), kannst du alle Alerting-Einstel
 Alternativ die `alerting/config.json` direkt bearbeiten. Alle verfügbaren Parameter sind in der [Konfigurationsdatei-Referenz](#konfigurationsdatei-referenz) weiter unten beschrieben:
 
 ```bash
-cp alerting/config.json.example alerting/config.json
 # alerting/config.json bearbeiten und mindestens ntfy_topic setzen, wenn Push-Benachrichtigungen gewünscht sind
 # Monitoring-API-Token separat über API_KEY in der Umgebung oder .env setzen
 ```
@@ -242,6 +238,29 @@ python -m alerting.monitor --daemon 1800
 # Alle 30 Minuten prüfen
 */30 * * * * cd /path/to/PBS_monitor && /path/to/PBS_monitor/.venv/bin/python -m alerting.monitor >> /var/log/pbs-monitor.log 2>&1
 ```
+
+### Systemd Service (Alternative für Dauerbetrieb)
+
+Für den Dauerbetrieb auf Linux-Systemen ohne Docker kann anstelle von Cron ein `systemd` Service im Daemon-Modus eingerichtet werden. Erstelle dazu eine Datei `/etc/systemd/system/pbs-monitor-alerting.service`:
+
+```ini
+[Unit]
+Description=PBS Monitor Alerting Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=DEIN_USER
+WorkingDirectory=/pfad/zu/PBS_monitor
+ExecStart=/pfad/zu/PBS_monitor/.venv/bin/python -m alerting.monitor --daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Danach mit `sudo systemctl daemon-reload && sudo systemctl enable --now pbs-monitor-alerting.service` aktivieren.
 
 ### Konfigurationsdatei-Referenz
 
