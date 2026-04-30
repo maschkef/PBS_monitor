@@ -182,7 +182,7 @@ def auto_migrate_config(config_path, example_path):
             with open(tmp, "w") as f:
                 json.dump(new_config, f, indent=2)
             os.replace(tmp, config_path)
-            print(f"Auto-migrated config.json with new keys from example.")
+            print("Auto-migrated config.json with new keys from example.")
             
     except Exception as e:
         print(f"Warning: Failed to auto-migrate config.json: {e}")
