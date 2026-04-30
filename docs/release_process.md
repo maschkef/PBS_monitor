@@ -23,7 +23,12 @@ If your new release changes the structure of the runtime state:
 - Increment the `STATE_VERSION` integer in `alerting/monitor.py`.
 - Add a new migration block inside the `migrate_state(state)` function in `alerting/normalization.py` to seamlessly convert older state schemas to the new format.
 
-### D. Run Tests
+### D. Update Documentation
+Ensure that all relevant documentation accurately reflects the changes in this release:
+- Update the English (`README.md`) and German (`README_DE.md`) readme files if features, setup instructions, or configurations have changed.
+- Update the technical markdown files in the `docs/` folder if architectural or functional changes were made.
+
+### E. Run Tests
 Ensure no regressions were introduced.
 ```bash
 python3 -m pytest tests/

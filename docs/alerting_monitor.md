@@ -15,7 +15,10 @@ The script determines `DATA_DIR` either via the `ALERTING_DATA_DIR` environment 
 - `notification_log.json`: Rolling history of sent alerts and test notifications.
 
 ### `load_config()`, `load_state()`, `load_group_rules()`
-Reads their respective JSON files. If missing, config creates a default from `config.json.example`, while state and rules return empty default structures. Calls the respective `migrate_*` functions from `normalization.py` to transparently upgrade legacy formats.
+Reads their respective JSON files. If missing, config creates a default from `config.json.example`, while state and rules return empty default structures.
+- `load_config()` uses an `auto_migrate_config` helper to automatically merge missing keys from `config.json.example` into the user's `config.json` without breaking existing settings.
+- `load_state()` tracks the `last_run_version` (compared against the `VERSION` file) and emits console update notifications when version changes are detected.
+Calls the respective `migrate_*` functions from `normalization.py` to transparently upgrade legacy formats.
 
 ### `save_state(state)`, `save_group_rules(group_rules)`
 Atomic write operations to disk using `.tmp` files and `os.replace` to prevent data corruption during power loss or unexpected termination.

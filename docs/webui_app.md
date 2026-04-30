@@ -32,7 +32,7 @@ These endpoints fetch data to populate the frontend tables.
 - **`/api/health`** & **`/api/platform-stats`**: Proxies to public unauthenticated `remote-backups.com` APIs.
 - **`/api/alerting/config` (GET)**: Returns the current config.json with secrets stripped (using `validators._redact_config`).
 - **`/api/alerting/notification-log` (GET)**: Reads and returns the notification history log.
-- **`/api/webui/info`**: Returns diagnostic data (Docker status, read-only mode).
+- **`/api/webui/info`**: Returns diagnostic data (Docker status, read-only mode, current `VERSION` used by the frontend update checker).
 
 ### State-Changing API Endpoints (POST / DELETE)
 These routes modify configuration and state. They enforce CSRF tokens and the `read_only_guard()` (which aborts with `403` if `WEBUI_READ_ONLY` is enabled).
