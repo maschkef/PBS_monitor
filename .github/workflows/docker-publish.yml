@@ -44,6 +44,7 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref, 'beta') && !contains(github.ref, 'alpha') && !contains(github.ref, 'rc') }}
+          type=raw,value=edge,enable=${{ github.ref_type == 'tag' }}
 
     - name: Extract metadata for webui image  
       id: meta-webui
@@ -56,6 +57,7 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref, 'beta') && !contains(github.ref, 'alpha') && !contains(github.ref, 'rc') }}
+          type=raw,value=edge,enable=${{ github.ref_type == 'tag' }}
 
     - name: Build and push alerting image
       uses: docker/build-push-action@v7
