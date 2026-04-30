@@ -1204,7 +1204,57 @@
                     document.getElementById('btnLiveTest').disabled = true;
                     document.getElementById('btnPingTest').disabled = true;
                 }
+                if (info.version && info.version !== "unknown") {
+                    checkForUpdates(info.version);
+                }
             } catch (_) { /* ignore */ }
+        }
+
+        async function checkForUpdates(currentVersion) {
+            try {
+                const isPreRelease = currentVersion.includes('-') || currentVersion.includes('beta') || currentVersion.includes('alpha') || currentVersion.includes('rc');
+                const url = isPreRelease 
+                    ? 'https://api.github.com/repos/maschkef/PBS_monitor/releases'
+                    : 'https://api.github.com/repos/maschkef/PBS_monitor/releases/latest';
+                
+                const response = await fetch(url);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                let latestRelease = Array.isArray(data) ? data[0] : data;
+                
+                if (!latestRelease || !latestRelease.tag_name) return;
+                
+                let latestVersion = latestRelease.tag_name;
+                
+                // Compare versions
+                if (compareSemver(latestVersion, currentVersion) > 0) {
+                    const badge = document.getElementById('updateBadge');
+                    const vSpan = document.getElementById('updateVersion');
+                    vSpan.textContent = latestVersion;
+                    badge.href = latestRelease.html_url;
+                    badge.style.display = '';
+                }
+            } catch (_) { /* ignore */ }
+        }
+
+        function compareSemver(a, b) {
+            a = a.replace(/^v/, '');
+            b = b.replace(/^v/, '');
+            const [aVer, aPre] = a.split('-');
+            const [bVer, bPre] = b.split('-');
+            const aParts = aVer.split('.').map(Number);
+            const bParts = bVer.split('.').map(Number);
+            for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+                const aVal = aParts[i] || 0;
+                const bVal = bParts[i] || 0;
+                if (aVal > bVal) return 1;
+                if (aVal < bVal) return -1;
+            }
+            if (!aPre && bPre) return 1;
+            if (aPre && !bPre) return -1;
+            if (aPre && bPre) return aPre > bPre ? 1 : (aPre < bPre ? -1 : 0);
+            return 0;
         }
 
         // ── Alerting config ────────────────────────────────────────────────────

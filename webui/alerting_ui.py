@@ -21,6 +21,10 @@ def load_visual_alerting_config(config_path: Path) -> dict:
     if not config_path.exists():
         return config
 
+    # Auto-migrate missing keys from config.json.example if the user only runs the Web UI
+    example_path = Path(alert_monitor.__file__).parent / "config.json.example"
+    alert_monitor.auto_migrate_config(config_path, example_path)
+
     with open(config_path) as f:
         raw_config = json.load(f)
 

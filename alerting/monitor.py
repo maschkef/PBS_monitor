@@ -144,12 +144,59 @@ DEFAULT_CONFIG = {
 
 # ─── Config / state I/O ─────────────────────────────────────────────────────
 
+def auto_migrate_config(config_path, example_path):
+    """Update existing config.json with missing keys from config.json.example."""
+    if not config_path.exists() or not example_path.exists():
+        return
+
+    try:
+        with open(config_path) as f:
+            current_config = json.load(f)
+        with open(example_path) as f:
+            example_config = json.load(f)
+            
+        modified = False
+        
+        def merge_dicts(curr, ex):
+            nonlocal modified
+            merged = {}
+            for key, ex_val in ex.items():
+                if key not in curr:
+                    merged[key] = ex_val
+                    modified = True
+                else:
+                    curr_val = curr[key]
+                    if isinstance(ex_val, dict) and isinstance(curr_val, dict):
+                        merged[key] = merge_dicts(curr_val, ex_val)
+                    else:
+                        merged[key] = curr_val
+            for key, curr_val in curr.items():
+                if key not in merged:
+                    merged[key] = curr_val
+            return merged
+            
+        new_config = merge_dicts(current_config, example_config)
+        
+        if modified:
+            tmp = config_path.with_name(config_path.name + ".tmp")
+            with open(tmp, "w") as f:
+                json.dump(new_config, f, indent=2)
+            os.replace(tmp, config_path)
+            print(f"Auto-migrated config.json with new keys from example.")
+            
+    except Exception as e:
+        print(f"Warning: Failed to auto-migrate config.json: {e}")
+
+
 def load_config():
-    """Load config, create from example if missing."""
+    """Load config, create from example if missing, and auto-migrate new keys."""
+    example_path = Path(__file__).parent / "config.json.example"
+    
     if CONFIG_PATH.exists():
+        auto_migrate_config(CONFIG_PATH, example_path)
         with open(CONFIG_PATH) as f:
             cfg = json.load(f)
-        # Merge with defaults for new keys
+        # Merge with defaults for new keys (runtime fallback)
         merged = {**DEFAULT_CONFIG, **cfg}
         merged["thresholds"] = {**DEFAULT_CONFIG["thresholds"], **cfg.get("thresholds", {})}
         merged["quiet_hours"] = {**DEFAULT_CONFIG["quiet_hours"], **cfg.get("quiet_hours", {})}
@@ -164,7 +211,6 @@ def load_config():
         merged["ignored_groups"] = normalize_ignored_groups(cfg.get("ignored_groups"))
         return merged
 
-    example_path = Path(__file__).parent / "config.json.example"
     if example_path.exists():
         shutil.copy(example_path, CONFIG_PATH)
         print(f"Copied config from {example_path} to {CONFIG_PATH}")
@@ -178,11 +224,27 @@ def load_config():
 
 
 def load_state():
-    """Load persistent state and migrate it to the current schema."""
+    """Load persistent state and migrate it to the current schema, checking for version updates."""
+    state = default_state()
     if STATE_PATH.exists():
         with open(STATE_PATH) as f:
-            return migrate_state(json.load(f))
-    return default_state()
+            state = migrate_state(json.load(f))
+            
+    # Check for version updates
+    version = "unknown"
+    version_path = Path(__file__).parent.parent / "VERSION"
+    if version_path.exists():
+        version = version_path.read_text().strip()
+        
+    last_run_version = state.get("last_run_version", "unknown")
+    if last_run_version != "unknown" and version != "unknown" and version != last_run_version:
+        print("\n" + "="*57)
+        print(f"🚀 PBS Monitor updated: {last_run_version} -> {version}")
+        print("Release Notes: https://github.com/maschkef/PBS_monitor/releases/latest")
+        print("="*57 + "\n")
+        
+    state["last_run_version"] = version
+    return state
 
 
 def save_state(state):

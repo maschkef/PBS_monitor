@@ -782,13 +782,20 @@ def unignore_group():
 @app.route("/api/webui/info")
 @require_auth
 def webui_info():
-    """Return web UI metadata (read-only flag, paths) for the frontend."""
+    """Return web UI metadata (read-only flag, paths, version) for the frontend."""
     # Detect Docker environment
     is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV") == "true"
+
+    # Read VERSION file
+    version = "unknown"
+    version_path = PROJECT_ROOT / "VERSION"
+    if version_path.exists():
+        version = version_path.read_text().strip()
 
     info: dict = {
         "read_only": WEBUI_READ_ONLY,
         "is_docker": is_docker,
+        "version": version,
     }
     if not WEBUI_HIDE_SERVER_PATHS:
         info["alerting_path"] = str(PROJECT_ROOT / "alerting")
