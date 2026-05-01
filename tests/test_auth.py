@@ -16,7 +16,6 @@ Auth enabled (WEBUI_PASSWORD set):
   - Authenticated session allows access to / (200).
   - POST /logout clears session and redirects.
 """
-import pytest
 
 from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp

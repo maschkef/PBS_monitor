@@ -5,7 +5,7 @@ malformed or out-of-range input before touching any on-disk state.
 """
 import pytest
 
-from tests.conftest import TEST_PASSWORD, do_login, write_config, read_config
+from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp
 
 

@@ -9,7 +9,7 @@ import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse, quote
+from urllib.parse import quote
 
 import requests
 

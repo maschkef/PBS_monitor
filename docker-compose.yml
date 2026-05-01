@@ -9,8 +9,6 @@ services:
       - .env
     volumes:
       - ./config:/app/data
-    depends_on:
-      - alerting
 
   alerting:
     image: ghcr.io/maschkef/pbs_monitor-alerting:latest

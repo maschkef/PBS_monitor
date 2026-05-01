@@ -10,7 +10,6 @@ Headers verified
 - ``Referrer-Policy: strict-origin-when-cross-origin``
 - ``Content-Security-Policy`` (presence and key directives)
 """
-import pytest
 
 import webui.app as webapp
 from tests.conftest import TEST_PASSWORD, do_login

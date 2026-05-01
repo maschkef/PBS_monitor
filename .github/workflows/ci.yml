@@ -42,10 +42,13 @@ jobs:
         run: pip install --no-cache-dir ruff
 
       - name: Lint — alerting
-        run: ruff check alerting/monitor.py
+        run: ruff check alerting/
 
       - name: Lint — webui
-        run: ruff check webui/app.py
+        run: ruff check webui/
+
+      - name: Lint — tests
+        run: ruff check tests/
 
   test-python:
     name: Python Tests

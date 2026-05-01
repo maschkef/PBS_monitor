@@ -16,8 +16,6 @@ Integration tests via ``GET /api/alerting/config``:
   - Submitting an empty string DOES clear the token.
   - Submitting a new real value DOES update the token.
 """
-import json
-import pytest
 
 from tests.conftest import TEST_PASSWORD, do_login, write_config, read_config
 import webui.app as webapp

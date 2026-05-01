@@ -9,8 +9,6 @@ Scenarios covered
 - Read-only mode returns 403 regardless of auth/CSRF.
 - Empty payload returns 200 without touching the file.
 """
-import json
-import pytest
 
 from tests.conftest import TEST_PASSWORD, do_login, write_config, read_config
 import webui.app as webapp

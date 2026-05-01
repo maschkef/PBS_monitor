@@ -17,8 +17,6 @@ Auth enabled, authenticated:
 Routes tested: ``POST /api/alerting/config`` (representative write route) and
 ``DELETE /api/alerting/notification-log``.
 """
-import json
-import pytest
 
 from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp
