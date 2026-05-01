@@ -24,7 +24,7 @@ This module handles sending push notifications via the [ntfy](https://ntfy.sh) s
   2. Constructs HTTP headers containing the `Title` (sanitized), `Priority`, and `Tags` of the alert.
   3. Checks for an authorization token (`NTFY_TOKEN` env var or `ntfy_token` config) and adds a Bearer header if present.
   4. URL-encodes the topic and performs a `requests.post` to the ntfy endpoint with the alert's message as UTF-8 encoded data.
-  5. Returns `True` on success or `False` if any exceptions (`requests.RequestException`) occur.
+  5. Returns `True` on success or `False` if skipped. Raises `NtfyDeliveryError` if any network exceptions occur.
 
 ### `is_quiet_hours(config)`
 - **Description:** Evaluates whether the current system time falls within the configured "quiet hours" interval.

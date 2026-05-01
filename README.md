@@ -334,7 +334,7 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications |
 | `ntfy_token` | Optional. Bearer token for private ntfy instances |
 | `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`) |
-| `heartbeat_url` | Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check |
+| `heartbeat_url` | Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check. Skipped if ntfy delivery fails |
 | `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
 | `storage_warn_percent` | Storage warning threshold in percent |
 | `storage_crit_percent` | Storage critical threshold in percent |

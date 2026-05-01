@@ -73,9 +73,9 @@ The master execution cycle run per interval.
 4. Gathers all generated `Alert` objects.
 5. Filters out alerts lower than the minimum priority if `is_quiet_hours` is active.
 6. Filters out recently fired alerts using `should_alert` (cooldown period).
-7. Dispatches the remaining alerts via `send_ntfy` and appends them to the notification log.
-8. Commits the updated `state.json`.
-9. Pings the optional `heartbeat_url` (if configured and reachable).
+7. Dispatches the remaining alerts via `send_ntfy` and appends them to the notification log. Catches any `NtfyDeliveryError`.
+8. Pings the optional `heartbeat_url` (if configured and reachable). This is skipped, and an internal alert is generated, if a previous `ntfy` delivery failed. A failed heartbeat ping also generates an internal alert.
+9. Commits the updated `state.json`.
 
 ### `main()`
 Parses CLI arguments. If `--daemon <seconds>` is provided with a positive value, that value is used as the loop interval. If `--daemon` is provided without a value or as `--daemon 0`, the loop interval is read from `daemon_interval_seconds` in config and falls back to the built-in default. In daemon mode, `config.json` is reloaded before every check so Web UI changes to thresholds, ignored groups, notification settings, and the daemon interval apply to the next loop. Otherwise, runs `run_check` exactly once.

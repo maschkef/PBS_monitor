@@ -76,6 +76,7 @@ from alerting.notification import (
     _ntfy_header_safe,              # noqa: F401 — re-export
     append_notification_log,
     send_ntfy,
+    NtfyDeliveryError,
     is_quiet_hours,
     should_alert,
 )
@@ -935,6 +936,16 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
 
 def run_check(config, state):
     """Run a single monitoring check cycle."""
+    ntfy_delivery_failed = False
+
+    def safe_send_ntfy(cfg, alrt):
+        nonlocal ntfy_delivery_failed
+        try:
+            return send_ntfy(cfg, alrt)
+        except NtfyDeliveryError:
+            ntfy_delivery_failed = True
+            return False
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}")
     print(f"PBS Monitor Check — {now}")
@@ -954,7 +965,7 @@ def run_check(config, state):
                 tags=["warning", "cloud"],
             )
             if should_alert(config, state, alert.key):
-                send_ntfy(config, alert)
+                safe_send_ntfy(config, alert)
                 state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
     except requests.RequestException as e:
         print(f"API Health: UNREACHABLE ({e})")
@@ -966,7 +977,7 @@ def run_check(config, state):
             tags=["rotating_light", "cloud"],
         )
         if should_alert(config, state, alert.key):
-            send_ntfy(config, alert)
+            safe_send_ntfy(config, alert)
             state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
         save_state(state)
         return
@@ -984,7 +995,7 @@ def run_check(config, state):
             tags=["x", "cloud"],
         )
         if should_alert(config, state, alert.key):
-            send_ntfy(config, alert)
+            safe_send_ntfy(config, alert)
             state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
         save_state(state)
         return
@@ -1052,7 +1063,7 @@ def run_check(config, state):
         if not should_alert(config, state, alert.key):
             skipped += 1
             continue
-        if send_ntfy(config, alert):
+        if safe_send_ntfy(config, alert):
             now_iso = datetime.now(timezone.utc).isoformat()
             state.setdefault("last_alerts", {})[alert.key] = now_iso
             append_notification_log(NOTIFICATION_LOG_PATH, {
@@ -1067,15 +1078,61 @@ def run_check(config, state):
             sent += 1
 
     print(f"\nAlerts: {len(all_alerts)} detected, {sent} sent, {skipped} skipped (cooldown/quiet)")
-    save_state(state)
 
     heartbeat_url = config.get("heartbeat_url", "").strip()
     if heartbeat_url:
-        try:
-            requests.get(heartbeat_url, timeout=10)
-            print(f"Pinged heartbeat URL: {heartbeat_url}")
-        except requests.RequestException as e:
-            print(f"Failed to ping heartbeat URL: {e}")
+        if ntfy_delivery_failed:
+            print("Skipping heartbeat ping due to a previous ntfy delivery failure.")
+            ntfy_alert = Alert(
+                "platform",
+                "Ntfy Delivery Failed",
+                "Failed to deliver one or more alerts via ntfy. Network or configuration issue.",
+                priority=5,
+                tags=["rotating_light", "network"],
+            )
+            if should_alert(config, state, ntfy_alert.key):
+                now_iso = datetime.now(timezone.utc).isoformat()
+                state.setdefault("last_alerts", {})[ntfy_alert.key] = now_iso
+                append_notification_log(NOTIFICATION_LOG_PATH, {
+                    "timestamp": now_iso,
+                    "source": "alerting",
+                    "title": ntfy_alert.title,
+                    "message": ntfy_alert.message,
+                    "priority": ntfy_alert.priority,
+                    "datastore_name": ntfy_alert.datastore_name,
+                    "alert_key": ntfy_alert.key,
+                })
+        else:
+            try:
+                requests.get(heartbeat_url, timeout=10)
+                print(f"Pinged heartbeat URL: {heartbeat_url}")
+            except requests.RequestException as e:
+                print(f"Failed to ping heartbeat URL: {e}")
+                hb_alert = Alert(
+                    "platform",
+                    "Heartbeat Failed",
+                    f"Failed to ping heartbeat URL: {e}",
+                    priority=5,
+                    tags=["rotating_light", "network"],
+                )
+                if should_alert(config, state, hb_alert.key):
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    state.setdefault("last_alerts", {})[hb_alert.key] = now_iso
+                    append_notification_log(NOTIFICATION_LOG_PATH, {
+                        "timestamp": now_iso,
+                        "source": "alerting",
+                        "title": hb_alert.title,
+                        "message": hb_alert.message,
+                        "priority": hb_alert.priority,
+                        "datastore_name": hb_alert.datastore_name,
+                        "alert_key": hb_alert.key,
+                    })
+                    try:
+                        send_ntfy(config, hb_alert)
+                    except NtfyDeliveryError:
+                        pass
+
+    save_state(state)
 
 
 def main():

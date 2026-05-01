@@ -65,8 +65,15 @@ def append_notification_log(log_path, entry):
 
 # ── ntfy sender ───────────────────────────────────────────────────────────────
 
+class NtfyDeliveryError(Exception):
+    pass
+
 def send_ntfy(config, alert):
-    """Send a single alert via the ntfy push-notification service."""
+    """
+    Send a single alert via the ntfy push-notification service.
+    Returns True if successfully sent, False if skipped (not configured).
+    Raises NtfyDeliveryError if delivery fails.
+    """
     ntfy_topic = config.get("ntfy_topic", "").strip()
     if not ntfy_topic:
         print("  [INFO] ntfy_topic not configured, skipping push notification")
@@ -93,7 +100,7 @@ def send_ntfy(config, alert):
         return True
     except requests.RequestException as e:
         print(f"  [ERROR] Failed to send ntfy: {e}", file=sys.stderr)
-        return False
+        raise NtfyDeliveryError(f"Failed to send ntfy: {e}") from e
 
 
 # ── Quiet-hours and cooldown checks ──────────────────────────────────────────
