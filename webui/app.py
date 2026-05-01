@@ -264,6 +264,21 @@ def _write_json_atomic(path: Path, data) -> None:
         raise
 
 
+def _load_alerting_config() -> "tuple[dict, tuple | None]":
+    """Load alerting config.json and return (raw_config, error_response).
+
+    Returns ({}, None) when the file does not exist yet (first-run case).
+    Returns (None, (response, status)) when the file exists but is corrupted.
+    """
+    if not ALERTING_CONFIG_PATH.exists():
+        return {}, None
+    try:
+        with open(ALERTING_CONFIG_PATH) as f:
+            return json.load(f), None
+    except json.JSONDecodeError:
+        return None, (jsonify({"error": "config.json is corrupted and cannot be parsed. Please fix it manually."}), 500)
+
+
 def api_get(path, params=None):
     """Make authenticated GET request to the monitoring API."""
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -693,10 +708,9 @@ def ignore_group():
     if not datastore_id or not backup_type or not backup_id:
         return jsonify({"error": "Missing datastore_id, backup_type or backup_id."}), 400
 
-    raw_config = {}
-    if ALERTING_CONFIG_PATH.exists():
-        with open(ALERTING_CONFIG_PATH) as f:
-            raw_config = json.load(f)
+    raw_config, err = _load_alerting_config()
+    if err:
+        return err
 
     ignored_group = {
         "datastore_id": datastore_id,
@@ -755,10 +769,9 @@ def unignore_group():
     if not datastore_id or not backup_type or not backup_id:
         return jsonify({"error": "Missing datastore_id, backup_type or backup_id."}), 400
 
-    raw_config = {}
-    if ALERTING_CONFIG_PATH.exists():
-        with open(ALERTING_CONFIG_PATH) as f:
-            raw_config = json.load(f)
+    raw_config, err = _load_alerting_config()
+    if err:
+        return err
 
     normalized = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
     new_list = [
@@ -828,10 +841,9 @@ def save_alerting_config():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    raw_config = {}
-    if ALERTING_CONFIG_PATH.exists():
-        with open(ALERTING_CONFIG_PATH) as f:
-            raw_config = json.load(f)
+    raw_config, err = _load_alerting_config()
+    if err:
+        return err
 
     for key in ("ntfy_url", "ntfy_topic", "heartbeat_url"):
         if key in payload:

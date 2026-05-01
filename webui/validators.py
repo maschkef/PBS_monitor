@@ -82,6 +82,8 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 raise ValueError(f"{key} must be a string.")
             if len(val) > maxlen:
                 raise ValueError(f"{key} must not exceed {maxlen} characters.")
+            if key in ("ntfy_url", "heartbeat_url") and val:
+                _validate_ntfy_url(val)
 
     if "alert_cooldown_minutes" in payload:
         v = coerce_int_fn(payload["alert_cooldown_minutes"])

@@ -173,3 +173,89 @@ class TestGroupRuleStringLengths:
         rv = _post_rule(client_auth, csrf, payload, tmp_path, monkeypatch)
         assert rv.status_code == 400
         assert "display_name" in rv.get_json().get("error", "")
+
+
+# ── Config: URL scheme validation ─────────────────────────────────────────────
+
+class TestConfigUrlValidation:
+    """ntfy_url and heartbeat_url must be http/https — other schemes rejected."""
+
+    @pytest.mark.parametrize("bad_url", [
+        "file:///etc/passwd",
+        "gopher://evil.example",
+        "ftp://evil.example",
+        "javascript:alert(1)",
+        "not-a-url-at-all",
+    ])
+    def test_ntfy_url_invalid_scheme_returns_400(self, monkeypatch, client_auth, tmp_path, bad_url):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"ntfy_url": bad_url})
+        assert rv.status_code == 400
+
+    def test_ntfy_url_http_accepted(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"ntfy_url": "http://ntfy.example.com"})
+        assert rv.status_code == 200
+
+    def test_ntfy_url_https_accepted(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"ntfy_url": "https://ntfy.sh"})
+        assert rv.status_code == 200
+
+    @pytest.mark.parametrize("bad_url", [
+        "file:///etc/passwd",
+        "gopher://evil.example",
+        "ftp://evil.example",
+    ])
+    def test_heartbeat_url_invalid_scheme_returns_400(self, monkeypatch, client_auth, tmp_path, bad_url):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"heartbeat_url": bad_url})
+        assert rv.status_code == 400
+
+    def test_heartbeat_url_https_accepted(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"heartbeat_url": "https://healthchecks.io/ping/abc123"})
+        assert rv.status_code == 200
+
+    def test_heartbeat_url_empty_string_accepted(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"heartbeat_url": ""})
+        assert rv.status_code == 200
+
+
+# ── Config: corrupted config.json handling ────────────────────────────────────
+
+class TestCorruptedConfigHandling:
+    """Write endpoints must return 500 if config.json is not valid JSON."""
+
+    def _write_corrupt_config(self, tmp_path):
+        (tmp_path / "config.json").write_text("{invalid json")
+
+    def test_save_config_corrupt_file_returns_500(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        self._write_corrupt_config(tmp_path)
+        rv = _post_config(client_auth, csrf, {"ntfy_topic": "test"})
+        assert rv.status_code == 500
+        assert "corrupted" in rv.get_json().get("error", "").lower()
+
+    def test_ignore_group_corrupt_file_returns_500(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        self._write_corrupt_config(tmp_path)
+        rv = client_auth.post(
+            "/api/alerting/ignore-group",
+            json={"datastore_id": "ds1", "backup_type": "vm", "backup_id": "100"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 500
+        assert "corrupted" in rv.get_json().get("error", "").lower()
+
+    def test_unignore_group_corrupt_file_returns_500(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        self._write_corrupt_config(tmp_path)
+        rv = client_auth.post(
+            "/api/alerting/unignore-group",
+            json={"datastore_id": "ds1", "backup_type": "vm", "backup_id": "100"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 500
+        assert "corrupted" in rv.get_json().get("error", "").lower()
