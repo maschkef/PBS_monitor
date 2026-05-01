@@ -5,6 +5,7 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PBS Monitor</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <script>
         (function() {
             var theme = localStorage.getItem('theme');
@@ -1242,7 +1243,7 @@
 </head>
 <body>
     <div class="header">
-        <h1><span class="icon">🛡️</span> PBS Monitor</h1>
+        <h1><img src="{{ url_for('static', filename='favicon.png') }}" alt="Logo" style="height: 1.8rem; width: 1.8rem; object-fit: contain;"> PBS Monitor</h1>
         <div class="header-actions">
             <div class="header-control" title="Time range for the rescale history (only fetched on a full refresh)">
                 Rescale:
