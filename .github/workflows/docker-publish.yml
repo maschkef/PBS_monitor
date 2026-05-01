@@ -99,15 +99,13 @@ jobs:
             environment:
               - PYTHONUNBUFFERED=1
               - ALERTING_DATA_DIR=/app/data
-            depends_on:
-              - pbs-webui
             deploy:
               resources:
                 limits:
                   memory: 256M
                 reservations:
                   memory: 128M
-        
+
           pbs-webui:
             image: ghcr.io/${REPO_LOWER}-webui:\${VERSION:-latest}
             container_name: pbs-webui
@@ -130,7 +128,7 @@ jobs:
                   memory: 512M
                 reservations:
                   memory: 256M
-        
+
         networks:
           default:
             name: pbs-monitor
@@ -144,40 +142,79 @@ jobs:
         chmod +x release-assets/quickstart.sh
         
         # Create README for Docker deployment
-        cat > release-assets/README-DOCKER.md << 'EOF'
-        # PBS Monitor Docker Deployment
-        
-        This release includes Docker support for easy deployment.
-        
-        ## Quick Start Options
-        
+        TAG="${{ github.ref_name }}"
+        cat > release-assets/README-DOCKER.md << EOF
+        # PBS Monitor — Docker Deployment
+
+        Two independent tools that share a common data directory:
+
+        - **Web UI** — Dashboard for ad-hoc status checks (port 5111)
+        - **Alerting** — Automated monitoring with push notifications via ntfy
+
+        ## Quick Start
+
         ### Option 1: One-command deployment
-        ```bash
-        # Download and run quickstart script
-        ./quickstart.sh
-        ```
-        
-        ### Option 2: Manual docker-compose setup  
-        ```bash
-        # 1. Configure environment
+        \`\`\`bash
+        bash quickstart.sh
+        \`\`\`
+
+        ### Option 2: Manual setup
+        \`\`\`bash
         cp .env.example .env
-        nano .env  # Set API_KEY
-        
-        # 2. Start services
-        docker-compose up -d
-        
-        # 3. Access Web UI
-        open http://localhost:5111
-        ```
-        
-        ## What's included
-        
-        - `docker-compose.yml` - Ready-to-use multi-container setup
-        - `.env.example` - Configuration template
-        - `quickstart.sh` - Automated deployment script
-        - `README-DOCKER.md` - This documentation
-        
-        Images are automatically pulled from GitHub Container Registry.
+        nano .env          # Set API_KEY (required), optionally WEBUI_PASSWORD
+        docker compose up -d
+        \`\`\`
+
+        Open the dashboard: http://localhost:5111
+
+        ## Docker Images
+
+        This release (${TAG}) provides the following tags:
+
+        | Tag | Description |
+        |-----|-------------|
+        | \`${TAG}\` | Exact version, pinned |
+        | \`${TAG%.*}\` | Minor-version float (e.g. \`1.0\`) |
+        | \`latest\` | Latest stable release |
+        | \`edge\` | Latest tagged release (may be pre-release) |
+
+        Images:
+        \`\`\`
+        ghcr.io/${REPO_LOWER}-alerting:${TAG}
+        ghcr.io/${REPO_LOWER}-webui:${TAG}
+        \`\`\`
+
+        ## Files in this release
+
+        | File | Description |
+        |------|-------------|
+        | \`docker-compose.yml\` | Ready-to-use multi-service setup |
+        | \`.env.example\` | Configuration template — copy to \`.env\` and fill in |
+        | \`quickstart.sh\` | Automated deployment script |
+
+        ## Key environment variables
+
+        | Variable | Default | Description |
+        |----------|---------|-------------|
+        | \`API_KEY\` | — | **Required.** Monitoring API token from remote-backups.com |
+        | \`WEBUI_PASSWORD\` | *(empty)* | Set to protect the dashboard with a password |
+        | \`WEBUI_SECRET_KEY\` | *(auto)* | Flask session key — set for stable sessions across restarts |
+        | \`WEBUI_PORT\` | \`5111\` | Host port for the Web UI |
+        | \`NTFY_TOKEN\` | *(empty)* | ntfy bearer token (preferred over storing it in config.json) |
+
+        For the full list see the project README or the Web UI settings (⚙️).
+
+        ## Updating
+
+        \`\`\`bash
+        docker compose pull
+        docker compose up -d
+        \`\`\`
+
+        ## Data persistence
+
+        Both services mount \`./config\` to \`/app/data\`. Back up this directory to
+        preserve alerting configuration, learned schedules, and notification history.
         EOF
 
     - name: Upload release assets
@@ -219,7 +256,8 @@ jobs:
         path: release-assets/
 
     - name: Compute lowercase image names
-      run: echo "REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+      id: repo
+      run: echo "lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
@@ -256,13 +294,23 @@ jobs:
           ```
 
           ### Docker Images
-          - `ghcr.io/${{ env.REPO_LOWER }}-alerting:${{ github.ref_name }}`
-          - `ghcr.io/${{ env.REPO_LOWER }}-webui:${{ github.ref_name }}`
 
-          See the attached `README-DOCKER.md` for detailed instructions.
+          | Tag | Description |
+          |-----|-------------|
+          | `:${{ github.ref_name }}` | This exact version |
+          | `:latest` | Latest stable release (updated on each non-pre-release tag) |
+          | `:edge` | Latest tagged release (may be a pre-release) |
+
+          ```
+          ghcr.io/${{ steps.repo.outputs.lower }}-alerting:${{ github.ref_name }}
+          ghcr.io/${{ steps.repo.outputs.lower }}-webui:${{ github.ref_name }}
+          ```
+
+          See the attached `README-DOCKER.md` for full setup instructions and all available tags.
 
     - name: Create deployment summary
       run: |
+        REPO_LOWER="${{ steps.repo.outputs.lower }}"
         echo "## 🐳 Docker Images Published" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Alerting Service" >> $GITHUB_STEP_SUMMARY
@@ -270,7 +318,7 @@ jobs:
         echo "ghcr.io/${REPO_LOWER}-alerting:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Web UI Service" >> $GITHUB_STEP_SUMMARY 
+        echo "### Web UI Service" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         echo "ghcr.io/${REPO_LOWER}-webui:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
