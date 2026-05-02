@@ -331,10 +331,10 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 
 | Parameter | Description |
 |-----------|-------------|
-| `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications |
+| `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications. Both `ntfy_topic` and `ntfy_url` must be set for notifications to be active |
 | `ntfy_token` | Optional. Bearer token for private ntfy instances |
-| `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`) |
-| `heartbeat_url` | Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check. Skipped if ntfy delivery fails |
+| `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`). Must be set together with `ntfy_topic` for push notifications to work |
+| `heartbeat_url` | Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check. Skipped if ntfy delivery fails — the failure is recorded in the notification log instead (no push, as ntfy itself is unavailable). If the heartbeat ping itself fails, an urgent alert (priority 5) is sent via ntfy and written to the log |
 | `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
 | `storage_warn_percent` | Storage warning threshold in percent |
 | `storage_crit_percent` | Storage critical threshold in percent |

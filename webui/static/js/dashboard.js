@@ -1102,6 +1102,8 @@
          * are kept from the last full load.
          */
         async function loadLight() {
+            const spinner = document.getElementById('lightSpinner');
+            if (spinner) spinner.classList.add('active');
             try {
                 const datastores = await fetchJson('/api/datastores/metrics');
                 if (currentDatastores && currentDatastores.length) {
@@ -1130,6 +1132,8 @@
                     'Updated ' + new Date().toLocaleTimeString('de-DE') + ' (light)';
             } catch (e) {
                 showRefreshErrorBanner(e.message);
+            } finally {
+                if (spinner) spinner.classList.remove('active');
             }
         }
 
@@ -1397,6 +1401,35 @@
                 setSettingsMsg('Error loading config: ' + e.message, 'error');
             }
         }
+
+        // Tooltip auto-positioning: use position:fixed so tooltips escape overflow:auto scroll containers.
+        // On mouseenter, measure the tooltip, pick above/below based on available space, pin with fixed coords.
+        document.addEventListener('mouseenter', function(e) {
+            const icon = e.target.closest('.tooltip-icon');
+            if (!icon) return;
+            const tip = icon.querySelector('.tooltip-text');
+            if (!tip) return;
+
+            // Measure tooltip dimensions while off-screen
+            Object.assign(tip.style, { display: 'block', visibility: 'hidden', position: 'fixed', left: '-9999px', top: '0' });
+            const tipH = tip.offsetHeight;
+            const tipW = tip.offsetWidth;
+            Object.assign(tip.style, { display: '', visibility: '' });
+
+            const r = icon.getBoundingClientRect();
+            let topVal = (r.top >= tipH + 10) ? (r.top - tipH - 6) : (r.bottom + 6);
+            let leftVal = Math.min(r.left + 5, window.innerWidth - tipW - 10);
+
+            Object.assign(tip.style, { position: 'fixed', top: topVal + 'px', left: leftVal + 'px', bottom: 'auto' });
+        }, true);
+
+        document.addEventListener('mouseleave', function(e) {
+            const icon = e.target.closest('.tooltip-icon');
+            if (!icon) return;
+            const tip = icon.querySelector('.tooltip-text');
+            if (!tip) return;
+            tip.style.cssText = '';
+        }, true);
 
         // Load config when settings modal opens
         document.getElementById('settingsModal').addEventListener('transitionend', function() {}, false);

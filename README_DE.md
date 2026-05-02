@@ -329,10 +329,10 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 
 | Parameter | Beschreibung |
 |-----------|-------------|
-| `ntfy_topic` | **Konfigurieren um Push-Benachrichtigungen zu aktivieren** (z.B. "meine-alerts"). Leer lassen um externe Benachrichtigungen zu deaktivieren |
+| `ntfy_topic` | **Konfigurieren um Push-Benachrichtigungen zu aktivieren** (z.B. "meine-alerts"). Leer lassen um externe Benachrichtigungen zu deaktivieren. Beide Felder – `ntfy_topic` und `ntfy_url` – müssen gesetzt sein damit Benachrichtigungen aktiv sind |
 | `ntfy_token` | Optional. Bearer Token für private ntfy-Instanzen |
-| `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`) |
-| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL (z.B. Healthchecks.io / Uptime Kuma), die nach jedem erfolgreichen Check aufgerufen wird. Wird übersprungen, falls ntfy-Versand fehlschlägt |
+| `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`). Muss zusammen mit `ntfy_topic` gesetzt sein damit Push-Benachrichtigungen funktionieren |
+| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL (z.B. Healthchecks.io / Uptime Kuma), die nach jedem erfolgreichen Check aufgerufen wird. Wird übersprungen, falls ntfy-Versand fehlschlägt — der Fehler wird stattdessen nur im Notification-Log festgehalten (kein Push, da ntfy selbst nicht erreichbar ist). Schlägt der Heartbeat-Ping selbst fehl, wird ein urgenter Alert (Priorität 5) via ntfy gesendet und ins Log geschrieben |
 | `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen |
 | `storage_warn_percent` | Speicher-Warnung ab diesem Prozentsatz |
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |

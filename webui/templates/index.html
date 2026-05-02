@@ -67,8 +67,8 @@
             --rgb-modal: 0, 0, 0;
             --header-bg: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%);
             --scrollbar-thumb-hover: #94a3b8;
-            --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
-            --card-shadow-hover: 0 4px 16px rgba(15, 23, 42, 0.1), 0 2px 4px rgba(15, 23, 42, 0.06);
+            --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 16px rgba(15, 23, 42, 0.08);
+            --card-shadow-hover: 0 4px 24px rgba(15, 23, 42, 0.12), 0 8px 28px rgba(15, 23, 42, 0.08);
             --section-bg: #f8fafc;
             --section-border: #e9ecf0;
             --note-bg: rgba(37, 99, 235, 0.07);
@@ -97,8 +97,8 @@
                 --rgb-modal: 0, 0, 0;
                 --header-bg: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%);
                 --scrollbar-thumb-hover: #94a3b8;
-                --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
-                --card-shadow-hover: 0 4px 16px rgba(15, 23, 42, 0.1), 0 2px 4px rgba(15, 23, 42, 0.06);
+                --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 16px rgba(15, 23, 42, 0.08);
+                --card-shadow-hover: 0 4px 24px rgba(15, 23, 42, 0.12), 0 8px 28px rgba(15, 23, 42, 0.08);
                 --section-bg: #f8fafc;
                 --section-border: #e9ecf0;
                 --note-bg: rgba(37, 99, 235, 0.07);
@@ -125,6 +125,12 @@
         }
 
         :root.theme-light .header { border-bottom-color: #c7d7f4; }
+        :root.theme-light .ds-card,
+        :root.theme-light .stat-card { border-color: rgba(148,163,184,0.25); }
+        @media (prefers-color-scheme: light) {
+            :root:not(.theme-dark) .ds-card,
+            :root:not(.theme-dark) .stat-card { border-color: rgba(148,163,184,0.25); }
+        }
 
         @media (prefers-color-scheme: light) {
             :root:not(.theme-dark) .header { border-bottom-color: #c7d7f4; }
@@ -621,6 +627,17 @@
         }
 
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        .light-refresh-spin {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+            color: var(--blue);
+            font-size: 0.85rem;
+            margin-left: 0.3rem;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .light-refresh-spin.active { opacity: 1; }
 
         .error-msg {
             background: var(--red-bg);
@@ -1139,6 +1156,10 @@
             border-color: var(--blue);
         }
 
+        .form-group input:invalid:not(:focus) {
+            border-color: var(--red);
+        }
+
         .form-section-title {
             font-size: 0.72rem;
             text-transform: uppercase;
@@ -1153,6 +1174,18 @@
             color: var(--blue);
         }
         .btn-primary:hover { background: rgba(59,130,246,0.25); }
+
+        .btn-warning {
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+        .btn-warning:hover { background: var(--yellow-bg); }
+
+        .btn-cyan {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+        .btn-cyan:hover { background: rgba(6,182,212,0.1); }
 
         /* Pre-formatted test output */
         .test-output {
@@ -1297,6 +1330,79 @@
             max-height: 180px;
             overflow-y: auto;
         }
+
+        /* ── Tooltip icons ───────────────────────────────────────────────────── */
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            background: var(--border);
+            color: var(--text-dim);
+            font-size: 0.65rem;
+            font-style: normal;
+            text-transform: none;
+            letter-spacing: 0;
+            cursor: default;
+            user-select: none;
+            position: relative;
+            flex-shrink: 0;
+            vertical-align: middle;
+            margin-left: 0.3rem;
+        }
+
+        /* Settings modal: flex column so only tab content scrolls,
+           overflow visible lets tooltips escape the modal boundary */
+        #settingsModal .modal-box {
+            overflow: visible;
+            display: flex;
+            flex-direction: column;
+        }
+        .modal-scroll-body {
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .tooltip-icon .tooltip-text {
+            display: none;
+            position: absolute;
+            left: 5px;
+            bottom: calc(100% + 6px);
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.5rem 0.65rem;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            width: max-content;
+            max-width: 260px;
+            white-space: normal;
+            z-index: 3000;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,.25);
+        }
+        .tooltip-icon:hover .tooltip-text { display: block; }
+
+        /* ── Input group with inline unit suffix ─────────────────────────────── */
+        .input-group {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .input-group input {
+            width: 100%;
+            padding-right: 2.8rem;
+        }
+        .input-suffix {
+            position: absolute;
+            right: 0.65rem;
+            pointer-events: none;
+            color: var(--text-dim);
+            font-size: 0.82rem;
+        }
     </style>
 </head>
 <body>
@@ -1334,7 +1440,7 @@
             <button class="btn" onclick="openLogModal()">📋 Log</button>
             <button class="btn" onclick="loadAll()" title="Full refresh: reloads all data including configuration, rescale-log and backup inventory">⟳ Refresh</button>
             {% if auth_enabled %}<form action="/logout" method="post" style="display:inline"><button class="btn" type="submit" title="Sign out">⏏ Logout</button></form>{% endif %}
-            <span class="last-updated" id="lastUpdated"></span>
+            <span class="last-updated" id="lastUpdated"></span><span id="lightSpinner" class="light-refresh-spin">⟳</span>
         </div>
     </div>
 
@@ -1377,45 +1483,44 @@
           <button class="tab-btn" onclick="switchTab('tab-learning',this)">Schedule Learning</button>
           <button class="tab-btn" onclick="switchTab('tab-cron',this)">Cron Setup</button>
         </div>
+        <div class="modal-scroll-body">
 
         <!-- Notifications -->
         <div id="tab-notify" class="tab-panel active">
           <div class="form-group">
-            <label>ntfy Server URL</label>
+            <label>ntfy Server URL <span class="tooltip-icon">i<span class="tooltip-text">Base URL of the ntfy server. Use https://ntfy.sh for the hosted service, or the URL of your self-hosted instance. Both this field and the Topic must be set for push notifications to be active.</span></span></label>
             <input type="text" id="cfg-ntfy_url" placeholder="https://ntfy.sh">
           </div>
           <div class="form-group">
-            <label>ntfy Topic</label>
+            <label>ntfy Topic <span class="tooltip-icon">i<span class="tooltip-text">The topic name your ntfy client is subscribed to. Anyone who knows the topic receives notifications — choose an unguessable name or use access control. Leave empty to disable push notifications entirely. Both this field and the Server URL must be set for notifications to be active.</span></span></label>
             <input type="text" id="cfg-ntfy_topic" placeholder="pbs-alerts">
           </div>
           <div class="form-group">
-            <label>ntfy Token (optional)</label>
+            <label>ntfy Token (optional) <span class="tooltip-icon">i<span class="tooltip-text">Bearer token for ntfy authentication. Required for private topics or self-hosted instances with access control enabled. Can also be set via the NTFY_TOKEN environment variable.</span></span></label>
             <input type="password" id="cfg-ntfy_token" autocomplete="new-password" placeholder="empty = no token">
             <small id="cfg-ntfy_token_hint" style="display:none;color:var(--green)">&#10003; Token is configured. Leave blank to keep it, type a new value to replace it.</small>
           </div>
           <div class="form-group">
-            <label>Heartbeat URL (Ping)</label>
+            <label>Heartbeat URL (Ping) <span class="tooltip-icon">i<span class="tooltip-text">Optional HTTP GET ping sent after each successful check (e.g. Uptime Kuma / Healthchecks.io). If ntfy delivery fails, the heartbeat ping is skipped and the failure is recorded in the notification log only (no push, as ntfy itself is unavailable). If the heartbeat ping itself fails, an urgent alert (priority 5) is sent via ntfy and written to the log.</span></span></label>
             <input type="text" id="cfg-heartbeat_url" placeholder="https://hc-ping.com/your-uuid">
-            <small style="grid-column: 2;">Optional HTTP GET ping after a successful check (e.g. Uptime Kuma / Healthchecks).</small>
           </div>
           <div class="form-group">
-            <label>Alert Cooldown (minutes)</label>
-            <input type="number" id="cfg-cooldown" min="0" step="1">
+            <label>Alert Cooldown <span class="tooltip-icon">i<span class="tooltip-text">Minimum time between repeated alerts of the same type. Prevents notification spam when a persistent issue keeps triggering the same alert on every check.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-cooldown" min="0" step="1">
+              <span class="input-suffix">min</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Daemon Interval (minutes)</label>
-            <input type="number" id="cfg-daemon-interval" min="1" step="1" placeholder="30">
-            <small>How often the alerting daemon checks for issues (minimum 1 minute)</small>
+            <label>Daemon Interval <span class="tooltip-icon">i<span class="tooltip-text">How often the alerting daemon checks for issues (minimum 1 minute).</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-daemon-interval" min="1" step="1" placeholder="30">
+              <span class="input-suffix">min</span>
+            </div>
           </div>
-          <p class="form-section-title" style="margin-top:1.25rem">Alert Priorities</p>
-          <p style="font-size:0.82rem;color:var(--text-dim);margin-bottom:0.75rem;line-height:1.5">
-            ntfy priority for outgoing alerts: <strong style="color:var(--text)">1&nbsp;min</strong> (silent) &rarr;
-            <strong style="color:var(--text)">3&nbsp;default</strong> &rarr;
-            <strong style="color:var(--text)">5&nbsp;urgent</strong> (bypasses Do Not Disturb on supported devices).
-            The <em>Minimum priority to send</em> under Quiet Hours uses the same scale.
-          </p>
+          <p class="form-section-title" style="margin-top:1.25rem">Alert Priorities <span class="tooltip-icon">i<span class="tooltip-text">ntfy priority for outgoing alerts: 1 min (silent) → 3 default → 5 urgent (bypasses Do Not Disturb on supported devices). The Minimum priority to send under Quiet Hours uses the same scale.</span></span></p>
           <div class="form-group">
-            <label>Warning priority</label>
+            <label>Warning priority <span class="tooltip-icon">i<span class="tooltip-text">Applies to: storage warnings, missed backups, overdue GC / verification.</span></span></label>
             <select id="cfg-prio-warning">
               <option value="1">1 &ndash; min (silent)</option>
               <option value="2">2 &ndash; low</option>
@@ -1423,10 +1528,9 @@
               <option value="4">4 &ndash; high</option>
               <option value="5">5 &ndash; urgent (bypasses DND)</option>
             </select>
-            <small>Applies to: storage warnings, missed backups, overdue GC / verification</small>
           </div>
           <div class="form-group">
-            <label>Critical priority</label>
+            <label>Critical priority <span class="tooltip-icon">i<span class="tooltip-text">Applies to: critical storage usage, verification failures, datastore offline.</span></span></label>
             <select id="cfg-prio-critical">
               <option value="1">1 &ndash; min (silent)</option>
               <option value="2">2 &ndash; low</option>
@@ -1434,49 +1538,60 @@
               <option value="4">4 &ndash; high</option>
               <option value="5">5 &ndash; urgent (bypasses DND)</option>
             </select>
-            <small>Applies to: critical storage usage, verification failures, datastore offline</small>
           </div>
         </div>
 
         <!-- Thresholds -->
         <div id="tab-thresholds" class="tab-panel">
           <div class="form-group">
-            <label>Storage Warning (%)</label>
-            <input type="number" id="cfg-thr-warn" min="1" max="99" step="1">
+            <label>Storage Warning <span class="tooltip-icon">i<span class="tooltip-text">A warning alert is sent when datastore storage usage reaches this percentage. Default: 80%.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-warn" min="1" max="99" step="1">
+              <span class="input-suffix">%</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Storage Critical (%)</label>
-            <input type="number" id="cfg-thr-crit" min="1" max="100" step="1">
+            <label>Storage Critical <span class="tooltip-icon">i<span class="tooltip-text">A critical alert is sent when storage usage reaches this percentage. Critical alerts use the higher priority and are not suppressed by quiet hours by default. Default: 90%.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-crit" min="1" max="100" step="1">
+              <span class="input-suffix">%</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>GC max. age (hours)</label>
-            <input type="number" id="cfg-thr-gc" min="1" step="1">
+            <label>GC max. age <span class="tooltip-icon">i<span class="tooltip-text">An alert is sent when garbage collection has not completed successfully within this many hours. Default: 36 h.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-gc" min="1" step="1">
+              <span class="input-suffix">hrs</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Verification max. age (days)</label>
-            <input type="number" id="cfg-thr-verify" min="1" step="1">
+            <label>Verification max. age <span class="tooltip-icon">i<span class="tooltip-text">An alert is sent when datastore verification has not run successfully within this many days. Default: 14 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-verify" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
           </div>
         </div>
 
         <!-- Quiet Hours -->
         <div id="tab-quiet" class="tab-panel">
           <div class="form-group">
-            <label>Enabled</label>
+            <label>Enabled <span class="tooltip-icon">i<span class="tooltip-text">When enabled, alerts below the minimum priority are suppressed during the configured time window. Useful to avoid notifications during the night.</span></span></label>
             <select id="cfg-qh-enabled">
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
           </div>
           <div class="form-group">
-            <label>Start (HH:MM)</label>
+            <label>Start (HH:MM) <span class="tooltip-icon">i<span class="tooltip-text">Time when quiet hours begin (24-hour format). Alerts below the minimum priority will be suppressed from this time onward.</span></span></label>
             <input type="text" id="cfg-qh-start" placeholder="22:00">
           </div>
           <div class="form-group">
-            <label>End (HH:MM)</label>
+            <label>End (HH:MM) <span class="tooltip-icon">i<span class="tooltip-text">Time when quiet hours end (24-hour format). Normal alert delivery resumes at this time.</span></span></label>
             <input type="text" id="cfg-qh-end" placeholder="07:00">
           </div>
           <div class="form-group">
-            <label>Minimum priority to send</label>
+            <label>Minimum priority to send <span class="tooltip-icon">i<span class="tooltip-text">Alerts with a priority below this level are suppressed during quiet hours. Configure the priority per severity under Notifications → Alert Priorities.</span></span></label>
             <select id="cfg-qh-prio">
               <option value="1">1 &ndash; min</option>
               <option value="2">2 &ndash; low</option>
@@ -1484,46 +1599,60 @@
               <option value="4">4 &ndash; high</option>
               <option value="5">5 &ndash; urgent</option>
             </select>
-            <small>Alerts with a priority below this level are suppressed during quiet hours. Configure the priority per severity under <em>Notifications &rarr; Alert Priorities</em>.</small>
           </div>
         </div>
 
         <!-- Schedule Learning -->
         <div id="tab-learning" class="tab-panel">
           <div class="form-group">
-            <label>Enabled</label>
+            <label>Enabled <span class="tooltip-icon">i<span class="tooltip-text">When enabled, the alerting engine learns recurring backup schedules per group from observed snapshots and warns when an expected backup window is missed.</span></span></label>
             <select id="cfg-sl-enabled">
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
           </div>
           <div class="form-group">
-            <label>Timezone</label>
+            <label>Timezone <span class="tooltip-icon">i<span class="tooltip-text">Timezone used when evaluating backup schedule windows. Use "local" to inherit the system timezone, or an IANA name such as "Europe/Berlin" or "America/New_York".</span></span></label>
             <input type="text" id="cfg-sl-tz" placeholder="local or Europe/Berlin">
           </div>
           <div class="form-group">
-            <label>History window (days)</label>
-            <input type="number" id="cfg-sl-history" min="1" step="1">
+            <label>History window <span class="tooltip-icon">i<span class="tooltip-text">How many days of past snapshots are considered when learning a group's backup schedule. Older data is ignored. Default: 60 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-history" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Min. occurrences</label>
+            <label>Min. occurrences <span class="tooltip-icon">i<span class="tooltip-text">A weekday/time slot must be observed at least this many times before it is treated as a regular schedule. Higher values reduce false positives from one-off backups. Default: 2.</span></span></label>
             <input type="number" id="cfg-sl-minocc" min="1" step="1">
           </div>
           <div class="form-group">
-            <label>Time tolerance (minutes)</label>
-            <input type="number" id="cfg-sl-tolerance" min="1" step="1">
+            <label>Time tolerance <span class="tooltip-icon">i<span class="tooltip-text">Allowed deviation when matching a snapshot to a learned time slot. A backup arriving within ±tolerance is still counted as on-schedule. Default: 30 min.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-tolerance" min="1" step="1">
+              <span class="input-suffix">min</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Due grace (minutes)</label>
-            <input type="number" id="cfg-sl-grace" min="0" step="1">
+            <label>Due grace <span class="tooltip-icon">i<span class="tooltip-text">How long a backup window may be overdue before a missed-backup alert fires. A short grace period avoids false alerts for backups that run slightly late. Default: 30 min.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-grace" min="0" step="1">
+              <span class="input-suffix">days</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Stale after (extra days)</label>
-            <input type="number" id="cfg-sl-stale" min="1" step="1">
+            <label>Stale after <span class="tooltip-icon">i<span class="tooltip-text">Extra days beyond the normal weekly cadence before a learned slot is treated as stale and suppressed. Prevents spurious missed-backup alerts for infrequent or discontinued backup groups. Default: 8 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-stale" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
           </div>
           <div class="form-group">
-            <label title="How many recent snapshots per backup group are kept in state for schedule learning and snapshot-loss detection. Raise this to improve detection coverage for groups with many daily backups.">Snapshot retention (per group)</label>
-            <input type="number" id="cfg-sl-retention" min="1" step="1">
+            <label>Snapshot retention <span class="tooltip-icon">i<span class="tooltip-text">How many recent snapshots per backup group are kept in state for schedule learning and snapshot-loss detection. Raise this to improve detection coverage for groups with many daily backups.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-retention" min="1" step="1">
+              <span class="input-suffix">/ grp</span>
+            </div>
           </div>
         </div>
 
@@ -1537,12 +1666,8 @@
             </p>
           </div>
           <div id="cron-setup">
-            <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:1rem;">
-              Add the following entry to the crontab of the user who should run the alerting.
-              Run <code style="color:var(--cyan)">crontab -e</code> and append the line at the end.
-            </p>
           <div class="form-group">
-            <label>Interval</label>
+            <label>Interval <span class="tooltip-icon">i<span class="tooltip-text">How often the alerting script is executed by cron. 30 minutes is recommended — shorter intervals catch missed backups faster but increase API calls.</span></span></label>
             <select id="cron-interval" onchange="updateCronEntry()">
               <option value="*/30 * * * *" selected>Every 30 minutes (recommended)</option>
               <option value="0 * * * *">Hourly</option>
@@ -1551,24 +1676,28 @@
               <option value="0 */6 * * *">Every 6 hours</option>
             </select>
           </div>
-          <p class="form-section-title">Crontab entry</p>
+          <p class="form-section-title">Crontab entry <span class="tooltip-icon">i<span class="tooltip-text">Add this entry to the crontab of the user who should run the alerting. Run crontab -e and append the line at the end.</span></span></p>
           <div class="cron-code">
             <span id="cronEntryText">–</span>
             <button class="btn" style="white-space:nowrap" onclick="copyCronEntry()">📋 Copy</button>
           </div>
-          <p style="font-size:0.78rem;color:var(--text-dim);margin-top:0.75rem;">
-            Note: The path to the script and Python interpreter is derived automatically from
-            the current installation location. Adjust it if you have moved the project
-            to a different directory.
-          </p>
-          <p style="font-size:0.78rem;color:var(--text-dim);margin-top:0.4rem;">
-            To write logs, append <code style="color:var(--cyan)"> &gt;&gt; /var/log/pbs-monitor.log 2&gt;&amp;1</code>
-            to the end of the entry.
-          </p>
+          <details style="margin-top:0.75rem">
+            <summary style="font-size:0.78rem;color:var(--text-dim);cursor:pointer;user-select:none;">Notes</summary>
+            <p style="font-size:0.78rem;color:var(--text-dim);margin-top:0.4rem;">
+              The path to the script and Python interpreter is derived automatically from
+              the current installation location. Adjust it if you have moved the project
+              to a different directory.
+            </p>
+            <p style="font-size:0.78rem;color:var(--text-dim);margin-top:0.4rem;">
+              To write logs, append <code style="color:var(--cyan)"> &gt;&gt; /var/log/pbs-monitor.log 2&gt;&amp;1</code>
+              to the end of the entry.
+            </p>
+          </details>
           </div>
         </div>
 
         <div id="settingsMsg" style="display:none;margin-top:0.75rem;font-size:0.83rem;"></div>
+        </div><!-- /.modal-scroll-body -->
         <div class="modal-footer" id="settingsFooter">
           <button class="btn btn-primary" onclick="saveConfig()" id="saveConfigBtn">💾 Save</button>
           <button class="btn" onclick="closeModal('settingsModal')">Close</button>
@@ -1590,8 +1719,8 @@
         </p>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem;">
           <button class="btn btn-primary" id="btnDryRun" onclick="runDryTest()">🧪 Dry run</button>
-          <button class="btn" style="border-color:var(--yellow);color:var(--yellow)" id="btnLiveTest" onclick="runLiveTest()">🚀 Full test</button>
-          <button class="btn" style="border-color:var(--cyan);color:var(--cyan)" id="btnPingTest" onclick="runPingTest()">📬 Send test notification</button>
+          <button class="btn btn-warning" id="btnLiveTest" onclick="runLiveTest()">🚀 Full test</button>
+          <button class="btn btn-cyan" id="btnPingTest" onclick="runPingTest()">📬 Send test notification</button>
         </div>
         <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1.25rem;font-size:0.84rem;flex-wrap:wrap;">
           <span style="color:var(--text-dim)">Severity for <strong style="color:var(--text)">Send test notification</strong>:</span>
