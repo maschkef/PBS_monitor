@@ -1353,6 +1353,7 @@
                 document.getElementById('cfg-ntfy_url').value = c.ntfy_url || '';
                 document.getElementById('cfg-ntfy_topic').value = c.ntfy_topic || '';
                 document.getElementById('cfg-heartbeat_url').value = c.heartbeat_url || '';
+                document.getElementById('cfg-heartbeat_fail_url').value = c.heartbeat_fail_url || '';
                 // Never pre-fill the token field with the sentinel — keep it empty and
                 // show a hint instead. The server will preserve the existing token when
                 // the field is submitted empty.
@@ -1442,6 +1443,7 @@
                 ntfy_url: document.getElementById('cfg-ntfy_url').value.trim(),
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
                 heartbeat_url: document.getElementById('cfg-heartbeat_url').value.trim(),
+                heartbeat_fail_url: document.getElementById('cfg-heartbeat_fail_url').value.trim(),
                 // Only include ntfy_token when the user has actually typed something;
                 // omitting it preserves the previously stored secret on the server.
                 ...(tokenFieldValue !== '' ? { ntfy_token: tokenFieldValue } : {}),

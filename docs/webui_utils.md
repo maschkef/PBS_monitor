@@ -38,7 +38,7 @@ This module contains pure functions to validate HTTP JSON payloads received from
 ### Constants
 - **`_TOKEN_SENTINEL` (`"***CONFIGURED***"`)**: A masked string sent to the frontend to represent an existing secret (like `ntfy_token`). It prevents exposing secrets.
 - **`_TIME_RE`**: A strict regex validating 24-hour time formats (`HH:MM`).
-- **`_CONFIG_STR_MAX`** & **`_RULE_STR_MAX`**: Dictionaries defining strict length limits for API payload fields, including `heartbeat_url`, to prevent oversized inputs.
+- **`_CONFIG_STR_MAX`** & **`_RULE_STR_MAX`**: Dictionaries defining strict length limits for API payload fields, including `heartbeat_url` and `heartbeat_fail_url`, to prevent oversized inputs.
 
 ### `_validate_ntfy_url(url)`
 Parses the user-provided `ntfy_url`. Ensures that the URL has a valid HTTP/HTTPS scheme and a hostname.

@@ -845,7 +845,7 @@ def save_alerting_config():
     if err:
         return err
 
-    for key in ("ntfy_url", "ntfy_topic", "heartbeat_url"):
+    for key in ("ntfy_url", "ntfy_topic", "heartbeat_url", "heartbeat_fail_url"):
         if key in payload:
             raw_config[key] = str(payload[key])
     # ntfy_token: only update when the user submitted a real value, not the

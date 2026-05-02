@@ -1501,8 +1501,12 @@
             <small id="cfg-ntfy_token_hint" style="display:none;color:var(--green)">&#10003; Token is configured. Leave blank to keep it, type a new value to replace it.</small>
           </div>
           <div class="form-group">
-            <label>Heartbeat URL (Ping) <span class="tooltip-icon">i<span class="tooltip-text">Optional HTTP GET ping sent after each successful check (e.g. Uptime Kuma / Healthchecks.io). If ntfy delivery fails, the heartbeat ping is skipped and the failure is recorded in the notification log only (no push, as ntfy itself is unavailable). If the heartbeat ping itself fails, an urgent alert (priority 5) is sent via ntfy and written to the log.</span></span></label>
-            <input type="text" id="cfg-heartbeat_url" placeholder="https://hc-ping.com/your-uuid">
+            <label>Heartbeat URL (Success) <span class="tooltip-icon">i<span class="tooltip-text">Optional HTTP GET ping sent when no alerts are detected. Uptime Kuma (Push monitor): use the URL shown in the monitor settings with ?status=up&amp;msg=OK&amp;ping= — e.g. http://&lt;ip&gt;:3001/api/push/&lt;token&gt;?status=up&amp;msg=OK&amp;ping= — Healthchecks.io: use the plain ping URL. If a Fail URL is also configured, this is only called when all checks pass. If no Fail URL is set, no ping is sent when alerts exist (timeout signals the problem). If ntfy delivery fails, the ping is skipped. If the ping itself fails, an urgent alert (priority 5) is sent via ntfy.</span></span></label>
+            <input type="text" id="cfg-heartbeat_url" placeholder="http://&lt;ip&gt;:3001/api/push/&lt;token&gt;?status=up&amp;msg=OK&amp;ping=">
+          </div>
+          <div class="form-group">
+            <label>Heartbeat URL (Fail) <span class="tooltip-icon">i<span class="tooltip-text">Optional HTTP GET ping sent when alerts are detected. Uptime Kuma (Push monitor): take the same URL as above but replace the query parameters — e.g. http://&lt;ip&gt;:3001/api/push/&lt;token&gt;?status=down&amp;msg=PROBLEM&amp;ping= — The token (&lt;token&gt;) is the random string shown in the Uptime Kuma monitor URL. Only evaluated when this field is non-empty.</span></span></label>
+            <input type="text" id="cfg-heartbeat_fail_url" placeholder="http://&lt;ip&gt;:3001/api/push/&lt;token&gt;?status=down&amp;msg=PROBLEM&amp;ping=">
           </div>
           <div class="form-group">
             <label>Alert Cooldown <span class="tooltip-icon">i<span class="tooltip-text">Minimum time between repeated alerts of the same type. Prevents notification spam when a persistent issue keeps triggering the same alert on every check.</span></span></label>

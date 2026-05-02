@@ -7,8 +7,9 @@
   "ntfy_topic": "",
   "ntfy_token": "",
   
-  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "_comment_heartbeat": "Optional HTTP(S) GET ping URLs. heartbeat_url is pinged when no alerts are detected (success). heartbeat_fail_url is pinged when alerts are detected (failure). If only heartbeat_url is set, no ping is sent on alerts — the timeout signals the problem. Uptime Kuma (Push monitor): copy the URL shown in the monitor and set status=up&msg=OK&ping= for heartbeat_url and status=down&msg=PROBLEM&ping= for heartbeat_fail_url — same token, different query parameters.",
   "heartbeat_url": "",
+  "heartbeat_fail_url": "",
 
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],

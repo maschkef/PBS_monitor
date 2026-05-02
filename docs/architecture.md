@@ -25,7 +25,7 @@ This is the frontend dashboard. It provides a visual overlay over the backend st
 
 ## Data Flow & File Persistence
 The application uses the local file system (via atomic tmp-file writes) as the shared database between the daemon and the UI:
-1. **`config.json`**: Holds thresholds, ntfy settings, heartbeat URL, daemon interval, quiet hours, schedule-learning settings, and ignored groups. Editable via UI, consumed by daemon.
+1. **`config.json`**: Holds thresholds, ntfy settings, heartbeat URLs (success + fail), daemon interval, quiet hours, schedule-learning settings, and ignored groups. Editable via UI, consumed by daemon.
 2. **`state.json`**: Holds the cached API inventory, snapshot history rings, and generated ML schedules. Written by the daemon, read by the UI.
 3. **`group_rules.json`**: Holds manually overriden ("locked") schedules. Editable via UI, consumed by daemon.
 4. **`notification_log.json`**: A rolling log of the last 500 dispatched push notifications.

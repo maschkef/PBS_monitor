@@ -74,7 +74,7 @@ The master execution cycle run per interval.
 5. Filters out alerts lower than the minimum priority if `is_quiet_hours` is active.
 6. Filters out recently fired alerts using `should_alert` (cooldown period).
 7. Dispatches the remaining alerts via `send_ntfy` and appends them to the notification log. Catches any `NtfyDeliveryError`.
-8. Pings the optional `heartbeat_url` (if configured and reachable). This is skipped, and an internal alert is generated, if a previous `ntfy` delivery failed. A failed heartbeat ping also generates an internal alert.
+8. Sends the appropriate heartbeat ping: `heartbeat_fail_url` when alerts were detected, `heartbeat_url` when none were. If only `heartbeat_url` is configured, no ping is sent when alerts exist — the heartbeat timeout itself signals the problem to the monitoring tool. Skipped entirely if a previous `ntfy` delivery failed. A failed ping generates an internal urgent alert.
 9. Commits the updated `state.json`.
 
 ### `main()`

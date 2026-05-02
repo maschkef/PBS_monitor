@@ -276,8 +276,9 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
   "ntfy_topic": "",
   "ntfy_token": "",
 
-  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "_comment_heartbeat": "Optionale HTTP(S) GET Ping-URLs. heartbeat_url wird bei fehlerfreiem Check gepingt (Success). heartbeat_fail_url wird gepingt wenn Alerts erkannt wurden. Ist nur heartbeat_url gesetzt, wird bei Alerts kein Ping gesendet — der Timeout signalisiert das Problem.",
   "heartbeat_url": "",
+  "heartbeat_fail_url": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
@@ -332,7 +333,8 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `ntfy_topic` | **Konfigurieren um Push-Benachrichtigungen zu aktivieren** (z.B. "meine-alerts"). Leer lassen um externe Benachrichtigungen zu deaktivieren. Beide Felder – `ntfy_topic` und `ntfy_url` – müssen gesetzt sein damit Benachrichtigungen aktiv sind |
 | `ntfy_token` | Optional. Bearer Token für private ntfy-Instanzen |
 | `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`). Muss zusammen mit `ntfy_topic` gesetzt sein damit Push-Benachrichtigungen funktionieren |
-| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL (z.B. Healthchecks.io / Uptime Kuma), die nach jedem erfolgreichen Check aufgerufen wird. Wird übersprungen, falls ntfy-Versand fehlschlägt — der Fehler wird stattdessen nur im Notification-Log festgehalten (kein Push, da ntfy selbst nicht erreichbar ist). Schlägt der Heartbeat-Ping selbst fehl, wird ein urgenter Alert (Priorität 5) via ntfy gesendet und ins Log geschrieben |
+| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **keine Alerts erkannt wurden** (Success-Ping). Ist nur dieses Feld gesetzt und es gibt Alerts, wird kein Ping gesendet — der daraus resultierende Timeout signalisiert dem Monitoring-Tool das Problem. Wird übersprungen wenn ntfy-Versand fehlschlug. Schlägt der Ping selbst fehl, wird ein urgenter Alert (Priorität 5) via ntfy gesendet. **Uptime Kuma (Push-Monitor):** die im Monitor angezeigte URL mit `?status=up&msg=OK&ping=` verwenden |
+| `heartbeat_fail_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **Alerts erkannt wurden** (Fail-Ping). Wird nur ausgewertet wenn nicht leer. Kann mit `heartbeat_url` kombiniert werden für explizites Success/Fail-Signalling. **Uptime Kuma:** gleiche URL und gleicher Token wie bei `heartbeat_url`, aber mit `?status=down&msg=PROBLEM&ping=` |
 | `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen |
 | `storage_warn_percent` | Speicher-Warnung ab diesem Prozentsatz |
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |

@@ -22,6 +22,7 @@ _CONFIG_STR_MAX: dict[str, int] = {
     "ntfy_topic": 256,
     "ntfy_token": 512,
     "heartbeat_url": 2048,
+    "heartbeat_fail_url": 2048,
 }
 
 # Max lengths for string fields in the group-rule payload.
@@ -82,7 +83,7 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 raise ValueError(f"{key} must be a string.")
             if len(val) > maxlen:
                 raise ValueError(f"{key} must not exceed {maxlen} characters.")
-            if key in ("ntfy_url", "heartbeat_url") and val:
+            if key in ("ntfy_url", "heartbeat_url", "heartbeat_fail_url") and val:
                 _validate_ntfy_url(val)
 
     if "alert_cooldown_minutes" in payload:

@@ -275,8 +275,9 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
   "ntfy_topic": "",
   "ntfy_token": "",
 
-  "_comment_heartbeat": "Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check.",
+  "_comment_heartbeat": "Optional HTTP(S) GET ping URLs. heartbeat_url is pinged when no alerts are detected (success). heartbeat_fail_url is pinged when alerts are detected. If only heartbeat_url is set, no ping is sent when alerts exist — the timeout itself signals the problem.",
   "heartbeat_url": "",
+  "heartbeat_fail_url": "",
   
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
@@ -334,7 +335,8 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications. Both `ntfy_topic` and `ntfy_url` must be set for notifications to be active |
 | `ntfy_token` | Optional. Bearer token for private ntfy instances |
 | `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`). Must be set together with `ntfy_topic` for push notifications to work |
-| `heartbeat_url` | Optional HTTP(S) GET ping URL (e.g. Healthchecks.io / Uptime Kuma) called after each successful check. Skipped if ntfy delivery fails — the failure is recorded in the notification log instead (no push, as ntfy itself is unavailable). If the heartbeat ping itself fails, an urgent alert (priority 5) is sent via ntfy and written to the log |
+| `heartbeat_url` | Optional HTTP(S) GET ping URL called when **no alerts are detected** (success ping). If only this field is set and alerts exist, no ping is sent — the resulting timeout signals the problem to the monitoring tool. Skipped if ntfy delivery failed. If the ping itself fails, an urgent alert (priority 5) is sent via ntfy. **Uptime Kuma (Push monitor):** use the URL shown in the monitor with `?status=up&msg=OK&ping=` |
+| `heartbeat_fail_url` | Optional HTTP(S) GET ping URL called when **alerts are detected** (fail ping). Only evaluated when non-empty. Can be combined with `heartbeat_url` for explicit success/fail signalling. **Uptime Kuma:** same URL and token as `heartbeat_url`, but with `?status=down&msg=PROBLEM&ping=` |
 | `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
 | `storage_warn_percent` | Storage warning threshold in percent |
 | `storage_crit_percent` | Storage critical threshold in percent |

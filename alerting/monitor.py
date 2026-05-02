@@ -1080,7 +1080,24 @@ def run_check(config, state):
     print(f"\nAlerts: {len(all_alerts)} detected, {sent} sent, {skipped} skipped (cooldown/quiet)")
 
     heartbeat_url = config.get("heartbeat_url", "").strip()
-    if heartbeat_url:
+    heartbeat_fail_url = config.get("heartbeat_fail_url", "").strip()
+
+    # Determine which URL to ping:
+    # - Both URLs configured: fail URL on alerts, success URL otherwise.
+    # - Only heartbeat_url: ping on success, no ping on alerts — the heartbeat timeout
+    #   itself signals the problem to the monitoring tool (e.g. Uptime Kuma push monitor).
+    # - Only heartbeat_fail_url: ping it on alerts, nothing on success.
+    has_alerts = bool(all_alerts)
+    if heartbeat_fail_url and heartbeat_url:
+        ping_url = heartbeat_fail_url if has_alerts else heartbeat_url
+    elif heartbeat_fail_url:
+        ping_url = heartbeat_fail_url if has_alerts else ""
+    elif heartbeat_url:
+        ping_url = "" if has_alerts else heartbeat_url
+    else:
+        ping_url = ""
+
+    if ping_url:
         if ntfy_delivery_failed:
             print("Skipping heartbeat ping due to a previous ntfy delivery failure.")
             ntfy_alert = Alert(
@@ -1104,8 +1121,8 @@ def run_check(config, state):
                 })
         else:
             try:
-                requests.get(heartbeat_url, timeout=10)
-                print(f"Pinged heartbeat URL: {heartbeat_url}")
+                requests.get(ping_url, timeout=10)
+                print(f"Pinged heartbeat URL: {ping_url}")
             except requests.RequestException as e:
                 print(f"Failed to ping heartbeat URL: {e}")
                 hb_alert = Alert(
