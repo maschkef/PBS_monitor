@@ -183,7 +183,7 @@ on a server via cron.
 - **Immutable backup warning** — alert on pending disable request
 - **API health check** — verifies platform availability
 - **Quiet hours** — suppress low-priority alerts at night
-- **Configurable notification priorities** — set the ntfy priority level separately for warning and critical alerts (1 min/silent … 5 urgent/bypasses DND); the same scale is used by the Quiet Hours minimum threshold
+- **Configurable notification priorities** — set ntfy priority per severity tier (warning / critical) and optionally override it for each individual alert type (e.g. silence "GC Never Ran" independently of other warnings); the same 1–5 scale is used by the Quiet Hours minimum threshold
 - **Alert cooldown** — prevents spam for persistent issues
 - **Persistent state** — versioned per-group snapshot history retained across runs
 - **Notification history log** — every dispatched alert (including test notifications sent from the Web UI) is appended to `notification_log.json`; viewable and clearable from the Web UI 📋 Log panel
@@ -205,7 +205,7 @@ If you're running the Web UI tool (see above), you can configure all alerting se
    - **ntfy Topic**: Enter your topic name (e.g., "my-pbs-alerts") to enable notifications
    - **ntfy URL**: Usually `https://ntfy.sh` (default)
    - **ntfy Token**: Optional, for private ntfy instances
-5. Set alert priorities under **Notifications → Alert Priorities** (warning = 4 high, critical = 5 urgent by default). The same 1–5 scale is used by the **Minimum priority to send** field under Quiet Hours.
+5. Set alert priorities under **Notifications → Alert Priorities**: the **Warning** and **Critical** tier selectors set the default priority for each severity level. Expand **Per-Alert Priority Overrides** to set an individual priority for specific alert types (e.g. make "All Backups Gone" always urgent, or silence "GC Never Ran"). The same 1–5 scale applies to **Quiet Hours → Minimum priority to send**.
 6. Adjust other settings as needed (thresholds, quiet hours, daemon interval, etc.)
 7. Save settings
 
@@ -298,10 +298,11 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
     "min_priority": 4
   },
   
-  "_comment_priorities": "ntfy priority for warning (4=high) and critical (5=urgent) alerts. Range 1-5. Level 5 bypasses Do Not Disturb on supported devices. The min_priority field in quiet_hours uses the same scale.",
+  "_comment_priorities": "ntfy priority for outgoing alerts. Range 1–5 (5=urgent, bypasses DND). 'warning' and 'critical' are tier defaults applied by severity. 'per_alert' overrides individual alert types — omit a key or set it to null to fall back to the tier default.",
   "notification_priorities": {
     "warning": 4,
-    "critical": 5
+    "critical": 5,
+    "per_alert": {}
   },
   
   "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
@@ -335,13 +336,16 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `ntfy_topic` | **Configure to enable push notifications** (e.g., "your-alerts"). Leave empty to disable external notifications. Both `ntfy_topic` and `ntfy_url` must be set for notifications to be active |
 | `ntfy_token` | Optional. Bearer token for private ntfy instances |
 | `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`). Must be set together with `ntfy_topic` for push notifications to work |
-| `heartbeat_url` | Optional HTTP(S) GET ping URL called when **no alerts are detected** (success ping). If only this field is set and alerts exist, no ping is sent — the resulting timeout signals the problem to the monitoring tool. Skipped if ntfy delivery failed. If the ping itself fails, an urgent alert (priority 5) is sent via ntfy. **Uptime Kuma (Push monitor):** use the URL shown in the monitor with `?status=up&msg=OK&ping=` |
-| `heartbeat_fail_url` | Optional HTTP(S) GET ping URL called when **alerts are detected** (fail ping). Only evaluated when non-empty. Can be combined with `heartbeat_url` for explicit success/fail signalling. **Uptime Kuma:** same URL and token as `heartbeat_url`, but with `?status=down&msg=PROBLEM&ping=` |
+| `heartbeat_url` | Optional HTTP(S) GET ping URL called when **no alerts are detected** (success ping). If only this field is set and alerts exist, no ping is sent — the resulting timeout signals the problem to the monitoring tool. Also skipped when ntfy delivery fails (timeout still signals the problem). If the ping itself fails, an urgent alert is sent via ntfy. **Uptime Kuma (Push monitor):** use the URL shown in the monitor with `?status=up&msg=OK&ping=` |
+| `heartbeat_fail_url` | Optional HTTP(S) GET ping URL called when **alerts are detected** (fail ping). Also pinged when ntfy delivery fails — so an external monitor receives an active failure signal even when push delivery is broken. Can be combined with `heartbeat_url` for explicit success/fail signalling. **Uptime Kuma:** same URL and token as `heartbeat_url`, but with `?status=down&msg=PROBLEM&ping=` |
 | `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
 | `storage_warn_percent` | Storage warning threshold in percent |
 | `storage_crit_percent` | Storage critical threshold in percent |
 | `gc_max_age_hours` | GC considered overdue after X hours |
 | `verification_max_age_days` | Verification considered overdue after X days |
+| `notification_priorities.warning` | ntfy priority for warning-tier alerts (default: `4` = high). Applies to: GC failed/overdue/never ran, host offline, missed backup, storage warning, replication stale, immutable disable pending, snapshots unexpectedly removed |
+| `notification_priorities.critical` | ntfy priority for critical-tier alerts (default: `5` = urgent). Applies to: storage critical, verification failed, all backups gone, API unreachable, heartbeat failed |
+| `notification_priorities.per_alert` | Optional object to override priority for individual alert types. Keys match the alert type (e.g. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Set a value (1–5) to override or omit/`null` to fall back to the tier default. Configurable via **Per-Alert Priority Overrides** in the Web UI |
 | `quiet_hours.enabled` | Enable quiet hours (true/false) |
 | `quiet_hours.min_priority` | Only send alerts at or above this priority during quiet hours |
 | `schedule_learning.enabled` | Enable learned backup-window detection |
@@ -365,11 +369,17 @@ The following can also be set as environment variables (in `.env` or the shell):
 
 ### Alert Priorities (ntfy)
 
-| Priority | Usage |
-|----------|-------|
-| 5 (urgent) | Storage ≥ 90%, verification failed, all backups gone, API unreachable |
-| 4 (high) | GC failed, host offline, missed backup window or interval, stale replication, immutable disable pending, snapshots unexpectedly removed |
-| 3 (default) | Storage ≥ 80%, GC/verification overdue or never ran |
+Each alert type has a **base priority** that determines which severity tier it falls into. The tier priority is then applied according to `notification_priorities.warning` / `.critical` (defaults: 4 = high, 5 = urgent). Individual alert types can be overridden independently via `notification_priorities.per_alert` or through **Per-Alert Priority Overrides** in the Web UI settings.
+
+| Base | Tier | Alert types |
+|------|------|-------------|
+| 5 → critical | default: 5 (urgent) | Storage ≥ crit%, verification failed, all backups gone, API unreachable, heartbeat failed |
+| 4 → warning | default: 4 (high) | GC failed, host offline, missed backup window/interval, replication stale/never synced, immutable disable pending, snapshots unexpectedly removed |
+| 3 (no tier mapping) | stays at 3 (default) | Storage ≥ warn%, GC overdue/never ran, verification overdue/never ran |
+
+> **Per-alert overrides** (e.g. `"gc_never_ran": 2`) take precedence over both the base priority and the tier defaults. Set a key to `null` or omit it to fall back to the tier behaviour.
+
+**Valid per-alert keys:** `gc_failed`, `gc_never_ran`, `gc_overdue`, `verification_failed`, `verification_never_ran`, `verification_overdue`, `storage_warning`, `storage_critical`, `all_backups_gone`, `snapshots_unexpectedly_removed`, `missed_backup_window`, `missed_backup_interval`, `host_offline`, `api_unreachable`, `api_unhealthy`, `monitoring_api_error`, `heartbeat_failed`, `ntfy_delivery_failed`, `immutable_disable_pending`, `replication_never_synced`, `replication_stale`
 
 ---
 

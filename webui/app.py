@@ -907,6 +907,17 @@ def save_alerting_config():
                 val = alert_monitor.coerce_int(payload["notification_priorities"][sev])
                 if val is not None and 1 <= val <= 5:
                     raw_np[sev] = val
+        if "per_alert" in payload["notification_priorities"] and isinstance(
+            payload["notification_priorities"]["per_alert"], dict
+        ):
+            raw_pa = raw_np.setdefault("per_alert", {})
+            for type_key, val in payload["notification_priorities"]["per_alert"].items():
+                if val is None or val == "":
+                    raw_pa.pop(type_key, None)
+                else:
+                    v = alert_monitor.coerce_int(val)
+                    if v is not None and 1 <= v <= 5:
+                        raw_pa[type_key] = v
 
     _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 

@@ -1368,6 +1368,19 @@
                 _notifPriorities = c.notification_priorities || { warning: 4, critical: 5 };
                 document.getElementById('cfg-prio-warning').value = _notifPriorities.warning ?? 4;
                 document.getElementById('cfg-prio-critical').value = _notifPriorities.critical ?? 5;
+                const perAlert = (_notifPriorities.per_alert) || {};
+                [
+                    'gc_failed','gc_never_ran','gc_overdue',
+                    'verification_failed','verification_never_ran','verification_overdue',
+                    'storage_warning','storage_critical',
+                    'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone',
+                    'replication_stale','replication_never_synced','immutable_disable_pending',
+                    'host_offline','api_unreachable','api_unhealthy','monitoring_api_error',
+                    'heartbeat_failed','ntfy_delivery_failed',
+                ].forEach(key => {
+                    const el = document.getElementById('cfg-prio-alert-' + key);
+                    if (el) el.value = (perAlert[key] != null) ? String(perAlert[key]) : '';
+                });
 
                 const t = c.thresholds || {};
                 document.getElementById('cfg-thr-warn').value = t.storage_warn_percent ?? 80;
@@ -1397,6 +1410,7 @@
                         .forEach(el => el.disabled = true);
                 }
 
+                updatePerAlertDefaultLabels();
                 setSettingsMsg('');
             } catch (e) {
                 setSettingsMsg('Error loading config: ' + e.message, 'error');
@@ -1437,6 +1451,11 @@
         document.querySelector('[onclick="openModal(\'settingsModal\')"]')
             .addEventListener('click', function() { loadConfig(); updateCronEntry(); });
 
+        // Re-compute per-alert default labels when the tier selects change
+        ['cfg-prio-warning', 'cfg-prio-critical'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', updatePerAlertDefaultLabels);
+        });
+
         async function saveConfig() {
             const tokenFieldValue = document.getElementById('cfg-ntfy_token').value;
             const payload = {
@@ -1464,6 +1483,21 @@
                 notification_priorities: {
                     warning: parseInt(document.getElementById('cfg-prio-warning').value),
                     critical: parseInt(document.getElementById('cfg-prio-critical').value),
+                    per_alert: Object.fromEntries(
+                        [
+                            'gc_failed','gc_never_ran','gc_overdue',
+                            'verification_failed','verification_never_ran','verification_overdue',
+                            'storage_warning','storage_critical',
+                            'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone',
+                            'replication_stale','replication_never_synced','immutable_disable_pending',
+                            'host_offline','api_unreachable','api_unhealthy','monitoring_api_error',
+                            'heartbeat_failed','ntfy_delivery_failed',
+                        ].map(key => {
+                            const el = document.getElementById('cfg-prio-alert-' + key);
+                            const v = el ? el.value : '';
+                            return [key, v === '' ? null : parseInt(v)];
+                        })
+                    ),
                 },
                 schedule_learning: {
                     enabled: document.getElementById('cfg-sl-enabled').value === 'true',
@@ -1500,6 +1534,37 @@
 
         function priorityLabel(p) {
             return {1: 'min', 2: 'low', 3: 'default', 4: 'high', 5: 'urgent'}[p] || String(p);
+        }
+
+        // Base (unconfigured) priority for each alert type — used to compute tier default.
+        // 5 = critical tier, 4 = warning tier, 3 = falls through (no tier mapping).
+        const ALERT_BASE_PRIORITY = {
+            gc_failed: 4, gc_never_ran: 3, gc_overdue: 3,
+            verification_failed: 5, verification_never_ran: 3, verification_overdue: 3,
+            storage_warning: 3, storage_critical: 5,
+            all_backups_gone: 5, snapshots_unexpectedly_removed: 4,
+            missed_backup_window: 4, missed_backup_interval: 4,
+            host_offline: 4, api_unreachable: 5, api_unhealthy: 4, monitoring_api_error: 4,
+            ntfy_delivery_failed: 5, heartbeat_failed: 5,
+            immutable_disable_pending: 4, replication_never_synced: 4, replication_stale: 4,
+        };
+
+        function effectiveTierDefault(typeKey) {
+            const base = ALERT_BASE_PRIORITY[typeKey];
+            const warn = parseInt(document.getElementById('cfg-prio-warning')?.value) || 4;
+            const crit = parseInt(document.getElementById('cfg-prio-critical')?.value) || 5;
+            if (base >= 5) return crit;
+            if (base >= 4) return warn;
+            return base;
+        }
+
+        function updatePerAlertDefaultLabels() {
+            document.querySelectorAll('.per-alert-prio-select').forEach(sel => {
+                const typeKey = sel.id.replace('cfg-prio-alert-', '');
+                const eff = effectiveTierDefault(typeKey);
+                const opt = sel.querySelector('option[value=""]');
+                if (opt) opt.textContent = `— tier default (${eff} – ${priorityLabel(eff)})`;
+            });
         }
 
         function updateTestPrioLabel() {

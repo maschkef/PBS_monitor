@@ -30,10 +30,11 @@
     "min_priority": 4
   },
 
-  "_comment_priorities": "ntfy priority assigned to warning (4=high) and critical (5=urgent) alerts. Range 1–5. Level 5 bypasses Do Not Disturb on supported devices. The min_priority field in quiet_hours uses the same scale.",
+  "_comment_priorities": "ntfy priority for outgoing alerts. Range 1–5 (5=urgent, bypasses DND). 'warning' and 'critical' are tier defaults. 'per_alert' lets you override the priority for individual alert types (use the key names from the web UI). Omit a key or set it to null to fall back to the tier default.",
   "notification_priorities": {
     "warning": 4,
-    "critical": 5
+    "critical": 5,
+    "per_alert": {}
   },
   
   "_comment_learning": "Toggles dynamic learning for missed backup window detection.",

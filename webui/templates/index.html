@@ -1543,6 +1543,256 @@
               <option value="5">5 &ndash; urgent (bypasses DND)</option>
             </select>
           </div>
+
+          <details id="per-alert-prio-details" style="margin-top:1rem">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--text-secondary);user-select:none">Per-Alert Priority Overrides <span class="tooltip-icon">i<span class="tooltip-text">Override the ntfy priority for individual alert types. "— tier default" inherits from the Warning or Critical priority above.</span></span></summary>
+            <div style="margin-top:0.75rem">
+
+              <p class="form-section-title" style="margin-top:0;margin-bottom:0.5rem;font-size:0.78rem">GC</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">GC Failed <span class="tooltip-icon">i<span class="tooltip-text">Garbage collection ran but exited with an error status.</span></span></label>
+                <select id="cfg-prio-alert-gc_failed" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">GC Never Ran <span class="tooltip-icon">i<span class="tooltip-text">Garbage collection has never been executed on this datastore.</span></span></label>
+                <select id="cfg-prio-alert-gc_never_ran" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">GC Overdue <span class="tooltip-icon">i<span class="tooltip-text">Garbage collection has not run within the configured age threshold (gc_max_age_hours).</span></span></label>
+                <select id="cfg-prio-alert-gc_overdue" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+              <p class="form-section-title" style="margin-top:0.75rem;margin-bottom:0.5rem;font-size:0.78rem">Verification</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Verification Failed <span class="tooltip-icon">i<span class="tooltip-text">Data integrity verification ran but reported errors — backup integrity may be compromised.</span></span></label>
+                <select id="cfg-prio-alert-verification_failed" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Verification Never Ran <span class="tooltip-icon">i<span class="tooltip-text">Data verification has never been executed on this datastore.</span></span></label>
+                <select id="cfg-prio-alert-verification_never_ran" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Verification Overdue <span class="tooltip-icon">i<span class="tooltip-text">Data verification has not run within the configured age threshold (verification_max_age_days).</span></span></label>
+                <select id="cfg-prio-alert-verification_overdue" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+              <p class="form-section-title" style="margin-top:0.75rem;margin-bottom:0.5rem;font-size:0.78rem">Storage</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Storage Warning <span class="tooltip-icon">i<span class="tooltip-text">Datastore usage reached the warning percentage threshold (storage_warn_percent).</span></span></label>
+                <select id="cfg-prio-alert-storage_warning" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Storage Critical <span class="tooltip-icon">i<span class="tooltip-text">Datastore usage reached the critical percentage threshold (storage_crit_percent).</span></span></label>
+                <select id="cfg-prio-alert-storage_critical" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+              <p class="form-section-title" style="margin-top:0.75rem;margin-bottom:0.5rem;font-size:0.78rem">Backup / Snapshots</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Missed Backup Window <span class="tooltip-icon">i<span class="tooltip-text">A learned or fixed backup schedule window passed without a new snapshot being created.</span></span></label>
+                <select id="cfg-prio-alert-missed_backup_window" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Missed Backup Interval <span class="tooltip-icon">i<span class="tooltip-text">A recurring backup interval elapsed without a new snapshot being observed.</span></span></label>
+                <select id="cfg-prio-alert-missed_backup_interval" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Snapshots Unexpectedly Removed <span class="tooltip-icon">i<span class="tooltip-text">More snapshots disappeared than the prune policy allows — possible manual deletion outside of PBS.</span></span></label>
+                <select id="cfg-prio-alert-snapshots_unexpectedly_removed" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">All Backups Gone <span class="tooltip-icon">i<span class="tooltip-text">The entire backup inventory for a datastore dropped to zero — previously observed snapshots are all missing.</span></span></label>
+                <select id="cfg-prio-alert-all_backups_gone" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+              <p class="form-section-title" style="margin-top:0.75rem;margin-bottom:0.5rem;font-size:0.78rem">Replication / Immutable</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Replication Stale <span class="tooltip-icon">i<span class="tooltip-text">Replication last synced longer ago than expected based on its configured interval.</span></span></label>
+                <select id="cfg-prio-alert-replication_stale" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Replication Never Synced <span class="tooltip-icon">i<span class="tooltip-text">Replication is enabled on this datastore but no successful sync has been recorded yet.</span></span></label>
+                <select id="cfg-prio-alert-replication_never_synced" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Immutable Backup Disable Pending <span class="tooltip-icon">i<span class="tooltip-text">A request to disable immutable backups is currently pending on this datastore.</span></span></label>
+                <select id="cfg-prio-alert-immutable_disable_pending" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+              <p class="form-section-title" style="margin-top:0.75rem;margin-bottom:0.5rem;font-size:0.78rem">System / Heartbeat</p>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Host Offline <span class="tooltip-icon">i<span class="tooltip-text">The PBS host server is unreachable — metrics could not be retrieved for this datastore.</span></span></label>
+                <select id="cfg-prio-alert-host_offline" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">API Unreachable <span class="tooltip-icon">i<span class="tooltip-text">The monitoring API cannot be contacted at all — all datastore checks are skipped for this run.</span></span></label>
+                <select id="cfg-prio-alert-api_unreachable" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">API Unhealthy <span class="tooltip-icon">i<span class="tooltip-text">The monitoring API is reachable but its health check endpoint returned a non-OK status.</span></span></label>
+                <select id="cfg-prio-alert-api_unhealthy" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Monitoring API Error <span class="tooltip-icon">i<span class="tooltip-text">Fetching datastore data from the API failed mid-run — remaining checks are skipped.</span></span></label>
+                <select id="cfg-prio-alert-monitoring_api_error" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Heartbeat Failed <span class="tooltip-icon">i<span class="tooltip-text">The configured heartbeat URL could not be pinged after a successful check run.</span></span></label>
+                <select id="cfg-prio-alert-heartbeat_failed" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Ntfy Delivery Failed <span class="tooltip-icon">i<span class="tooltip-text">One or more ntfy sends failed during this run. If a heartbeat fail URL is configured, it is pinged to actively signal the failure. The success heartbeat URL is always skipped (pinging it would either clear a fail-alarm or prevent a timeout-based alarm). The failure is written to the notification log. No ntfy push is sent (delivery is broken). This priority only affects the log entry. Only logged when at least one heartbeat URL is configured.</span></span></label>
+                <select id="cfg-prio-alert-ntfy_delivery_failed" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                </select>
+              </div>
+
+            </div>
+          </details>
         </div>
 
         <!-- Thresholds -->

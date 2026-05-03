@@ -147,6 +147,16 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 v = coerce_int_fn(np_[sev])
                 if v is None or not (1 <= v <= 5):
                     raise ValueError(f"notification_priorities.{sev} must be between 1 and 5.")
+        if "per_alert" in np_:
+            if not isinstance(np_["per_alert"], dict):
+                raise ValueError("notification_priorities.per_alert must be an object.")
+            for type_key, val in np_["per_alert"].items():
+                if not isinstance(type_key, str) or len(type_key) > 64:
+                    raise ValueError("notification_priorities.per_alert keys must be strings of at most 64 characters.")
+                if val is not None:
+                    v = coerce_int_fn(val)
+                    if v is None or not (1 <= v <= 5):
+                        raise ValueError(f"notification_priorities.per_alert.{type_key} must be between 1 and 5 or null.")
 
 
 def _validate_group_rule_payload(payload: dict) -> None:

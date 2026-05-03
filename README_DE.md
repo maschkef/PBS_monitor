@@ -184,7 +184,7 @@ auf einem Server per Cron laufen kann.
 - **Immutable Backup Warnung** — Alert bei pending Disable-Request
 - **API-Health-Check** — Prüft die Plattform-Erreichbarkeit
 - **Quiet Hours** — Niedrig-priore Alerts nachts unterdrücken
-- **Konfigurierbare Benachrichtigungs-Prioritäten** — ntfy-Priorität separat für Warning- und Critical-Alerts setzen (1 min/lautlos … 5 dringend/bypass DND); dieselbe Skala nutzt auch der Quiet-Hours-Mindestschwellwert
+- **Konfigurierbare Benachrichtigungs-Prioritäten** — ntfy-Priorität pro Severity-Tier (Warning / Critical) festlegen und optional für jeden einzelnen Alert-Typ überschreiben (z. B. "GC Never Ran" unabhängig von anderen Warnings leiser stellen); dieselbe Skala 1–5 nutzt auch der Quiet-Hours-Mindestschwellwert
 - **Alert-Cooldown** — Verhindert Spam bei anhaltenden Problemen
 - **Persistenter State** — versionierte Snapshot-Historie pro Backup-Gruppe
 - **Benachrichtigungs-History-Log** — jeder versendete Alert (inkl. Test-Benachrichtigungen aus der Web UI) wird an `notification_log.json` angehängt; über das 📋 Log-Panel der Web UI einsehbar und löschbar
@@ -206,7 +206,7 @@ Wenn du das Web UI Tool verwendest (siehe oben), kannst du alle Alerting-Einstel
    - **ntfy Topic**: Topic-Name eingeben (z.B. "meine-pbs-alerts") um Benachrichtigungen zu aktivieren
    - **ntfy URL**: Meist `https://ntfy.sh` (Standard)
    - **ntfy Token**: Optional, für private ntfy-Instanzen
-5. Alert-Prioritäten unter **Notifications → Alert Priorities** festlegen (Warning = 4 high, Critical = 5 urgent als Standard). Dieselbe Skala 1–5 gilt auch für das Feld **Minimum priority to send** unter Quiet Hours.
+5. Alert-Prioritäten unter **Notifications → Alert Priorities** festlegen: die Selektoren **Warning** und **Critical** setzen die Standard-Priorität je Schweregrad. Unter **Per-Alert Priority Overrides** kann die Priorität für einzelne Alert-Typen individuell überschrieben werden (z. B. "All Backups Gone" immer auf Urgent, oder "GC Never Ran" stumm stellen). Dieselbe Skala 1–5 gilt auch für **Quiet Hours → Minimum priority to send**.
 6. Weitere Einstellungen nach Bedarf anpassen (Schwellwerte, Ruhezeiten, Daemon-Intervall, etc.)
 7. Einstellungen speichern
 
@@ -299,10 +299,11 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "min_priority": 4
   },
   
-  "_comment_priorities": "ntfy-Priorit\u00e4t f\u00fcr Warning- (4=high) und Critical-Alerts (5=urgent). Bereich 1\u20135. Stufe 5 umgeht Do Not Disturb auf unterst\u00fctzten Ger\u00e4ten. Das Feld min_priority in quiet_hours nutzt dieselbe Skala.",
+  "_comment_priorities": "ntfy-Priorit\u00e4t f\u00fcr ausgehende Alerts. Bereich 1\u20135 (5=urgent, umgeht DND). 'warning' und 'critical' sind Tier-Defaults nach Schweregrad. 'per_alert' erlaubt individuelle Overrides pro Alert-Typ \u2014 Schl\u00fcssel weglassen oder null setzen um auf den Tier-Default zur\u00fcckzufallen.",
   "notification_priorities": {
     "warning": 4,
-    "critical": 5
+    "critical": 5,
+    "per_alert": {}
   },
   
   "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
@@ -333,13 +334,16 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `ntfy_topic` | **Konfigurieren um Push-Benachrichtigungen zu aktivieren** (z.B. "meine-alerts"). Leer lassen um externe Benachrichtigungen zu deaktivieren. Beide Felder – `ntfy_topic` und `ntfy_url` – müssen gesetzt sein damit Benachrichtigungen aktiv sind |
 | `ntfy_token` | Optional. Bearer Token für private ntfy-Instanzen |
 | `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`). Muss zusammen mit `ntfy_topic` gesetzt sein damit Push-Benachrichtigungen funktionieren |
-| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **keine Alerts erkannt wurden** (Success-Ping). Ist nur dieses Feld gesetzt und es gibt Alerts, wird kein Ping gesendet — der daraus resultierende Timeout signalisiert dem Monitoring-Tool das Problem. Wird übersprungen wenn ntfy-Versand fehlschlug. Schlägt der Ping selbst fehl, wird ein urgenter Alert (Priorität 5) via ntfy gesendet. **Uptime Kuma (Push-Monitor):** die im Monitor angezeigte URL mit `?status=up&msg=OK&ping=` verwenden |
-| `heartbeat_fail_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **Alerts erkannt wurden** (Fail-Ping). Wird nur ausgewertet wenn nicht leer. Kann mit `heartbeat_url` kombiniert werden für explizites Success/Fail-Signalling. **Uptime Kuma:** gleiche URL und gleicher Token wie bei `heartbeat_url`, aber mit `?status=down&msg=PROBLEM&ping=` |
+| `heartbeat_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **keine Alerts erkannt wurden** (Success-Ping). Ist nur dieses Feld gesetzt und es gibt Alerts, wird kein Ping gesendet — der Timeout signalisiert das Problem. Wird auch übersprungen wenn ntfy-Versand fehlschlug (damit der Timeout weiterhin das Problem signalisiert). Schlägt der Ping selbst fehl, wird ein urgenter Alert via ntfy gesendet. **Uptime Kuma (Push-Monitor):** die im Monitor angezeigte URL mit `?status=up&msg=OK&ping=` verwenden |
+| `heartbeat_fail_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **Alerts erkannt wurden** (Fail-Ping). Wird auch angepingt wenn ntfy-Versand fehlschlug — so erhält ein externes Monitoring-Tool ein aktives Fehlersignal auch wenn Push-Delivery kaputt ist. Kann mit `heartbeat_url` für explizites Success/Fail-Signalling kombiniert werden. **Uptime Kuma:** gleiche URL und gleicher Token wie bei `heartbeat_url`, aber mit `?status=down&msg=PROBLEM&ping=` |
 | `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen |
 | `storage_warn_percent` | Speicher-Warnung ab diesem Prozentsatz |
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |
 | `gc_max_age_hours` | GC gilt als überfällig nach X Stunden |
 | `verification_max_age_days` | Verification gilt als überfällig nach X Tagen |
+| `notification_priorities.warning` | ntfy-Priorität für Warning-Tier-Alerts (Standard: `4` = high). Gilt für: GC failed/overdue/never ran, Host offline, verpasste Backups, Storage Warning, Replication stale, Immutable Disable pending, Snapshots unerwartet entfernt |
+| `notification_priorities.critical` | ntfy-Priorität für Critical-Tier-Alerts (Standard: `5` = urgent). Gilt für: Storage Critical, Verification failed, All Backups Gone, API unreachable, Heartbeat failed |
+| `notification_priorities.per_alert` | Optionales Objekt für individuelle Prioritäts-Overrides pro Alert-Typ. Schlüssel entsprechen dem Alert-Typ (z. B. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Wert 1–5 zum Überschreiben; weglassen oder `null` um auf den Tier-Default zurückzufallen. Konfigurierbar über **Per-Alert Priority Overrides** in der Web UI |
 | `quiet_hours.enabled` | Quiet Hours aktivieren (true/false) |
 | `quiet_hours.min_priority` | Nur Alerts ab dieser Priorität während Quiet Hours senden |
 | `schedule_learning.enabled` | Lernende Backup-Fenster-Erkennung aktivieren |
@@ -363,11 +367,17 @@ Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` ode
 
 ### Alert-Prioritäten (ntfy)
 
-| Prio | Verwendung |
-|------|-----------|
-| 5 (urgent) | Storage ≥ 90%, Verification failed, alle Backups weg, API nicht erreichbar |
-| 4 (high) | GC failed, Host offline, verpasstes Backup-Fenster oder Intervall, veraltete Replication, Immutable Disable pending, Snapshots unerwartet entfernt |
-| 3 (default) | Storage ≥ 80%, GC/Verification überfällig oder nie gelaufen |
+Jeder Alert-Typ hat eine **Basis-Priorität**, die seinen Severity-Tier bestimmt. Die Tier-Priorität wird dann anhand von `notification_priorities.warning` / `.critical` angewendet (Defaults: 4 = high, 5 = urgent). Einzelne Alert-Typen können unabhängig über `notification_priorities.per_alert` oder die **Per-Alert Priority Overrides** in der Web UI überschrieben werden.
+
+| Basis | Tier | Alert-Typen |
+|-------|------|-------------|
+| 5 → critical | Standard: 5 (urgent) | Storage ≥ Crit%, Verification failed, All Backups Gone, API unreachable, Heartbeat failed |
+| 4 → warning | Standard: 4 (high) | GC failed, Host offline, verpasstes Backup-Fenster/-Intervall, Replication stale/never synced, Immutable Disable pending, Snapshots unerwartet entfernt |
+| 3 (kein Tier-Mapping) | bleibt 3 (default) | Storage ≥ Warn%, GC overdue/never ran, Verification overdue/never ran |
+
+> **Per-Alert-Overrides** (z. B. `"gc_never_ran": 2`) haben Vorrang vor Basis-Priorität und Tier-Defaults. Schlüssel auf `null` setzen oder weglassen um auf das Tier-Verhalten zurückzufallen.
+
+**Gültige per_alert-Schlüssel:** `gc_failed`, `gc_never_ran`, `gc_overdue`, `verification_failed`, `verification_never_ran`, `verification_overdue`, `storage_warning`, `storage_critical`, `all_backups_gone`, `snapshots_unexpectedly_removed`, `missed_backup_window`, `missed_backup_interval`, `host_offline`, `api_unreachable`, `api_unhealthy`, `monitoring_api_error`, `heartbeat_failed`, `ntfy_delivery_failed`, `immutable_disable_pending`, `replication_never_synced`, `replication_stale`
 
 💡 **Tipp:** Alle diese Parameter können einfach über die Web-UI konfiguriert werden, anstatt die JSON-Dateien manuell zu bearbeiten.
 
