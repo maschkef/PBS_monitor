@@ -95,7 +95,8 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **Next backup indicator** — each backup group in the alerting panel shows the calculated next expected backup time based on the active schedule
 - **Ignored groups** — mute alerts for specific backup groups directly via the web interface; ignored groups are shown in a collapsible list and can be re-activated (Unignore) at any time
 - **Rescale history** — timeline of the last 90 days (autoscaling events, manual resizes)
-- **Notification log** — persistent history of all sent alerts (and test notifications); view and clear via the **📋 Log** button in the header
+- **Notification log** — persistent history of all sent alerts (and test notifications); view, clear, or delete individual rows via the **📋 Log** button in the header
+- **About tab** — shows current running version and environment (Docker/Native), with a manual GitHub release update check
 - **Visual alerting** — current alert conditions and learned backup windows directly in the dashboard
 - **Platform stats** — total storage, backup count and traffic across the platform
 - **Two-tier refresh** — the **⟳ Refresh** button performs a full reload (all data including rescale-log, backup inventory, and platform stats); the **Auto-Refresh** timer runs a lightweight update that only fetches frequently-changing data (storage metrics, GC/verification timestamps, replication sync times, alerting state). This reduces API calls during auto-refresh from ~22+ to ~4 for a typical three-datastore account. Hover over each button or control for a tooltip describing what is and isn't refreshed.
@@ -183,7 +184,7 @@ on a server via cron.
 - **Immutable backup warning** — alert on pending disable request
 - **API health check** — verifies platform availability
 - **Quiet hours** — suppress low-priority alerts at night
-- **Configurable notification priorities** — set ntfy priority per severity tier (warning / critical) and optionally override it for each individual alert type (e.g. silence "GC Never Ran" independently of other warnings); the same 1–5 scale is used by the Quiet Hours minimum threshold
+- **Configurable notification priorities** — set ntfy priority per severity tier (warning / critical) and optionally override it for each individual alert type (e.g. silence "GC Never Ran" independently of other warnings, or set an alert type to `ignore` to suppress it entirely); the same 1–5 scale is used by the Quiet Hours minimum threshold
 - **Alert cooldown** — prevents spam for persistent issues
 - **Persistent state** — versioned per-group snapshot history retained across runs
 - **Notification history log** — every dispatched alert (including test notifications sent from the Web UI) is appended to `notification_log.json`; viewable and clearable from the Web UI 📋 Log panel
@@ -205,7 +206,7 @@ If you're running the Web UI tool (see above), you can configure all alerting se
    - **ntfy Topic**: Enter your topic name (e.g., "my-pbs-alerts") to enable notifications
    - **ntfy URL**: Usually `https://ntfy.sh` (default)
    - **ntfy Token**: Optional, for private ntfy instances
-5. Set alert priorities under **Notifications → Alert Priorities**: the **Warning** and **Critical** tier selectors set the default priority for each severity level. Expand **Per-Alert Priority Overrides** to set an individual priority for specific alert types (e.g. make "All Backups Gone" always urgent, or silence "GC Never Ran"). The same 1–5 scale applies to **Quiet Hours → Minimum priority to send**.
+5. Set alert priorities under **Notifications → Alert Priorities**: the **Warning** and **Critical** tier selectors set the default priority for each severity level. Expand **Per-Alert Priority Overrides** to set an individual priority for specific alert types (e.g. make "All Backups Gone" always urgent, silence "GC Never Ran", or set a type to `ignore` to suppress it completely). The same 1–5 scale applies to **Quiet Hours → Minimum priority to send**.
 6. Adjust other settings as needed (thresholds, quiet hours, daemon interval, etc.)
 7. Save settings
 
@@ -298,7 +299,7 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
     "min_priority": 4
   },
   
-  "_comment_priorities": "ntfy priority for outgoing alerts. Range 1–5 (5=urgent, bypasses DND). 'warning' and 'critical' are tier defaults applied by severity. 'per_alert' overrides individual alert types — omit a key or set it to null to fall back to the tier default.",
+  "_comment_priorities": "ntfy priority for outgoing alerts. Range 1–5 (5=urgent, bypasses DND). 'warning' and 'critical' are tier defaults applied by severity. 'per_alert' overrides individual alert types — set to 1-5 to force a priority, set to 'ignore' to suppress, or omit/set null to fall back to the tier default.",
   "notification_priorities": {
     "warning": 4,
     "critical": 5,
@@ -345,7 +346,7 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `verification_max_age_days` | Verification considered overdue after X days |
 | `notification_priorities.warning` | ntfy priority for warning-tier alerts (default: `4` = high). Applies to: GC failed/overdue/never ran, host offline, missed backup, storage warning, replication stale, immutable disable pending, snapshots unexpectedly removed |
 | `notification_priorities.critical` | ntfy priority for critical-tier alerts (default: `5` = urgent). Applies to: storage critical, verification failed, all backups gone, API unreachable, heartbeat failed |
-| `notification_priorities.per_alert` | Optional object to override priority for individual alert types. Keys match the alert type (e.g. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Set a value (1–5) to override or omit/`null` to fall back to the tier default. Configurable via **Per-Alert Priority Overrides** in the Web UI |
+| `notification_priorities.per_alert` | Optional object to override priority for individual alert types. Keys match the alert type (e.g. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Set a value (`1`-`5`) to override, `"ignore"` to suppress that alert type, or omit/`null` to fall back to the tier default. Configurable via **Per-Alert Priority Overrides** in the Web UI |
 | `quiet_hours.enabled` | Enable quiet hours (true/false) |
 | `quiet_hours.min_priority` | Only send alerts at or above this priority during quiet hours |
 | `schedule_learning.enabled` | Enable learned backup-window detection |
@@ -377,7 +378,7 @@ Each alert type has a **base priority** that determines which severity tier it f
 | 4 → warning | default: 4 (high) | GC failed, host offline, missed backup window/interval, replication stale/never synced, immutable disable pending, snapshots unexpectedly removed |
 | 3 (no tier mapping) | stays at 3 (default) | Storage ≥ warn%, GC overdue/never ran, verification overdue/never ran |
 
-> **Per-alert overrides** (e.g. `"gc_never_ran": 2`) take precedence over both the base priority and the tier defaults. Set a key to `null` or omit it to fall back to the tier behaviour.
+> **Per-alert overrides** (e.g. `"gc_never_ran": 2`) take precedence over both the base priority and the tier defaults. Set a key to `"ignore"` to suppress that alert type entirely, or set it to `null` / omit it to fall back to the tier behaviour.
 
 **Valid per-alert keys:** `gc_failed`, `gc_never_ran`, `gc_overdue`, `verification_failed`, `verification_never_ran`, `verification_overdue`, `storage_warning`, `storage_critical`, `all_backups_gone`, `snapshots_unexpectedly_removed`, `missed_backup_window`, `missed_backup_interval`, `host_offline`, `api_unreachable`, `api_unhealthy`, `monitoring_api_error`, `heartbeat_failed`, `ntfy_delivery_failed`, `immutable_disable_pending`, `replication_never_synced`, `replication_stale`
 

@@ -39,13 +39,15 @@ These routes modify configuration and state. They enforce CSRF tokens and the `r
 
 - **`/api/alerting/config` (POST)**: 
   Saves user modifications to the backend configuration.
-  **Logic:** Validates the incoming payload against `validators._validate_config_payload`. Uses `_write_json_atomic` to safely rewrite `config.json`.
+  **Logic:** Validates the incoming payload against `validators._validate_config_payload`. Uses `_write_json_atomic` to safely rewrite `config.json`. Per-alert priority overrides accept numeric values (`1`-`5`), `null` (fallback), or `"ignore"` (suppress that alert type).
 - **`/api/alerting/group-rule` (POST)**:
   Configures or overrides a specific scheduled backup rule (interval, daily, weekly, or none) for a datastore group. Persists to `group_rules.json`.
 - **`/api/alerting/ignore-group` (POST) / `/api/alerting/unignore-group` (POST)**:
   Adds or removes a specific backup group from the `ignored_groups` array in `config.json`, silencing alerts for it.
 - **`/api/alerting/notification-log` (DELETE)**:
   Clears the rolling `notification_log.json` history.
+- **`/api/alerting/notification-log/entry` (DELETE)**:
+  Deletes a single notification-log entry by timestamp and rewrites `notification_log.json` atomically.
 
 ### Testing Endpoints
 - **`/api/alerting/test/dry-run`**: Triggers a simulated run of `monitor.py` logic. Calculates active alerts but stops before invoking `send_ntfy`.

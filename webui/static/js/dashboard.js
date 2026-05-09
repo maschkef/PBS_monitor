@@ -1202,6 +1202,7 @@
                 _webuiAlertingPath = info.alerting_path || null;
                 _webuiPythonExec = info.python_executable || null;
                 _isDocker = info.is_docker || false;
+                _webuiVersion = info.version || 'unknown';
                 if (info.read_only) {
                     document.getElementById('readOnlyBadge').style.display = '';
                     document.getElementById('saveConfigBtn').disabled = true;
@@ -1242,6 +1243,45 @@
             } catch (_) { /* ignore */ }
         }
 
+        function renderAboutTab() {
+            const verEl = document.getElementById('about-version');
+            const envEl = document.getElementById('about-env-badge');
+            if (verEl) verEl.textContent = _webuiVersion !== 'unknown' ? _webuiVersion : '—';
+            if (envEl) envEl.textContent = _isDocker ? 'Docker' : 'Native';
+        }
+
+        async function checkForUpdatesManual() {
+            const statusEl = document.getElementById('about-update-status');
+            if (!statusEl) return;
+            statusEl.textContent = 'Checking…';
+            statusEl.style.color = 'var(--text-dim)';
+            if (_webuiVersion === 'unknown') {
+                statusEl.textContent = 'Version unknown — cannot check for updates.';
+                return;
+            }
+            try {
+                const isPreRelease = _webuiVersion.includes('-') || _webuiVersion.includes('beta') || _webuiVersion.includes('alpha') || _webuiVersion.includes('rc');
+                const url = isPreRelease
+                    ? 'https://api.github.com/repos/maschkef/PBS_monitor/releases'
+                    : 'https://api.github.com/repos/maschkef/PBS_monitor/releases/latest';
+                const response = await fetch(url);
+                if (!response.ok) { statusEl.textContent = 'Could not reach GitHub.'; return; }
+                const data = await response.json();
+                const latestRelease = Array.isArray(data) ? data[0] : data;
+                if (!latestRelease || !latestRelease.tag_name) { statusEl.textContent = 'No release data found.'; return; }
+                const latestVersion = latestRelease.tag_name;
+                if (compareSemver(latestVersion, _webuiVersion) > 0) {
+                    statusEl.innerHTML = `Update available: <a href="${escHtml(latestRelease.html_url)}" target="_blank" rel="noopener" style="color:var(--cyan)">${escHtml(latestVersion)}</a>`;
+                    statusEl.style.color = 'var(--yellow,#e5c07b)';
+                } else {
+                    statusEl.textContent = `Up to date (latest: ${latestVersion})`;
+                    statusEl.style.color = 'var(--green,#98c379)';
+                }
+            } catch (_) {
+                statusEl.textContent = 'Update check failed.';
+            }
+        }
+
         function compareSemver(a, b) {
             a = a.replace(/^v/, '');
             b = b.replace(/^v/, '');
@@ -1268,6 +1308,8 @@
         }
 
         // ── Notification Log ───────────────────────────────────────────────────
+        let _logEntries = [];
+
         async function openLogModal() {
             openModal('logModal');
             document.getElementById('logModalCount').textContent = 'Loading…';
@@ -1286,6 +1328,7 @@
         }
 
         function renderLogModal(entries) {
+            _logEntries = entries;
             const countEl = document.getElementById('logModalCount');
             const tbody = document.getElementById('logModalTable');
             const emptyEl = document.getElementById('logModalEmpty');
@@ -1310,7 +1353,8 @@
                   <td style="padding:0.3rem 0.5rem;color:${prioColor(e.priority)};font-weight:600;white-space:nowrap">${e.priority ?? '—'}</td>
                   <td style="padding:0.3rem 0.5rem">${escHtml(e.title || '—')}</td>
                   <td style="padding:0.3rem 0.5rem;color:var(--text-dim);max-width:28rem;white-space:pre-wrap;word-break:break-word">${escHtml(e.message || '—')}</td>
-                  <td style="padding:0.3rem 0.5rem;white-space:nowrap;color:var(--text-dim)">${escHtml(e.datastore_name || '—')}</td>`;
+                  <td style="padding:0.3rem 0.5rem;white-space:nowrap;color:var(--text-dim)">${escHtml(e.datastore_name || '—')}</td>
+                  <td style="padding:0.3rem 0.2rem;white-space:nowrap"><button class="btn" style="padding:0.15rem 0.4rem;font-size:0.75rem;border-color:var(--red,#e06c75);color:var(--red,#e06c75)" onclick='deleteLogEntry(${jsonAttr(e.timestamp)})' title="Delete this entry">✕</button></td>`;
                 tbody.appendChild(tr);
             }
         }
@@ -1327,6 +1371,24 @@
                 }
             } catch (e) {
                 alert('Failed to clear log: ' + (e.message || e));
+            }
+        }
+
+        async function deleteLogEntry(timestamp) {
+            try {
+                const res = await fetchWrite('/api/alerting/notification-log/entry', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ timestamp }),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    renderLogModal(_logEntries.filter(e => e.timestamp !== timestamp));
+                } else {
+                    alert('Failed to delete entry: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to delete entry: ' + (e.message || e));
             }
         }
 
@@ -1495,7 +1557,7 @@
                         ].map(key => {
                             const el = document.getElementById('cfg-prio-alert-' + key);
                             const v = el ? el.value : '';
-                            return [key, v === '' ? null : parseInt(v)];
+                            return [key, v === '' ? null : (v === 'ignore' ? 'ignore' : parseInt(v))];
                         })
                     ),
                 },
@@ -1581,6 +1643,7 @@
         let _ntfyUrl = null;
         let _notifPriorities = null;
         let _isDocker = false;
+        let _webuiVersion = 'unknown';
 
         function updateCronEntry() {
             if (_isDocker) {

@@ -13,8 +13,9 @@ A module-level dict that maps every alert title string (e.g. `"GC Failed"`, `"Ve
 ### `_resolve_alert_priority(alert, prio_cfg)`
 Determines the final ntfy priority for a single alert object:
 1. Looks up the alert's title in `ALERT_TITLE_TO_TYPE_KEY` to get its type key.
-2. If `prio_cfg["per_alert"]` contains a non-null value for that key, clamps it to 1–5 and returns it immediately.
-3. Otherwise falls back to the two-tier mapping: base priority ≥ 5 → `prio_cfg["critical"]` (default 5), base priority ≥ 4 → `prio_cfg["warning"]` (default 4), base priority 3 → unchanged.
+2. If `prio_cfg["per_alert"]` contains the string value `"ignore"` for that key, returns `None` to suppress this alert type completely.
+3. If `prio_cfg["per_alert"]` contains any other non-null value for that key, clamps it to 1–5 and returns it immediately.
+4. Otherwise falls back to the two-tier mapping: base priority ≥ 5 → `prio_cfg["critical"]` (default 5), base priority ≥ 4 → `prio_cfg["warning"]` (default 4), base priority 3 → unchanged.
 
 ### File I/O Management
 The script determines `DATA_DIR` either via the `ALERTING_DATA_DIR` environment variable (for Docker mounts) or defaults to the script's directory. It manages these JSON files:
@@ -82,7 +83,7 @@ The master execution cycle run per interval.
 4. Gathers all generated `Alert` objects.
 5. Filters out alerts lower than the minimum priority if `is_quiet_hours` is active.
 6. Filters out recently fired alerts using `should_alert` (cooldown period).
-7. Resolves the final ntfy priority for each alert via `_resolve_alert_priority` (checks per-alert overrides, then tier defaults), then dispatches via `send_ntfy` and appends to the notification log. Catches any `NtfyDeliveryError` and sets an internal `ntfy_delivery_failed` flag.
+7. Resolves the final ntfy priority for each alert via `_resolve_alert_priority` (checks per-alert overrides, then tier defaults). Alerts resolved to `None` are skipped (suppressed by `"ignore"`), while the rest are dispatched via `send_ntfy` and appended to the notification log. Catches any `NtfyDeliveryError` and sets an internal `ntfy_delivery_failed` flag.
 8. Handles heartbeat pings with the following logic:
    - **Normal path** (`ntfy_delivery_failed = False`): pings `heartbeat_fail_url` when alerts were detected, `heartbeat_url` when none were. If only `heartbeat_url` is configured, no ping is sent when alerts exist — the timeout signals the problem. A failed ping generates an internal urgent alert sent via ntfy.
    - **ntfy delivery failed path** (`ntfy_delivery_failed = True`): pings `heartbeat_fail_url` if configured, so an external monitor receives an active failure signal even when push delivery is broken. `heartbeat_url` is never pinged in this path — doing so would either clear an alarm set by the fail URL, or (when only `heartbeat_url` is set) prevent the timeout from triggering the alert. Logs a `"Ntfy Delivery Failed"` entry to the notification log when any heartbeat URL is configured.

@@ -914,6 +914,8 @@ def save_alerting_config():
             for type_key, val in payload["notification_priorities"]["per_alert"].items():
                 if val is None or val == "":
                     raw_pa.pop(type_key, None)
+                elif val == "ignore":
+                    raw_pa[type_key] = "ignore"
                 else:
                     v = alert_monitor.coerce_int(val)
                     if v is not None and 1 <= v <= 5:
@@ -1121,6 +1123,34 @@ def clear_notification_log():
         _write_json_atomic(ALERTING_LOG_PATH, [])
         _audit("notification_log_clear")
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/alerting/notification-log/entry", methods=["DELETE"])
+@require_auth
+@require_csrf
+@limiter.limit("60 per minute")
+def delete_notification_log_entry():
+    """Delete a single entry from the notification log by timestamp."""
+    guard = read_only_guard()
+    if guard:
+        return guard
+    data = request.get_json(silent=True) or {}
+    timestamp = data.get("timestamp")
+    if not timestamp or not isinstance(timestamp, str) or len(timestamp) > 64:
+        return jsonify({"ok": False, "error": "timestamp required"}), 400
+    try:
+        entries = []
+        if ALERTING_LOG_PATH.exists():
+            with open(ALERTING_LOG_PATH) as f:
+                entries = json.load(f)
+        new_entries = [e for e in entries if e.get("timestamp") != timestamp]
+        if len(new_entries) == len(entries):
+            return jsonify({"ok": False, "error": "Entry not found"}), 404
+        _write_json_atomic(ALERTING_LOG_PATH, new_entries)
+        _audit("notification_log_delete_entry")
+        return jsonify({"ok": True, "remaining": len(new_entries)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

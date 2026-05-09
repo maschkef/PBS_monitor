@@ -960,16 +960,19 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
 
 # ─── Priority resolution ─────────────────────────────────────────────────────
 
-def _resolve_alert_priority(alert, prio_cfg: dict) -> int:
-    """Return the effective ntfy priority for an alert.
+def _resolve_alert_priority(alert, prio_cfg: dict):
+    """Return the effective ntfy priority for an alert, or None to suppress it.
 
     Checks per-alert overrides first, then falls back to the two-tier
     warning/critical mapping, and finally the alert's own base priority.
+    Returns None when the per-alert override is set to "ignore".
     """
     per_alert = prio_cfg.get("per_alert") or {}
     type_key = ALERT_TITLE_TO_TYPE_KEY.get(alert.title)
     if type_key:
         override = per_alert.get(type_key)
+        if override == "ignore":
+            return None
         if override is not None:
             return max(1, min(5, int(override)))
     warn_prio = max(1, min(5, int(prio_cfg.get("warning") or 4)))
@@ -1103,7 +1106,11 @@ def run_check(config, state):
     sent = 0
     skipped = 0
     for alert in all_alerts:
-        alert.priority = _resolve_alert_priority(alert, prio_cfg)
+        resolved = _resolve_alert_priority(alert, prio_cfg)
+        if resolved is None:
+            skipped += 1
+            continue
+        alert.priority = resolved
         if quiet and alert.priority < config["quiet_hours"].get("min_priority", 4):
             skipped += 1
             continue

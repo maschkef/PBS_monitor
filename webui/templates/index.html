@@ -1482,6 +1482,7 @@
           <button class="tab-btn" onclick="switchTab('tab-quiet',this)">Quiet Hours</button>
           <button class="tab-btn" onclick="switchTab('tab-learning',this)">Schedule Learning</button>
           <button class="tab-btn" onclick="switchTab('tab-cron',this)">Cron Setup</button>
+          <button class="tab-btn" onclick="switchTab('tab-about',this);renderAboutTab()">About</button>
         </div>
         <div class="modal-scroll-body">
 
@@ -1558,6 +1559,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1569,6 +1571,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1580,6 +1583,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1593,6 +1597,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1604,6 +1609,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1615,6 +1621,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1628,6 +1635,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1639,6 +1647,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1652,6 +1661,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1663,6 +1673,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1674,6 +1685,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1685,6 +1697,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1698,6 +1711,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1709,6 +1723,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1720,6 +1735,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1733,6 +1749,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1744,6 +1761,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1755,6 +1773,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1766,6 +1785,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1777,6 +1797,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -1788,6 +1809,7 @@
                   <option value="3">3 &ndash; default</option>
                   <option value="4">4 &ndash; high</option>
                   <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
                 </select>
               </div>
 
@@ -1950,6 +1972,28 @@
           </div>
         </div>
 
+        <!-- About -->
+        <div id="tab-about" class="tab-panel">
+          <div style="display:flex;flex-direction:column;gap:1.25rem;padding:0.25rem 0">
+            <div>
+              <p class="form-section-title" style="margin-top:0;margin-bottom:0.5rem">Version</p>
+              <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+                <span id="about-version" style="font-size:1.05rem;font-weight:600;font-family:monospace">—</span>
+                <span id="about-env-badge" style="font-size:0.78rem;padding:0.15rem 0.5rem;border-radius:3px;background:var(--surface2);color:var(--text-dim)"></span>
+              </div>
+            </div>
+            <div>
+              <p class="form-section-title" style="margin-top:0;margin-bottom:0.5rem">Updates</p>
+              <div id="about-update-status" style="font-size:0.84rem;color:var(--text-dim);min-height:1.2em"></div>
+              <button class="btn" style="margin-top:0.6rem;font-size:0.82rem" onclick="checkForUpdatesManual()">⟳ Check for updates</button>
+            </div>
+            <div style="font-size:0.82rem;color:var(--text-dim);border-top:1px solid var(--border);padding-top:0.75rem">
+              <a href="https://github.com/maschkef/PBS_monitor" target="_blank" rel="noopener" style="color:var(--cyan)">GitHub: maschkef/PBS_monitor</a>
+              &nbsp;·&nbsp; MIT License
+            </div>
+          </div>
+        </div>
+
         <div id="settingsMsg" style="display:none;margin-top:0.75rem;font-size:0.83rem;"></div>
         </div><!-- /.modal-scroll-body -->
         <div class="modal-footer" id="settingsFooter">
@@ -2012,6 +2056,7 @@
                 <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-dim);font-weight:500">Title</th>
                 <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-dim);font-weight:500">Message</th>
                 <th style="text-align:left;padding:0.35rem 0.5rem;white-space:nowrap;color:var(--text-dim);font-weight:500">Datastore</th>
+                <th style="padding:0.35rem 0.5rem"></th>
               </tr>
             </thead>
             <tbody id="logModalTable"></tbody>

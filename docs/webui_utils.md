@@ -48,6 +48,6 @@ Takes a live configuration dictionary and replaces `ntfy_token` with `_TOKEN_SEN
 
 ### Payload Validators
 These functions validate incoming JSON requests against expected schemas and bounds.
-- **`_validate_config_payload(payload, coerce_int_fn)`**: Exhaustively checks the `config.json` payload. Validates string lengths for ntfy and heartbeat fields, bounds checks integers (like `daemon_interval_seconds >= 60`), validates nested structures (`thresholds`, `quiet_hours`, `schedule_learning`, `notification_priorities`), and verifies regex for time values.
+- **`_validate_config_payload(payload, coerce_int_fn)`**: Exhaustively checks the `config.json` payload. Validates string lengths for ntfy and heartbeat fields, bounds checks integers (like `daemon_interval_seconds >= 60`), validates nested structures (`thresholds`, `quiet_hours`, `schedule_learning`, `notification_priorities`), accepts per-alert override values as `1`-`5`, `null`, or `"ignore"`, and verifies regex for time values.
 - **`_validate_group_rule_payload(payload)`**: Validates group rule payload constraints (datastore_id, namespace, timezone lengths) against `_RULE_STR_MAX`.
 - **`_validate_ignore_group_payload(payload)`**: Validates payload parameters when a user clicks "Ignore" or "Unignore" on a backup group in the UI.
