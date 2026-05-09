@@ -1905,15 +1905,15 @@
           <div class="form-group">
             <label>Time tolerance <span class="tooltip-icon">i<span class="tooltip-text">Allowed deviation when matching a snapshot to a learned time slot. A backup arriving within ±tolerance is still counted as on-schedule. Default: 30 min.</span></span></label>
             <div class="input-group">
-              <input type="number" id="cfg-sl-tolerance" min="1" step="1">
+              <input type="number" id="cfg-sl-tolerance" min="15" step="1">
               <span class="input-suffix">min</span>
             </div>
           </div>
           <div class="form-group">
             <label>Due grace <span class="tooltip-icon">i<span class="tooltip-text">How long a backup window may be overdue before a missed-backup alert fires. A short grace period avoids false alerts for backups that run slightly late. Default: 30 min.</span></span></label>
             <div class="input-group">
-              <input type="number" id="cfg-sl-grace" min="0" step="1">
-              <span class="input-suffix">days</span>
+              <input type="number" id="cfg-sl-grace" min="15" step="1">
+              <span class="input-suffix">min</span>
             </div>
           </div>
           <div class="form-group">
