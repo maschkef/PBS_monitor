@@ -128,9 +128,9 @@
             loadLight();
         }
 
-        function gaugeColor(pct) {
-            if (pct >= 90) return 'red';
-            if (pct >= 80) return 'yellow';
+        function gaugeColor(pct, warnPct, critPct) {
+            if (pct >= (critPct ?? 90)) return 'red';
+            if (pct >= (warnPct ?? 80)) return 'yellow';
             return 'green';
         }
 
@@ -874,7 +874,7 @@
         function renderDatastore(ds) {
             const m = ds.metrics;
             const pct = m.used_percent;
-            const color = gaugeColor(pct);
+            const color = gaugeColor(pct, m.storage_warn_percent, m.storage_crit_percent);
             const browserLabel = openBackupBrowsers.has(ds.id) ? 'Hide Backups' : 'Browse Backups';
             const alertingLabel = openAlertingPanels.has(ds.id) ? 'Hide Alerting' : 'Show Alerting';
             const alerting = ds.alerting || { alerts: [], schedule_learning: {} };

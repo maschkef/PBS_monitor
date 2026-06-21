@@ -387,10 +387,12 @@ def get_datastores_metrics():
         health = "healthy"
         issues = []
         used_pct = metrics.get("used_percent", 0)
-        if used_pct >= 90:
+        warn_pct = alerting_config["thresholds"]["storage_warn_percent"]
+        crit_pct = alerting_config["thresholds"]["storage_crit_percent"]
+        if used_pct >= crit_pct:
             health = "critical"
             issues.append(f"Storage at {used_pct}%")
-        elif used_pct >= 80:
+        elif used_pct >= warn_pct:
             health = "warning"
             issues.append(f"Storage at {used_pct}%")
 
@@ -432,6 +434,8 @@ def get_datastores_metrics():
                 "used_bytes": metrics.get("used_bytes", 0),
                 "available_bytes": metrics.get("available_bytes", 0),
                 "used_percent": used_pct,
+                "storage_warn_percent": warn_pct,
+                "storage_crit_percent": crit_pct,
                 "backup_count": metrics.get("backup_count", 0),
                 "used_human": format_bytes(metrics.get("used_bytes")),
                 "available_human": format_bytes(metrics.get("available_bytes")),
@@ -515,10 +519,12 @@ def get_datastores():
         health = "healthy"
         issues = []
         used_pct = metrics.get("used_percent", 0)
-        if used_pct >= 90:
+        warn_pct = alerting_config["thresholds"]["storage_warn_percent"]
+        crit_pct = alerting_config["thresholds"]["storage_crit_percent"]
+        if used_pct >= crit_pct:
             health = "critical"
             issues.append(f"Storage at {used_pct}%")
-        elif used_pct >= 80:
+        elif used_pct >= warn_pct:
             health = "warning"
             issues.append(f"Storage at {used_pct}%")
 
@@ -562,6 +568,8 @@ def get_datastores():
                 "used_bytes": metrics.get("used_bytes", 0),
                 "available_bytes": metrics.get("available_bytes", 0),
                 "used_percent": used_pct,
+                "storage_warn_percent": warn_pct,
+                "storage_crit_percent": crit_pct,
                 "backup_count": metrics.get("backup_count", 0),
                 "used_human": format_bytes(metrics.get("used_bytes")),
                 "available_human": format_bytes(metrics.get("available_bytes")),
