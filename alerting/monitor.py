@@ -22,9 +22,11 @@ import json
 import shutil
 import os
 import signal
+import socket
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -986,6 +988,23 @@ def _resolve_alert_priority(alert, prio_cfg: dict):
 
 # ─── Main check loop ─────────────────────────────────────────────────────────
 
+def _diagnose_network(api_base: str) -> str | None:
+    """Return a human-readable network issue string, or None if the network looks fine."""
+    parsed = urlparse(api_base)
+    host = parsed.hostname or api_base
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        socket.getaddrinfo(host, port)
+    except socket.gaierror as e:
+        return f"DNS resolution failed for '{host}': {e}"
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            pass
+    except OSError as e:
+        return f"TCP connection to {host}:{port} failed: {e}"
+    return None
+
+
 def run_check(config, state):
     """Run a single monitoring check cycle."""
     ntfy_delivery_failed = False
@@ -1023,6 +1042,9 @@ def run_check(config, state):
                 safe_send_ntfy(config, alert)
                 state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
     except requests.RequestException as e:
+        net_issue = _diagnose_network(config["api_base"])
+        if net_issue:
+            print(f"WARNING: {net_issue} — local network problem, not the API itself")
         print(f"API Health: UNREACHABLE ({e})")
         alert = Alert(
             "platform",
