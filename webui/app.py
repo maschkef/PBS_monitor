@@ -150,7 +150,7 @@ def add_security_headers(response):
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://api.github.com; "
         "font-src 'self'; "
         "object-src 'none'; "
         "base-uri 'self'; "
