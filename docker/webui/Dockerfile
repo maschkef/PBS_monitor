@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY webui/ ./webui/
 # alerting/ is required: app.py imports from alerting.monitor
 COPY alerting/ ./alerting/
+COPY VERSION .
 COPY .env.example .
 
 # Application code is owned by root and not writable by the pbs runtime user.
