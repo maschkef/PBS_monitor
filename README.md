@@ -22,6 +22,8 @@ Both use the [Monitoring API](https://api.remote-backups.com/reference#tag/monit
 ![Python](https://img.shields.io/badge/python-3.9+-green)
 ![Docker](https://img.shields.io/badge/docker-available-blue)
 
+![Dashboard overview](screenshots/02_overview.jpg)
+
 > [!TIP]  
 > **🐳 Docker deployment:** Docker support is available and has been tested on my system.
 > 
@@ -81,7 +83,19 @@ pip install -r webui/requirements.txt -r alerting/requirements.txt
 
 A graphical dashboard to check the status of all datastores at a glance.
 
-### Features
+### Start
+
+```bash
+# From the repository root, with the virtual environment activated
+python -m webui.app
+```
+
+Open the dashboard: [http://127.0.0.1:5111](http://127.0.0.1:5111)
+
+> **Production note:** By default the app is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/) (included in `requirements.txt`), which avoids the Flask development-server warning. Set `FLASK_DEBUG=1` in `.env` to switch back to the Flask dev server with auto-reload.
+
+<details>
+<summary><strong>Features</strong></summary>
 
 - **Storage gauge** with color coding (green < 80% < yellow < 90% < red)
 - **GC & verification status** as badges with timestamps (last run, next scheduled)
@@ -90,6 +104,15 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **Light / Dark Mode** — automatically adapts to your system theme, with a manual toggle (🌓) available in the header
 - **Immutable backup & replication status**
 - **Backup browser** — explore PBS namespaces, backup groups, individual snapshots, and other protocols (rsync, sftp, zfs-recv) directly in the UI; each snapshot shows its verification status (verified / verify failed / unverified)
+
+  <details>
+  <summary>Show screenshots</summary>
+
+  ![Backup browser](screenshots/05_backups-browser.jpg)
+  ![Backup browser details](screenshots/06_backups-browser-details.jpg)
+
+  </details>
+
 - **Alerting configuration** — when the alerting component is active, the Web UI provides a complete interface to configure all alerting settings: schedules, thresholds, ignored groups, ntfy settings, quiet hours, notification priorities, and more
 - **Editable group schedules** — learned schedules can be reviewed, edited, and locked from the Web UI; interval schedules support an optional anchor start time (e.g. `06:00` → backups expected at 06:00, 08:00, 10:00 …)
 - **Next backup indicator** — each backup group in the alerting panel shows the calculated next expected backup time based on the active schedule
@@ -103,18 +126,10 @@ A graphical dashboard to check the status of all datastores at a glance.
 - **Auto-Refresh** toggle with configurable intervals from 5 to 30 minutes, defaulting to 10 minutes
 - **Health assessment** per datastore (healthy / warning / critical)
 
-### Start
+</details>
 
-```bash
-# From the repository root, with the virtual environment activated
-python -m webui.app
-```
-
-Open the dashboard: [http://127.0.0.1:5111](http://127.0.0.1:5111)
-
-> **Production note:** By default the app is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/) (included in `requirements.txt`), which avoids the Flask development-server warning. Set `FLASK_DEBUG=1` in `.env` to switch back to the Flask dev server with auto-reload.
-
-### Authentication
+<details>
+<summary><strong>Authentication</strong></summary>
 
 The Web UI is open by default. To protect it with a password, set `WEBUI_PASSWORD` in `.env`:
 
@@ -127,7 +142,12 @@ WEBUI_SECRET_KEY=
 
 When `WEBUI_PASSWORD` is set, the dashboard redirects unauthenticated visitors to a login page. Leave it empty if authentication is handled at the network edge (e.g. Traefik + OAuth2 proxy).
 
-### Web UI Environment Variables
+![Login page](screenshots/01_login.jpg)
+
+</details>
+
+<details>
+<summary><strong>Environment Variables</strong></summary>
 
 The following variables can be set in `.env`:
 
@@ -147,7 +167,10 @@ The following variables can be set in `.env`:
 > [!TIP]
 > **Reverse proxy setup:** Set `WEBUI_PROXY_COUNT` to the number of proxy hops you control. When set, Flask first checks `X-Real-IP` (which Traefik sets directly to the client IP) and falls back to `X-Forwarded-For`. This ensures rate-limiting and login audit logs always show the real client IP. Also enable `WEBUI_SECURE_COOKIES=1` when TLS is terminated by the proxy (e.g. Traefik).
 
-### Dashboard Sections
+</details>
+
+<details>
+<summary><strong>Dashboard Sections</strong></summary>
 
 Each datastore is displayed as a card with four sections:
 
@@ -158,6 +181,8 @@ Each datastore is displayed as a card with four sections:
 | **Retention** | Prune schedule and keep values overview |
 | **Features** | Autoscaling, immutable backups, replication |
 
+</details>
+
 ---
 
 ## Tool 2: Alerting
@@ -167,7 +192,27 @@ A monitoring script that periodically checks datastore health and sends push not
 This script is intentionally independent of the Web UI so it can run on its own
 on a server via cron.
 
-### Features
+![Alerting overview](screenshots/03_alerting.jpg)
+
+### Setup
+
+If you start the dashboard or the alerting script without a configuration file, a default configuration will be created automatically, which you can then edit in the Web UI or directly in the file.
+
+### Usage
+
+```bash
+# Single check
+python -m alerting.monitor
+
+# Daemon mode (uses daemon_interval_seconds from config)
+python -m alerting.monitor --daemon
+
+# Daemon mode with an explicit override (every 30 minutes)
+python -m alerting.monitor --daemon 1800
+```
+
+<details>
+<summary><strong>Features</strong></summary>
 
 - **Storage monitoring** — warning at 80%, critical at 90%
 - **GC monitoring** — alert on failure or when overdue (> 36h)
@@ -189,11 +234,12 @@ on a server via cron.
 - **Persistent state** — versioned per-group snapshot history retained across runs
 - **Notification history log** — every dispatched alert (including test notifications sent from the Web UI) is appended to `notification_log.json`; viewable and clearable from the Web UI 📋 Log panel
 
-### Setup
+![Alerting details](screenshots/04_alerting-details.jpg)
 
-If you start the dashboard or the alerting script without a configuration file, a default configuration will be created automatically, which you can then edit in the Web UI or directly in the file.
+</details>
 
-### Configuration
+<details>
+<summary><strong>Configuration (Web UI or manual)</strong></summary>
 
 **Option 1: Via Web UI (recommended when using both tools)**
 
@@ -206,40 +252,44 @@ If you're running the Web UI tool (see above), you can configure all alerting se
    - **ntfy Topic**: Enter your topic name (e.g., "my-pbs-alerts") to enable notifications
    - **ntfy URL**: Usually `https://ntfy.sh` (default)
    - **ntfy Token**: Optional, for private ntfy instances
+
 5. Set alert priorities under **Notifications → Alert Priorities**: the **Warning** and **Critical** tier selectors set the default priority for each severity level. Expand **Per-Alert Priority Overrides** to set an individual priority for specific alert types (e.g. make "All Backups Gone" always urgent, silence "GC Never Ran", or set a type to `ignore` to suppress it completely). The same 1–5 scale applies to **Quiet Hours → Minimum priority to send**.
-6. Adjust other settings as needed (thresholds, quiet hours, daemon interval, etc.)
+
+   ![Notifications & Alert Priorities](screenshots/07_settings-notifications.jpg)
+
+6. Adjust other settings as needed (thresholds, quiet hours, schedule learning, daemon interval, etc.)
+
+   ![Threshold settings](screenshots/08_settings-thresholds.jpg)
+   ![Quiet hours](screenshots/09_settings-quiet-hours.jpg)
+   ![Schedule learning](screenshots/10_settings-schedule-learning.jpg)
+
 7. Save settings
 
 **Option 2: Manual configuration file editing**
 
-Alternatively, edit `alerting/config.json` directly. See the [Configuration File Reference](#configuration-file-reference) section below for all available parameters:
+Alternatively, edit `alerting/config.json` directly. See the **Configuration File Reference** dropdown below for all available parameters:
 
 ```bash
 # Edit alerting/config.json and set at minimum ntfy_topic if you want push notifications
 # Set the Monitoring API token separately via API_KEY in the environment or .env
 ```
 
-### Usage
+</details>
 
-```bash
-# Single check
-python -m alerting.monitor
+<details>
+<summary><strong>Deployment (Cron / Systemd)</strong></summary>
 
-# Daemon mode (uses daemon_interval_seconds from config)
-python -m alerting.monitor --daemon
-
-# Daemon mode with an explicit override (every 30 minutes)
-python -m alerting.monitor --daemon 1800
-```
-
-### Cron Job (recommended)
+**Cron Job (recommended)**
 
 ```bash
 # Check every 30 minutes
 */30 * * * * cd /path/to/PBS_monitor && /path/to/PBS_monitor/.venv/bin/python -m alerting.monitor >> /var/log/pbs-monitor.log 2>&1
 ```
 
-### Systemd Service (Alternative for background mode)
+![Cron settings (no Docker)](screenshots/11_settings-cron-no-docker.jpg)
+![Cron settings (Docker)](screenshots/12_settings-cron-docker.jpg)
+
+**Systemd Service (Alternative for background mode)**
 
 For continuous operation on Linux systems without Docker, a `systemd` service running in daemon mode can be used instead of Cron. Create a file at `/etc/systemd/system/pbs-monitor-alerting.service`:
 
@@ -262,7 +312,10 @@ WantedBy=multi-user.target
 
 Then activate it using `sudo systemctl daemon-reload && sudo systemctl enable --now pbs-monitor-alerting.service`.
 
-### Configuration File Reference
+</details>
+
+<details>
+<summary><strong>Configuration File Reference</strong></summary>
 
 When using manual configuration (Option 2 above), the file `alerting/config.json` will be automatically copied from `alerting/config.json.example` on the first run if you don't create it manually:
 
@@ -368,7 +421,10 @@ The following can also be set as environment variables (in `.env` or the shell):
 | `ALERTING_DATA_DIR` | Override the directory where `config.json`, `state.json`, and `group_rules.json` are stored. Defaults to the `alerting/` script directory. Can be set in `.env` or the shell. Set automatically in Docker containers (`/app/data`). |
 | `NTFY_TOKEN` | Override the `ntfy_token` stored in `config.json`. Prefer this over storing the token on disk (e.g. `NTFY_TOKEN=tk_yoursecrettoken`). |
 
-### Alert Priorities (ntfy)
+</details>
+
+<details>
+<summary><strong>Alert Priorities (ntfy)</strong></summary>
 
 Each alert type has a **base priority** that determines which severity tier it falls into. The tier priority is then applied according to `notification_priorities.warning` / `.critical` (defaults: 4 = high, 5 = urgent). Individual alert types can be overridden independently via `notification_priorities.per_alert` or through **Per-Alert Priority Overrides** in the Web UI settings.
 
@@ -382,9 +438,14 @@ Each alert type has a **base priority** that determines which severity tier it f
 
 **Valid per-alert keys:** `gc_failed`, `gc_never_ran`, `gc_overdue`, `verification_failed`, `verification_never_ran`, `verification_overdue`, `storage_warning`, `storage_critical`, `all_backups_gone`, `snapshots_unexpectedly_removed`, `missed_backup_window`, `missed_backup_interval`, `host_offline`, `api_unreachable`, `api_unhealthy`, `monitoring_api_error`, `heartbeat_failed`, `ntfy_delivery_failed`, `immutable_disable_pending`, `replication_never_synced`, `replication_stale`
 
+</details>
+
 ---
 
-## API Limitations
+## Advanced / Reference
+
+<details>
+<summary><strong>API Limitations</strong></summary>
 
 The Monitoring API is read-only. It now exposes live PBS namespaces, backup groups, and snapshots, but the following is still **not** available through this API:
 
@@ -406,7 +467,10 @@ The alerting script now persists backup-browser inventory per namespace and grou
 - ✅ Off-schedule same-day snapshots as context without treating them as proof that the learned window ran
 - ❌ More complex cadences such as monthly, biweekly, or truly irregular schedules
 
-### Endpoints Used
+</details>
+
+<details>
+<summary><strong>Endpoints Used</strong></summary>
 
 | Endpoint | Auth | Description |
 |----------|------|-------------|
@@ -422,9 +486,10 @@ The alerting script now persists backup-browser inventory per namespace and grou
 | `GET /public/backups-30-days` | — | Platform backup count (30 days) |
 | `GET /public/traffic-30-days` | — | Platform traffic (30 days) |
 
----
+</details>
 
-## Project Structure
+<details>
+<summary><strong>Project Structure</strong></summary>
 
 ```
 PBS_monitor/
@@ -453,6 +518,7 @@ PBS_monitor/
 │   ├── webui_alerting_ui.md
 │   ├── webui_app.md
 │   └── webui_utils.md
+├── screenshots/                    # UI screenshots used in this README
 ├── tests/                          # Automated test suite
 │   ├── conftest.py
 │   ├── test_auth.py
@@ -486,6 +552,8 @@ PBS_monitor/
     ├── state.json                  # Runtime state (gitignored, auto-generated)
     └── notification_log.json       # Notification history (gitignored, auto-generated)
 ```
+
+</details>
 
 ---
 
