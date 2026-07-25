@@ -17,8 +17,8 @@ Integration tests via ``GET /api/alerting/config``:
   - Submitting a new real value DOES update the token.
 """
 
-from tests.conftest import TEST_PASSWORD, do_login, write_config, read_config
 import webui.app as webapp
+from tests.conftest import TEST_PASSWORD, do_login, read_config, write_config
 
 SENTINEL = webapp._TOKEN_SENTINEL
 

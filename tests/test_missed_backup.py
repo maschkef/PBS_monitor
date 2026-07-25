@@ -10,7 +10,6 @@ from alerting.schedule import (
     evaluate_missed_backup_alerts,
 )
 
-
 TZ = ZoneInfo("Europe/Berlin")
 
 

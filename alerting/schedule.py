@@ -19,7 +19,6 @@ from alerting.normalization import (
     weekday_name,
 )
 
-
 # Maximum interval length (in minutes) that the interval detector will accept.
 # Schedules longer than this are treated as weekly-pattern backups instead.
 INTERVAL_MODEL_MAX_MINUTES = 360

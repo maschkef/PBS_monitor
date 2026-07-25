@@ -10,8 +10,8 @@ Scenarios covered
 - Empty payload returns 200 without touching the file.
 """
 
-from tests.conftest import TEST_PASSWORD, do_login, write_config, read_config
 import webui.app as webapp
+from tests.conftest import TEST_PASSWORD, do_login, read_config, write_config
 
 
 class TestConfigSave:

@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import webui.app as webapp  # noqa: E402  (must come after sys.path setup)
+import webui.app as webapp
 
 # Password used for all auth-enabled fixtures.
 TEST_PASSWORD = "Test_P@ssword_42!"

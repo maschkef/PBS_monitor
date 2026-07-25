@@ -32,55 +32,55 @@ from dotenv import load_dotenv
 
 from alerting.normalization import (
     coerce_int,
-    unix_to_iso,
+    default_datastore_state,
+    default_group_rules,
+    default_state,
+    is_group_ignored,
     make_rule_key,
-    normalize_weekly_slots,
+    merge_snapshot_histories,
+    migrate_backup_group_state,
+    migrate_group_rules,
+    migrate_inventory_summary,
+    migrate_state,
     normalize_daily_slots,
     normalize_group_rule,
     normalize_ignored_group,  # noqa: F401 — re-export for callers using alert_monitor.*
     normalize_ignored_groups,
-    purge_expired_ignored_groups,
-    is_group_ignored,
     normalize_snapshot_entries,
-    merge_snapshot_histories,
-    default_datastore_state,
-    default_state,
-    default_group_rules,
-    migrate_inventory_summary,
-    migrate_backup_group_state,
-    migrate_state,
-    migrate_group_rules,
+    normalize_weekly_slots,
+    purge_expired_ignored_groups,
+    unix_to_iso,
+)
+from alerting.notification import (
+    NtfyDeliveryError,
+    _ntfy_header_safe,  # noqa: F401 — re-export
+    append_notification_log,
+    format_bytes,
+    is_quiet_hours,
+    send_ntfy,
+    should_alert,
 )
 from alerting.schedule import (
     Alert,
-    get_schedule_timezone,
-    format_schedule_time,   # noqa: F401 — re-export
-    weekday_name,           # noqa: F401 — re-export
-    format_interval_minutes,  # noqa: F401 — re-export
+    build_missed_interval_alert,  # noqa: F401 — re-export
+    build_missed_slot_alert,  # noqa: F401 — re-export
     build_schedule_model_from_rule,
-    schedule_model_has_definition,
-    refresh_schedule_summary,
-    hours_since,
-    snapshot_to_local_occurrence,   # noqa: F401 — re-export
-    cluster_day_occurrences,        # noqa: F401 — re-export
-    find_recent_due,                # noqa: F401 — re-export
-    compute_anchor_aligned_due,     # noqa: F401 — re-export
-    compute_next_expected_backup,   # noqa: F401 — re-export
-    detect_interval_schedule,       # noqa: F401 — re-export
-    detect_daily_schedule,          # noqa: F401 — re-export
-    evaluate_schedule_model,
-    build_missed_slot_alert,        # noqa: F401 — re-export
-    build_missed_interval_alert,    # noqa: F401 — re-export
+    cluster_day_occurrences,  # noqa: F401 — re-export
+    compute_anchor_aligned_due,  # noqa: F401 — re-export
+    compute_next_expected_backup,  # noqa: F401 — re-export
+    detect_daily_schedule,  # noqa: F401 — re-export
+    detect_interval_schedule,  # noqa: F401 — re-export
     evaluate_missed_backup_alerts,
-)
-from alerting.notification import (
-    format_bytes,
-    _ntfy_header_safe,              # noqa: F401 — re-export
-    append_notification_log,
-    send_ntfy,
-    NtfyDeliveryError,
-    is_quiet_hours,
-    should_alert,
+    evaluate_schedule_model,
+    find_recent_due,  # noqa: F401 — re-export
+    format_interval_minutes,  # noqa: F401 — re-export
+    format_schedule_time,  # noqa: F401 — re-export
+    get_schedule_timezone,
+    hours_since,
+    refresh_schedule_summary,
+    schedule_model_has_definition,
+    snapshot_to_local_occurrence,  # noqa: F401 — re-export
+    weekday_name,  # noqa: F401 — re-export
 )
 
 # ─── Configuration ───────────────────────────────────────────────────────────

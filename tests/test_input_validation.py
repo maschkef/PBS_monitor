@@ -3,11 +3,12 @@
 All write routes must return 400 with a descriptive ``error`` key for any
 malformed or out-of-range input before touching any on-disk state.
 """
+from typing import ClassVar
+
 import pytest
 
-from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp
-
+from tests.conftest import TEST_PASSWORD, do_login
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -146,7 +147,7 @@ class TestConfigTimeFormat:
 # ── Group-rule: string length limits ─────────────────────────────────────────
 
 class TestGroupRuleStringLengths:
-    _VALID_BASE = {
+    _VALID_BASE: ClassVar[dict[str, str]] = {
         "datastore_id": "ds1",
         "backup_type": "vm",
         "backup_id": "100",

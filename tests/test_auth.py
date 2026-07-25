@@ -17,9 +17,8 @@ Auth enabled (WEBUI_PASSWORD set):
   - POST /logout clears session and redirects.
 """
 
-from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp
-
+from tests.conftest import TEST_PASSWORD, do_login
 
 # ── Auth disabled ─────────────────────────────────────────────────────────────
 

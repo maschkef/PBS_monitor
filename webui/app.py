@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """PBS Monitor Web UI — Ad-hoc status dashboard for remote-backups.com datastores."""
 
 import contextlib
@@ -13,20 +12,20 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
-from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from alerting import monitor as alert_monitor  # noqa: E402
-from webui import normalizers as _normalizers  # noqa: E402
-from webui import validators as _validators  # noqa: E402
-from webui import alerting_ui as _alerting_ui  # noqa: E402
+from alerting import monitor as alert_monitor
+from webui import alerting_ui as _alerting_ui
+from webui import normalizers as _normalizers
+from webui import validators as _validators
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -1047,7 +1046,7 @@ def alerting_test_live():
         _audit("test_live")
         out = output.getvalue()
         return jsonify({"ok": True, "output": out[-8192:] if len(out) > 8192 else out})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — API boundary: coerce any error into JSON 500
         out = output.getvalue()
         return jsonify({"ok": False, "error": str(e), "output": out[-8192:] if len(out) > 8192 else out}), 500
 
@@ -1098,7 +1097,7 @@ def alerting_test_notify():
     try:
         resp = requests.post(
             url,
-            data=f"Test {severity_label} notification from PBS Monitor (ntfy priority {priority}).".encode("utf-8"),
+            data=f"Test {severity_label} notification from PBS Monitor (ntfy priority {priority}).".encode(),
             headers=headers,
             timeout=10,
         )
@@ -1130,7 +1129,7 @@ def get_notification_log():
         else:
             entries = []
         return jsonify({"entries": entries, "count": len(entries)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — API boundary: coerce any error into JSON 500
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -1147,7 +1146,7 @@ def clear_notification_log():
         _write_json_atomic(ALERTING_LOG_PATH, [])
         _audit("notification_log_clear")
         return jsonify({"ok": True})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — API boundary: coerce any error into JSON 500
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -1175,7 +1174,7 @@ def delete_notification_log_entry():
         _write_json_atomic(ALERTING_LOG_PATH, new_entries)
         _audit("notification_log_delete_entry")
         return jsonify({"ok": True, "remaining": len(new_entries)})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — API boundary: coerce any error into JSON 500
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -1241,9 +1240,7 @@ def get_datastore_backups(datastore_id):
         if protocol_name == "zfs_recv" and should_hide_zfs_recv(payload):
             continue
 
-        if isinstance(payload, list) and payload:
-            protocols[protocol_name] = payload
-        elif isinstance(payload, dict) and payload:
+        if isinstance(payload, list) and payload or isinstance(payload, dict) and payload:
             protocols[protocol_name] = payload
 
     return jsonify({

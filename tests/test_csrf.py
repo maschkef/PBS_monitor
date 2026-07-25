@@ -18,9 +18,8 @@ Routes tested: ``POST /api/alerting/config`` (representative write route) and
 ``DELETE /api/alerting/notification-log``.
 """
 
-from tests.conftest import TEST_PASSWORD, do_login
 import webui.app as webapp
-
+from tests.conftest import TEST_PASSWORD, do_login
 
 # ── Write routes list (path, method) ─────────────────────────────────────────
 # We test one representative POST and one DELETE for CSRF enforcement.

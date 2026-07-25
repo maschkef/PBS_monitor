@@ -14,7 +14,6 @@ Headers verified
 import webui.app as webapp
 from tests.conftest import TEST_PASSWORD, do_login
 
-
 REQUIRED_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",

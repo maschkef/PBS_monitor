@@ -13,7 +13,6 @@ from urllib.parse import quote
 
 import requests
 
-
 # ── Byte formatter (used in alert messages) ───────────────────────────────────
 
 def format_bytes(b):

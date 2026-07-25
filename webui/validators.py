@@ -7,7 +7,6 @@ on invalid input so callers can return a clean 400 response.
 import re
 from urllib.parse import urlparse
 
-
 # Sentinel returned to the browser instead of actual secret values.
 # The frontend must submit this exact string back for the server to recognise
 # that the user did not change the secret (i.e., preserve the stored value).
@@ -40,7 +39,7 @@ def _validate_ntfy_url(url: str, allow_private: bool = True) -> None:
     """Raise ValueError if url is not a valid http/https endpoint."""
     try:
         parsed = urlparse(url)
-    except Exception:
+    except ValueError:
         raise ValueError("Invalid ntfy URL.")
     if parsed.scheme not in ("http", "https"):
         raise ValueError("ntfy URL must use http or https.")
@@ -116,9 +115,8 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
             raise ValueError("quiet_hours must be an object.")
         qh = payload["quiet_hours"]
         for time_key in ("start", "end"):
-            if time_key in qh:
-                if not isinstance(qh[time_key], str) or not _TIME_RE.match(qh[time_key]):
-                    raise ValueError(f"quiet_hours.{time_key} must be in HH:MM format (00:00–23:59).")
+            if time_key in qh and (not isinstance(qh[time_key], str) or not _TIME_RE.match(qh[time_key])):
+                raise ValueError(f"quiet_hours.{time_key} must be in HH:MM format (00:00–23:59).")
         if "min_priority" in qh:
             v = coerce_int_fn(qh["min_priority"])
             if v is None or not (1 <= v <= 5):
@@ -128,9 +126,8 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
         if not isinstance(payload["schedule_learning"], dict):
             raise ValueError("schedule_learning must be an object.")
         sl = payload["schedule_learning"]
-        if "timezone" in sl:
-            if not isinstance(sl["timezone"], str) or len(sl["timezone"]) > 64:
-                raise ValueError("schedule_learning.timezone must be a string of at most 64 characters.")
+        if "timezone" in sl and (not isinstance(sl["timezone"], str) or len(sl["timezone"]) > 64):
+            raise ValueError("schedule_learning.timezone must be a string of at most 64 characters.")
         for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
                         "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
             if int_key in sl:
