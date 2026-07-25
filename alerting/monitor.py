@@ -165,6 +165,7 @@ DEFAULT_CONFIG = {
         "due_grace_minutes": 30,
         "stale_after_days": 8,
         "snapshot_retention_count": 24,
+        "downgrade_when_offschedule": True,
     },
     "alert_cooldown_minutes": 60,
     "daemon_interval_seconds": 1800,  # 30 minutes default for daemon mode
