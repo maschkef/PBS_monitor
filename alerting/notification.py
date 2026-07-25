@@ -59,7 +59,7 @@ def append_notification_log(log_path, entry):
             entries = entries[-_MAX_NOTIFICATION_LOG_ENTRIES:]
         with open(log_path, "w") as f:
             json.dump(entries, f, indent=2)
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, json.JSONDecodeError) as exc:
         print(f"  [WARN] Could not write notification log: {exc}", file=sys.stderr)
 
 
@@ -110,7 +110,7 @@ def is_quiet_hours(config):
     qh = config.get("quiet_hours", {})
     if not qh.get("enabled"):
         return False
-    now = datetime.now().strftime("%H:%M")
+    now = datetime.now(timezone.utc).astimezone().strftime("%H:%M")
     start = qh.get("start", "22:00")
     end = qh.get("end", "07:00")
     if start <= end:

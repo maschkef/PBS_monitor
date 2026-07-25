@@ -5,16 +5,18 @@ from alerting.normalization.
 """
 
 import statistics
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
+from itertools import pairwise
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from alerting.normalization import (
     coerce_int,
     format_schedule_time,
-    weekday_name,
     normalize_daily_slots,
-    normalize_weekly_slots,
     normalize_snapshot_entries,
+    normalize_weekly_slots,
+    weekday_name,
 )
 
 
@@ -56,13 +58,13 @@ def get_schedule_timezone(config):
     """Return the tzinfo used for schedule learning from config."""
     timezone_name = (config.get("schedule_learning") or {}).get("timezone", "local")
     if not timezone_name or timezone_name == "local":
-        return datetime.now().astimezone().tzinfo
+        return datetime.now(timezone.utc).astimezone().tzinfo
 
     try:
         return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
         print(f"[WARN] Unknown schedule timezone '{timezone_name}', using local timezone.")
-        return datetime.now().astimezone().tzinfo
+        return datetime.now(timezone.utc).astimezone().tzinfo
 
 
 def format_interval_minutes(interval_minutes):
@@ -159,9 +161,7 @@ def schedule_model_has_definition(schedule_model):
         return False
     if schedule_model.get("kind") == "interval" and schedule_model.get("interval_minutes"):
         return True
-    if schedule_model.get("kind") in {"daily", "weekly"} and schedule_model.get("slots"):
-        return True
-    return False
+    return bool(schedule_model.get("kind") in {"daily", "weekly"} and schedule_model.get("slots"))
 
 
 def refresh_schedule_summary(ds_state):
@@ -220,8 +220,8 @@ def cluster_day_occurrences(occurrences, tolerance_minutes):
         for cluster in clusters:
             if abs(occurrence["minute_of_day"] - cluster["minute_of_day"]) <= tolerance_minutes:
                 cluster["occurrences"].append(occurrence)
-                cluster["minute_of_day"] = int(
-                    round(statistics.median(item["minute_of_day"] for item in cluster["occurrences"]))
+                cluster["minute_of_day"] = round(
+                    statistics.median(item["minute_of_day"] for item in cluster["occurrences"])
                 )
                 placed = True
                 break
@@ -314,15 +314,15 @@ def detect_interval_schedule(occurrences, config, now_local, tzinfo):
 
     sorted_occurrences = sorted(occurrences, key=lambda item: item["local_dt"])
     gaps = []
-    for previous, current in zip(sorted_occurrences, sorted_occurrences[1:]):
-        gap_minutes = int(round((current["local_dt"] - previous["local_dt"]).total_seconds() / 60))
+    for previous, current in pairwise(sorted_occurrences):
+        gap_minutes = round((current["local_dt"] - previous["local_dt"]).total_seconds() / 60)
         if gap_minutes > 0:
             gaps.append(gap_minutes)
 
     if len(gaps) < max(4, min_occurrences * 2):
         return None
 
-    candidate_interval = int(round(statistics.median(gaps)))
+    candidate_interval = round(statistics.median(gaps))
     if candidate_interval > INTERVAL_MODEL_MAX_MINUTES:
         return None
 

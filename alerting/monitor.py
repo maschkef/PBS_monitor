@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 PBS Monitor — Alerting script for remote-backups.com datastores.
 Checks datastore health and sends alerts via ntfy on problems.
@@ -19,8 +18,8 @@ Cron example (every 5 minutes):
 import argparse
 import contextlib
 import json
-import shutil
 import os
+import shutil
 import signal
 import socket
 import time
@@ -214,7 +213,7 @@ def auto_migrate_config(config_path, example_path):
             os.replace(tmp, config_path)
             print("Auto-migrated config.json with new keys from example.")
             
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
         print(f"Warning: Failed to auto-migrate config.json: {e}")
 
 
@@ -833,12 +832,11 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         "active_slot_count": active_slot_count,
     }
 
-    return (
-        alerts,
+    summary_line = (
         f"{summary['group_count']} groups / {summary['snapshot_count']} snapshots / "
-        f"{active_slot_count} active slots",
-        rules_changed,
+        f"{active_slot_count} active slots"
     )
+    return (alerts, summary_line, rules_changed)
 
 
 def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, persist_group_rules=False):
