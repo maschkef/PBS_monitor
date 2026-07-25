@@ -221,7 +221,7 @@ python -m alerting.monitor --daemon 1800
 - **Total loss detection** — immediate alarm when both backup browser and aggregate metrics drop to zero
 - **Snapshot disappearance detection** — warns when the number of snapshots for a group drops below what the configured `keep_last` prune policy permits, indicating an unexpected deletion outside of normal pruning
 - **Learned backup windows** — derives conservative weekday/time slots per backup group from observed snapshots
-- **Missed backup alerts** — warns when a learned backup window is missed while off-schedule manual runs are treated as outliers
+- **Missed backup alerts** — warns when a learned backup window is missed while off-schedule manual runs are treated as outliers; optionally downgrades those alerts to normal priority and suppresses repeats until the next expected backup if an off-schedule snapshot already exists the same day
 - **Locked group rules** — manual schedules can override learning for specific backup groups; interval schedules accept an optional anchor time (HH:MM) so the expected cadence is aligned to a fixed start instead of the last observed backup
 - **Ignored groups** — specific backup groups can be completely excluded from monitoring via UI or configuration files; can be re-enabled from the Web UI at any time
 - **Replication lag alerts** — warns when configured replication falls noticeably behind
@@ -359,7 +359,7 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
     "per_alert": {}
   },
   
-  "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day.",
   "schedule_learning": {
     "enabled": true,
     "timezone": "local",
@@ -368,7 +368,8 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
     "stale_after_days": 8,
-    "snapshot_retention_count": 24
+    "snapshot_retention_count": 24,
+    "downgrade_when_offschedule": true
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
@@ -392,12 +393,12 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `ntfy_url` | ntfy server URL (default: `https://ntfy.sh`). Must be set together with `ntfy_topic` for push notifications to work |
 | `heartbeat_url` | Optional HTTP(S) GET ping URL called when **no alerts are detected** (success ping). If only this field is set and alerts exist, no ping is sent — the resulting timeout signals the problem to the monitoring tool. Also skipped when ntfy delivery fails (timeout still signals the problem). If the ping itself fails, an urgent alert is sent via ntfy. **Uptime Kuma (Push monitor):** use the URL shown in the monitor with `?status=up&msg=OK&ping=` |
 | `heartbeat_fail_url` | Optional HTTP(S) GET ping URL called when **alerts are detected** (fail ping). Also pinged when ntfy delivery fails — so an external monitor receives an active failure signal even when push delivery is broken. Can be combined with `heartbeat_url` for explicit success/fail signalling. **Uptime Kuma:** same URL and token as `heartbeat_url`, but with `?status=down&msg=PROBLEM&ping=` |
-| `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation |
+| `ignored_groups` | List of backup groups (datastore, namespace, type, id) to exclude from alert generation. Each entry can optionally include `expires_at` (ISO 8601) for temporary ignores |
 | `storage_warn_percent` | Storage warning threshold in percent |
 | `storage_crit_percent` | Storage critical threshold in percent |
 | `gc_max_age_hours` | GC considered overdue after X hours |
 | `verification_max_age_days` | Verification considered overdue after X days |
-| `notification_priorities.warning` | ntfy priority for warning-tier alerts (default: `4` = high). Applies to: GC failed/overdue/never ran, host offline, missed backup, storage warning, replication stale, immutable disable pending, snapshots unexpectedly removed |
+| `notification_priorities.warning` | ntfy priority for warning-tier alerts (default: `4` = high). Applies to: GC failed/overdue/never ran, host offline, missed backup, storage warning, replication stale, immutable disable pending, snapshots unexpectedly removed. If `schedule_learning.downgrade_when_offschedule` is enabled and an off-schedule snapshot exists the same day, missed-backup alerts are downgraded to priority `3` instead |
 | `notification_priorities.critical` | ntfy priority for critical-tier alerts (default: `5` = urgent). Applies to: storage critical, verification failed, all backups gone, API unreachable, heartbeat failed |
 | `notification_priorities.per_alert` | Optional object to override priority for individual alert types. Keys match the alert type (e.g. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Set a value (`1`-`5`) to override, `"ignore"` to suppress that alert type, or omit/`null` to fall back to the tier default. Configurable via **Per-Alert Priority Overrides** in the Web UI |
 | `quiet_hours.enabled` | Enable quiet hours (true/false) |
@@ -410,6 +411,7 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `schedule_learning.due_grace_minutes` | How long a learned backup window may be late before a missed-backup alert is emitted. Default: `30` |
 | `schedule_learning.stale_after_days` | Extra days beyond the normal weekly slot cadence before a learned slot is treated as stale |
 | `schedule_learning.snapshot_retention_count` | How many recent snapshots per backup group are stored in state (default: 24). Used for schedule learning and snapshot-loss detection — raise this for groups with many daily backups |
+| `schedule_learning.downgrade_when_offschedule` | When `true` (default), missed-backup alerts are downgraded from priority `4` to `3` and further alerts for that same missed occurrence are suppressed until the next expected backup if an off-schedule snapshot is already present on that day |
 | `alert_cooldown_minutes` | Minimum minutes between repeated alerts of the same type |
 | `daemon_interval_seconds` | How often the daemon checks for issues when running in daemon mode (`--daemon`, `--daemon 0`, or Docker container, seconds, default: 1800). A positive CLI value such as `--daemon 600` overrides this setting. Configurable via the Web UI Settings panel under **Daemon Interval (minutes)** — the UI converts automatically. |
 
@@ -433,6 +435,8 @@ Each alert type has a **base priority** that determines which severity tier it f
 | 5 → critical | default: 5 (urgent) | Storage ≥ crit%, verification failed, all backups gone, API unreachable, heartbeat failed |
 | 4 → warning | default: 4 (high) | GC failed, host offline, missed backup window/interval, replication stale/never synced, immutable disable pending, snapshots unexpectedly removed |
 | 3 (no tier mapping) | stays at 3 (default) | Storage ≥ warn%, GC overdue/never ran, verification overdue/never ran |
+
+When `schedule_learning.downgrade_when_offschedule` is enabled, missed backup window/interval alerts are emitted at priority `3` and temporarily suppressed until the next expected backup time if an off-schedule snapshot was already detected on the same day.
 
 > **Per-alert overrides** (e.g. `"gc_never_ran": 2`) take precedence over both the base priority and the tier defaults. Set a key to `"ignore"` to suppress that alert type entirely, or set it to `null` / omit it to fall back to the tier behaviour.
 

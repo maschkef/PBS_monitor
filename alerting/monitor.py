@@ -40,6 +40,7 @@ from alerting.normalization import (
     normalize_group_rule,
     normalize_ignored_group,  # noqa: F401 — re-export for callers using alert_monitor.*
     normalize_ignored_groups,
+    purge_expired_ignored_groups,
     is_group_ignored,
     normalize_snapshot_entries,
     merge_snapshot_histories,
@@ -528,6 +529,41 @@ def sync_group_rule_from_schedule(rule, datastore_id, group_state, schedule_mode
     rule["weekly_slots"] = []
 
 
+def purge_expired_ignored_groups_from_disk():
+    """Remove expired ignore entries from config.json and return the new list.
+
+    Reads raw config.json, filters entries whose expires_at is in the past,
+    and rewrites atomically if the list changed. Safe to call before/after
+    a webui-triggered ignore write because it operates on the raw file.
+    """
+    if not CONFIG_PATH.exists():
+        return []
+    try:
+        with open(CONFIG_PATH) as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    raw_groups = raw.get("ignored_groups") or []
+    normalized = normalize_ignored_groups(raw_groups)
+    filtered = purge_expired_ignored_groups(normalized)
+    if len(filtered) == len(normalized):
+        return normalized
+
+    raw["ignored_groups"] = filtered
+    tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(raw, f, indent=2)
+        os.replace(tmp, CONFIG_PATH)
+        print(f"Removed {len(normalized) - len(filtered)} expired ignore entries from config.json")
+    except OSError as exc:
+        print(f"[WARN] Failed to persist expired-ignore purge: {exc}")
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+    return filtered
+
+
 def purge_ignored_backup_groups(ds_state, config, datastore_id):
     """Remove ignored backup groups from persisted datastore state."""
     backup_groups = ds_state.get("backup_groups") or {}
@@ -1009,6 +1045,11 @@ def run_check(config, state):
     """Run a single monitoring check cycle."""
     ntfy_delivery_failed = False
 
+    # Drop any ignore entries whose expires_at has passed. Rewrites config.json
+    # atomically if changes were made; refreshes the in-memory config too so
+    # subsequent checks see the pruned list.
+    config["ignored_groups"] = purge_expired_ignored_groups_from_disk()
+
     def safe_send_ntfy(cfg, alrt):
         nonlocal ntfy_delivery_failed
         try:
@@ -1142,6 +1183,9 @@ def run_check(config, state):
         if safe_send_ntfy(config, alert):
             now_iso = datetime.now(timezone.utc).isoformat()
             state.setdefault("last_alerts", {})[alert.key] = now_iso
+            suppress_until = getattr(alert, "suppress_until", None)
+            if suppress_until:
+                state.setdefault("alert_suppress_until", {})[alert.key] = suppress_until
             append_notification_log(NOTIFICATION_LOG_PATH, {
                 "timestamp": now_iso,
                 "source": "alerting",

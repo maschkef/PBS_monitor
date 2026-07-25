@@ -1930,6 +1930,13 @@
               <span class="input-suffix">/ grp</span>
             </div>
           </div>
+          <div class="form-group">
+            <label>Downgrade when off-schedule <span class="tooltip-icon">i<span class="tooltip-text">When enabled, a missed-backup alert is sent at normal priority (instead of high) and further alerts are suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day. Disable to always send high-priority alerts. Default: Yes.</span></span></label>
+            <select id="cfg-sl-downgrade">
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
         </div>
 
         <!-- Cron Setup -->

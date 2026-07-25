@@ -30,7 +30,8 @@ class Alert:
 
     # Priority levels: 1=min, 2=low, 3=default, 4=high, 5=urgent
     def __init__(self, datastore_name, title, message, priority=3, tags=None,
-                 key=None, scope="datastore", group_rule_key=None):
+                 key=None, scope="datastore", group_rule_key=None,
+                 suppress_until=None):
         self.datastore_name = datastore_name
         self.title = title
         self.message = message
@@ -39,6 +40,7 @@ class Alert:
         self.key = key or f"{datastore_name}:{title}"
         self.scope = scope
         self.group_rule_key = group_rule_key
+        self.suppress_until = suppress_until
 
 
 # ── Timezone helpers ──────────────────────────────────────────────────────────
@@ -492,7 +494,8 @@ def evaluate_schedule_model(group_state, config, tzinfo):
 
 # ── Missed-backup alert builders ─────────────────────────────────────────────
 
-def build_missed_slot_alert(ds, group_state, slot, due_dt_local, same_day_occurrences):
+def build_missed_slot_alert(ds, group_state, slot, due_dt_local, same_day_occurrences,
+                            next_expected_at=None, downgrade_when_offschedule=True):
     """Create an Alert for a missed learned backup window slot."""
     datastore_name = ds.get("name", ds.get("id", "unknown"))
     group_label = group_state.get("display_name") or f"{group_state['backup_type']}/{group_state['backup_id']}"
@@ -502,18 +505,21 @@ def build_missed_slot_alert(ds, group_state, slot, due_dt_local, same_day_occurr
         f"(namespace '{namespace}') on {slot['weekday_name']} around {slot['time']} "
         f"{slot['timezone']}. Last matching backup: {slot['last_observed_at']}."
     )
+    downgraded = bool(downgrade_when_offschedule and same_day_occurrences)
     if same_day_occurrences:
         off_schedule = ", ".join(
             occurrence["local_dt"].strftime("%H:%M")
             for occurrence in same_day_occurrences
         )
         message += f" Off-schedule snapshots exist on the same day at: {off_schedule}."
+    if downgraded and next_expected_at:
+        message += f" Suppressing further alerts until next expected backup at {next_expected_at}."
 
     return Alert(
         datastore_name,
         "Missed Backup Window",
         message,
-        priority=4,
+        priority=3 if downgraded else 4,
         tags=["warning", "calendar", "package"],
         key=(
             f"{ds.get('id', 'unknown')}:missed_slot:"
@@ -522,10 +528,13 @@ def build_missed_slot_alert(ds, group_state, slot, due_dt_local, same_day_occurr
         ),
         scope="group",
         group_rule_key=group_state.get("group_rule_key"),
+        suppress_until=next_expected_at if downgraded else None,
     )
 
 
-def build_missed_interval_alert(ds, group_state, schedule_model, now_local, last_local):
+def build_missed_interval_alert(ds, group_state, schedule_model, now_local, last_local,
+                                late_coverage_occurrences=None, next_expected_at=None,
+                                downgrade_when_offschedule=True):
     """Create an Alert for a missed interval-based backup schedule."""
     datastore_name = ds.get("name", ds.get("id", "unknown"))
     group_label = group_state.get("display_name") or f"{group_state['backup_type']}/{group_state['backup_id']}"
@@ -536,11 +545,21 @@ def build_missed_interval_alert(ds, group_state, schedule_model, now_local, last
         f"(namespace '{namespace}'). Expected cadence: {interval_human} {schedule_model.get('timezone')}. "
         f"Last observed backup: {last_local.isoformat()}. Current time: {now_local.isoformat()}."
     )
+    downgraded = bool(downgrade_when_offschedule and late_coverage_occurrences)
+    if late_coverage_occurrences:
+        late_times = ", ".join(
+            occurrence["local_dt"].strftime("%Y-%m-%d %H:%M")
+            for occurrence in late_coverage_occurrences
+        )
+        message += f" Late-coverage snapshots detected at: {late_times}."
+    if downgraded and next_expected_at:
+        message += f" Suppressing further alerts until next expected backup at {next_expected_at}."
+
     return Alert(
         datastore_name,
         "Missed Backup Interval",
         message,
-        priority=4,
+        priority=3 if downgraded else 4,
         tags=["warning", "calendar", "package"],
         key=(
             f"{ds.get('id', 'unknown')}:missed_interval:"
@@ -549,6 +568,7 @@ def build_missed_interval_alert(ds, group_state, schedule_model, now_local, last
         ),
         scope="group",
         group_rule_key=group_state.get("group_rule_key"),
+        suppress_until=next_expected_at if downgraded else None,
     )
 
 
@@ -557,6 +577,7 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
     learning_cfg = config.get("schedule_learning") or {}
     tolerance_minutes = max(coerce_int(learning_cfg.get("time_tolerance_minutes")) or 30, 15)
     due_grace_minutes = max(coerce_int(learning_cfg.get("due_grace_minutes")) or 30, 15)
+    downgrade_when_offschedule = bool(learning_cfg.get("downgrade_when_offschedule", True))
     now_local = datetime.now(tzinfo)
 
     occurrences = [
@@ -588,17 +609,23 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
                 )
                 if not matching_occurrence:
                     next_due_dt = due_dt + timedelta(minutes=interval_minutes)
-                    late_coverage = any(
-                        window_end < o["local_dt"] <= next_due_dt
-                        for o in occurrences
-                    )
-                    if not late_coverage:
+                    late_coverage_occurrences = [
+                        o for o in occurrences
+                        if window_end < o["local_dt"] <= next_due_dt
+                    ]
+                    if not late_coverage_occurrences or downgrade_when_offschedule:
                         last_local = max(
                             (o["local_dt"] for o in occurrences),
                             default=now_local,
                         )
+                        next_expected_at = compute_next_expected_backup(
+                            group_state, schedule_model, tzinfo
+                        ) if late_coverage_occurrences else None
                         alerts.append(build_missed_interval_alert(
                             ds, group_state, schedule_model, now_local, last_local,
+                            late_coverage_occurrences=late_coverage_occurrences or None,
+                            next_expected_at=next_expected_at,
+                            downgrade_when_offschedule=downgrade_when_offschedule,
                         ))
         else:
             latest_occurrence = max(occurrences, key=lambda item: item["local_dt"], default=None)
@@ -645,12 +672,17 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
                 for occurrence in occurrences
                 if occurrence["local_dt"].date() == due_dt_local.date()
             ]
+            next_expected_at = compute_next_expected_backup(
+                group_state, schedule_model, tzinfo
+            ) if same_day_occurrences else None
             alerts.append(build_missed_slot_alert(
                 ds,
                 group_state,
                 {**learned_slot, "weekday_name": "Daily", "timezone": schedule_model.get("timezone", str(tzinfo))},
                 due_dt_local,
                 same_day_occurrences,
+                next_expected_at=next_expected_at,
+                downgrade_when_offschedule=downgrade_when_offschedule,
             ))
         return alerts
 
@@ -680,12 +712,17 @@ def evaluate_missed_backup_alerts(ds, group_state, schedule_model, config, tzinf
             for occurrence in occurrences
             if occurrence["local_dt"].date() == due_dt_local.date()
         ]
+        next_expected_at = compute_next_expected_backup(
+            group_state, schedule_model, tzinfo
+        ) if same_day_occurrences else None
         alerts.append(build_missed_slot_alert(
             ds,
             group_state,
             {**learned_slot, "timezone": schedule_model.get("timezone", str(tzinfo))},
             due_dt_local,
             same_day_occurrences,
+            next_expected_at=next_expected_at,
+            downgrade_when_offschedule=downgrade_when_offschedule,
         ))
 
     return alerts

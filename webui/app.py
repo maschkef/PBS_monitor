@@ -716,6 +716,15 @@ def ignore_group():
     if not datastore_id or not backup_type or not backup_id:
         return jsonify({"error": "Missing datastore_id, backup_type or backup_id."}), 400
 
+    expires_at_raw = payload.get("expires_at") or None
+    expires_at_normalized = None
+    if expires_at_raw:
+        expires_at_normalized = alert_monitor._parse_expires_at(expires_at_raw)
+        if not expires_at_normalized:
+            return jsonify({"error": "Invalid expires_at timestamp."}), 400
+        if alert_monitor._is_expired(expires_at_normalized):
+            return jsonify({"error": "expires_at must be in the future."}), 400
+
     raw_config, err = _load_alerting_config()
     if err:
         return err
@@ -726,15 +735,20 @@ def ignore_group():
         "backup_type": backup_type,
         "backup_id": backup_id,
         "display_name": payload.get("display_name") or None,
+        "expires_at": expires_at_normalized,
     }
     normalized_ignored_groups = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
-    already_exists = any(
-        entry.get("datastore_id") == ignored_group["datastore_id"]
-        and entry.get("namespace") == ignored_group["namespace"]
-        and entry.get("backup_type") == ignored_group["backup_type"]
-        and entry.get("backup_id") == ignored_group["backup_id"]
-        for entry in normalized_ignored_groups
-    )
+    already_exists = False
+    for idx, entry in enumerate(normalized_ignored_groups):
+        if (
+            entry.get("datastore_id") == ignored_group["datastore_id"]
+            and entry.get("namespace") == ignored_group["namespace"]
+            and entry.get("backup_type") == ignored_group["backup_type"]
+            and entry.get("backup_id") == ignored_group["backup_id"]
+        ):
+            already_exists = True
+            normalized_ignored_groups[idx] = ignored_group  # update expires_at in place
+            break
     if not already_exists:
         normalized_ignored_groups.append(ignored_group)
 
@@ -901,6 +915,8 @@ def save_alerting_config():
             raw_sl["enabled"] = bool(sl["enabled"])
         if "timezone" in sl:
             raw_sl["timezone"] = str(sl["timezone"])
+        if "downgrade_when_offschedule" in sl:
+            raw_sl["downgrade_when_offschedule"] = bool(sl["downgrade_when_offschedule"])
         for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
                         "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
             if int_key in sl:

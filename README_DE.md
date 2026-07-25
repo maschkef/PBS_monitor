@@ -222,7 +222,7 @@ python -m alerting.monitor --daemon 1800
 - **Totalausfall-Erkennung** — Sofort-Alarm wenn Backup-Browser und Aggregat-Metrik gemeinsam auf 0 fallen
 - **Snapshot-Verschwinden-Erkennung** — warnt wenn die Snapshot-Anzahl einer Gruppe unter die `keep_last`-Prune-Policy fällt und so eine unerwartete Löschung außerhalb des normalen Prunings anzeigt
 - **Gelernte Backup-Fenster** — leitet konservative Wochentag-/Zeit-Slots pro Backup-Gruppe aus beobachteten Snapshots ab
-- **Missed-Backup-Alerts** — warnt bei verpassten gelernten Backup-Fenstern und behandelt manuelle Off-Schedule-Läufe als Ausreißer
+- **Missed-Backup-Alerts** — warnt bei verpassten gelernten Backup-Fenstern und behandelt manuelle Off-Schedule-Läufe als Ausreißer; kann diese Alerts optional auf normale Priorität herabstufen und Wiederholungen bis zum nächsten erwarteten Backup unterdrücken, wenn am selben Tag bereits ein Off-Schedule-Snapshot erkannt wurde
 - **Gesperrte Gruppenregeln** — manuelle Zeitpläne können das Lernen für einzelne Backup-Gruppen übersteuern; Intervall-Schedules akzeptieren eine optionale Ankerzeit (HH:MM), sodass die Erwartung an einem festen Startzeitpunkt ausgerichtet ist statt am letzten beobachteten Backup
 - **Ignorierte Gruppen** — Backup-Gruppen können über die UI oder Konfiguration komplett vom Monitoring ausgeschlossen und jederzeit über die Web UI wieder reaktiviert werden
 - **Replication-Lag-Alerts** — warnt wenn eine konfigurierte Replikation deutlich hinterherhängt
@@ -360,7 +360,7 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "per_alert": {}
   },
   
-  "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day.",
   "schedule_learning": {
     "enabled": true,
     "timezone": "local",
@@ -369,7 +369,8 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
     "stale_after_days": 8,
-    "snapshot_retention_count": 24
+    "snapshot_retention_count": 24,
+    "downgrade_when_offschedule": true
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",
@@ -390,12 +391,12 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `ntfy_url` | ntfy Server URL (default: `https://ntfy.sh`). Muss zusammen mit `ntfy_topic` gesetzt sein damit Push-Benachrichtigungen funktionieren |
 | `heartbeat_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **keine Alerts erkannt wurden** (Success-Ping). Ist nur dieses Feld gesetzt und es gibt Alerts, wird kein Ping gesendet — der Timeout signalisiert das Problem. Wird auch übersprungen wenn ntfy-Versand fehlschlug (damit der Timeout weiterhin das Problem signalisiert). Schlägt der Ping selbst fehl, wird ein urgenter Alert via ntfy gesendet. **Uptime Kuma (Push-Monitor):** die im Monitor angezeigte URL mit `?status=up&msg=OK&ping=` verwenden |
 | `heartbeat_fail_url` | Optionale HTTP(S) GET Ping-URL, die aufgerufen wird wenn **Alerts erkannt wurden** (Fail-Ping). Wird auch angepingt wenn ntfy-Versand fehlschlug — so erhält ein externes Monitoring-Tool ein aktives Fehlersignal auch wenn Push-Delivery kaputt ist. Kann mit `heartbeat_url` für explizites Success/Fail-Signalling kombiniert werden. **Uptime Kuma:** gleiche URL und gleicher Token wie bei `heartbeat_url`, aber mit `?status=down&msg=PROBLEM&ping=` |
-| `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen |
+| `ignored_groups` | Liste von Backup-Gruppen (Datastore, Namespace, Typ, ID), für die keine Alerts generiert werden sollen. Jeder Eintrag kann optional `expires_at` (ISO 8601) für zeitlich befristete Ignorierungen enthalten |
 | `storage_warn_percent` | Speicher-Warnung ab diesem Prozentsatz |
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |
 | `gc_max_age_hours` | GC gilt als überfällig nach X Stunden |
 | `verification_max_age_days` | Verification gilt als überfällig nach X Tagen |
-| `notification_priorities.warning` | ntfy-Priorität für Warning-Tier-Alerts (Standard: `4` = high). Gilt für: GC failed/overdue/never ran, Host offline, verpasste Backups, Storage Warning, Replication stale, Immutable Disable pending, Snapshots unerwartet entfernt |
+| `notification_priorities.warning` | ntfy-Priorität für Warning-Tier-Alerts (Standard: `4` = high). Gilt für: GC failed/overdue/never ran, Host offline, verpasste Backups, Storage Warning, Replication stale, Immutable Disable pending, Snapshots unerwartet entfernt. Wenn `schedule_learning.downgrade_when_offschedule` aktiviert ist und am selben Tag ein Off-Schedule-Snapshot existiert, werden Missed-Backup-Alerts stattdessen auf Priorität `3` herabgestuft |
 | `notification_priorities.critical` | ntfy-Priorität für Critical-Tier-Alerts (Standard: `5` = urgent). Gilt für: Storage Critical, Verification failed, All Backups Gone, API unreachable, Heartbeat failed |
 | `notification_priorities.per_alert` | Optionales Objekt für individuelle Prioritäts-Overrides pro Alert-Typ. Schlüssel entsprechen dem Alert-Typ (z. B. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Wert `1`-`5` zum Überschreiben, `"ignore"` zum vollständigen Unterdrücken dieses Alert-Typs; weglassen oder `null` um auf den Tier-Default zurückzufallen. Konfigurierbar über **Per-Alert Priority Overrides** in der Web UI |
 | `quiet_hours.enabled` | Quiet Hours aktivieren (true/false) |
@@ -408,6 +409,7 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `schedule_learning.due_grace_minutes` | Wie lange ein gelerntes Backup-Fenster verspätet sein darf, bevor ein Alert erzeugt wird. Standard: `30` |
 | `schedule_learning.stale_after_days` | Zusätzliche Tage über die normale wöchentliche Slot-Kadenz hinaus, bevor ein gelernter Slot als veraltet gilt |
 | `schedule_learning.snapshot_retention_count` | Wie viele der neuesten Snapshots pro Backup-Gruppe im State gespeichert werden (Standard: 24). Wird für Schedule-Learning und Snapshot-Verlust-Erkennung verwendet — bei Gruppen mit vielen täglichen Backups erhöhen |
+| `schedule_learning.downgrade_when_offschedule` | Wenn `true` (Standard), werden Missed-Backup-Alerts bei bereits vorhandenem Off-Schedule-Snapshot am selben Tag von Priorität `4` auf `3` herabgestuft und weitere Alerts für denselben verpassten Lauf bis zum nächsten erwarteten Backup unterdrückt |
 | `alert_cooldown_minutes` | Mindestzeit zwischen wiederholten Alerts gleichen Typs |
 | `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon`, `--daemon 0` oder Docker-Container, Sekunden, Standard: 1800). Ein positiver CLI-Wert wie `--daemon 600` überschreibt diese Einstellung. In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
 
@@ -431,6 +433,8 @@ Jeder Alert-Typ hat eine **Basis-Priorität**, die seinen Severity-Tier bestimmt
 | 5 → critical | Standard: 5 (urgent) | Storage ≥ Crit%, Verification failed, All Backups Gone, API unreachable, Heartbeat failed |
 | 4 → warning | Standard: 4 (high) | GC failed, Host offline, verpasstes Backup-Fenster/-Intervall, Replication stale/never synced, Immutable Disable pending, Snapshots unerwartet entfernt |
 | 3 (kein Tier-Mapping) | bleibt 3 (default) | Storage ≥ Warn%, GC overdue/never ran, Verification overdue/never ran |
+
+Wenn `schedule_learning.downgrade_when_offschedule` aktiviert ist, werden Alerts für verpasste Backup-Fenster/-Intervalle mit Priorität `3` gesendet und vorübergehend bis zum nächsten erwarteten Backup-Zeitpunkt unterdrückt, sobald am selben Tag bereits ein Off-Schedule-Snapshot erkannt wurde.
 
 > **Per-Alert-Overrides** (z. B. `"gc_never_ran": 2`) haben Vorrang vor Basis-Priorität und Tier-Defaults. Schlüssel auf `"ignore"` setzen um den Alert-Typ vollständig zu unterdrücken; auf `null` setzen oder weglassen um auf das Tier-Verhalten zurückzufallen.
 

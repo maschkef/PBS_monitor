@@ -139,6 +139,40 @@ def normalize_group_rule(raw_rule):
     }
 
 
+def _parse_expires_at(raw_value):
+    """Parse an expires_at value into a normalized ISO 8601 string, or None."""
+    if not raw_value or not isinstance(raw_value, str):
+        return None
+    try:
+        from alerting.schedule import parse_iso  # lazy import to avoid cycles
+        dt = parse_iso(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _is_expired(expires_at_iso, now_utc=None):
+    """Return True if the ISO 8601 timestamp is in the past."""
+    if not expires_at_iso:
+        return False
+    try:
+        from alerting.schedule import parse_iso  # lazy import to avoid cycles
+        dt = parse_iso(expires_at_iso)
+    except (TypeError, ValueError):
+        return False
+    if dt is None:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    return dt.astimezone(timezone.utc) <= now_utc
+
+
 def normalize_ignored_group(raw_group):
     """Normalize one ignored backup-group selector."""
     if not isinstance(raw_group, dict):
@@ -150,6 +184,7 @@ def normalize_ignored_group(raw_group):
         "backup_type": None,
         "backup_id": None,
         "display_name": None,
+        "expires_at": None,
     }
     for key in ("datastore_id", "namespace", "backup_type", "backup_id"):
         if key not in raw_group:
@@ -162,6 +197,7 @@ def normalize_ignored_group(raw_group):
         return None
     if raw_group.get("display_name"):
         normalized["display_name"] = str(raw_group["display_name"])
+    normalized["expires_at"] = _parse_expires_at(raw_group.get("expires_at"))
     return normalized
 
 
@@ -175,6 +211,16 @@ def normalize_ignored_groups(raw_groups):
     return normalized
 
 
+def purge_expired_ignored_groups(ignored_groups, now_utc=None):
+    """Return a filtered list with expired ignore entries removed."""
+    if not ignored_groups:
+        return []
+    return [
+        entry for entry in ignored_groups
+        if not _is_expired(entry.get("expires_at"), now_utc=now_utc)
+    ]
+
+
 def is_group_ignored(config, datastore_id, namespace, backup_type, backup_id):
     """Return True when a backup group matches an ignore selector."""
     datastore_id = str(datastore_id or "")
@@ -182,7 +228,10 @@ def is_group_ignored(config, datastore_id, namespace, backup_type, backup_id):
     backup_type = str(backup_type or "")
     backup_id = str(backup_id or "")
 
+    now_utc = datetime.now(timezone.utc)
     for ignored_group in config.get("ignored_groups") or []:
+        if _is_expired(ignored_group.get("expires_at"), now_utc=now_utc):
+            continue
         if ignored_group.get("datastore_id") is not None and ignored_group["datastore_id"] != datastore_id:
             continue
         if ignored_group.get("namespace") is not None and ignored_group["namespace"] != namespace:
@@ -226,6 +275,7 @@ def default_state():
         "version": _STATE_VERSION,
         "datastores": {},
         "last_alerts": {},
+        "alert_suppress_until": {},
     }
 
 
@@ -355,6 +405,7 @@ def migrate_state(raw_state):
         "version": _STATE_VERSION,
         "datastores": {},
         "last_alerts": {},
+        "alert_suppress_until": {},
     }
     if not isinstance(raw_state, dict):
         return state
@@ -362,6 +413,12 @@ def migrate_state(raw_state):
     last_alerts = raw_state.get("last_alerts")
     if isinstance(last_alerts, dict):
         state["last_alerts"] = last_alerts
+
+    suppress_until = raw_state.get("alert_suppress_until")
+    if isinstance(suppress_until, dict):
+        state["alert_suppress_until"] = {
+            str(k): str(v) for k, v in suppress_until.items() if v
+        }
 
     raw_datastores = raw_state.get("datastores")
     if not isinstance(raw_datastores, dict):

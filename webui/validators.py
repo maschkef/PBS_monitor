@@ -180,6 +180,8 @@ def _validate_ignore_group_payload(payload: dict) -> None:
     Reuses _RULE_STR_MAX limits for the overlapping fields (timezone is not
     applicable and is skipped).
     """
+    from datetime import datetime
+
     for key, maxlen in _RULE_STR_MAX.items():
         if key == "timezone":
             continue
@@ -189,3 +191,14 @@ def _validate_ignore_group_payload(payload: dict) -> None:
                 raise ValueError(f"{key} must be a string.")
             if len(val) > maxlen:
                 raise ValueError(f"{key} must not exceed {maxlen} characters.")
+
+    expires_at = payload.get("expires_at")
+    if expires_at is not None and expires_at != "":
+        if not isinstance(expires_at, str):
+            raise ValueError("expires_at must be a string.")
+        if len(expires_at) > 40:
+            raise ValueError("expires_at must not exceed 40 characters.")
+        try:
+            datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("expires_at must be a valid ISO 8601 timestamp.")

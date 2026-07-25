@@ -1465,6 +1465,7 @@
                 document.getElementById('cfg-sl-grace').value = sl.due_grace_minutes ?? 30;
                 document.getElementById('cfg-sl-stale').value = sl.stale_after_days ?? 8;
                 document.getElementById('cfg-sl-retention').value = sl.snapshot_retention_count ?? 24;
+                document.getElementById('cfg-sl-downgrade').value = sl.downgrade_when_offschedule === false ? 'false' : 'true';
 
                 if (res.read_only) {
                     document.getElementById('saveConfigBtn').disabled = true;
@@ -1570,6 +1571,7 @@
                     due_grace_minutes: parseInt(document.getElementById('cfg-sl-grace').value),
                     stale_after_days: parseInt(document.getElementById('cfg-sl-stale').value),
                     snapshot_retention_count: parseInt(document.getElementById('cfg-sl-retention').value),
+                    downgrade_when_offschedule: document.getElementById('cfg-sl-downgrade').value === 'true',
                 },
             };
 

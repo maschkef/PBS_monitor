@@ -37,7 +37,7 @@
     "per_alert": {}
   },
   
-  "_comment_learning": "Toggles dynamic learning for missed backup window detection.",
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day.",
   "schedule_learning": {
     "enabled": true,
     "timezone": "local",
@@ -46,7 +46,8 @@
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
     "stale_after_days": 8,
-    "snapshot_retention_count": 24
+    "snapshot_retention_count": 24,
+    "downgrade_when_offschedule": true
   },
   
   "_comment_cooldown": "Minimum minutes to wait before repeating an alert of the same type.",

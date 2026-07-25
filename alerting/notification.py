@@ -121,9 +121,25 @@ def is_quiet_hours(config):
 def should_alert(config, state, alert_key):
     """Return True if the alert cooldown has expired for *alert_key*."""
     from alerting.schedule import parse_iso  # avoid top-level circular import
+    now_utc = datetime.now(timezone.utc)
+
+    suppress_map = state.get("alert_suppress_until") or {}
+    suppress_until = suppress_map.get(alert_key)
+    if suppress_until:
+        try:
+            suppress_dt = parse_iso(suppress_until)
+        except (TypeError, ValueError):
+            suppress_dt = None
+        if suppress_dt is not None:
+            if suppress_dt.tzinfo is None:
+                suppress_dt = suppress_dt.replace(tzinfo=timezone.utc)
+            if now_utc < suppress_dt.astimezone(timezone.utc):
+                return False
+        suppress_map.pop(alert_key, None)
+
     last = state.get("last_alerts", {}).get(alert_key)
     if not last:
         return True
     cooldown = config.get("alert_cooldown_minutes", 60)
-    elapsed = (datetime.now(timezone.utc) - parse_iso(last)).total_seconds() / 60
+    elapsed = (now_utc - parse_iso(last)).total_seconds() / 60
     return elapsed >= cooldown
