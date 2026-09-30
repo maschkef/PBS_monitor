@@ -19,6 +19,13 @@ RUN pip install --no-cache-dir --upgrade setuptools wheel
 COPY alerting/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Strip pip / setuptools / wheel and their vendored / bundled wheels from the
+# final image. They are only needed at build time and Trivy flags their
+# vendored copies (e.g. pip/_vendor/msgpack, ensurepip/_bundled/setuptools).
+RUN pip uninstall -y pip setuptools wheel \
+    && find /usr/local/lib/python3.14 -type d -name "_bundled" -exec rm -rf {} + \
+    && find /usr/local/lib/python3.14 -type d -name "__pycache__" -exec rm -rf {} +
+
 # Copy application code
 COPY alerting/ ./alerting/
 COPY .env.example .
