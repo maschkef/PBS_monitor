@@ -606,6 +606,44 @@
             border: 1px solid rgba(var(--rgb-text),0.04);
         }
 
+        /* Usage-history chart */
+        .chart-wrap { position: relative; width: 100%; }
+        .chart-tooltip {
+            position: fixed;
+            display: none;
+            pointer-events: none;
+            background: var(--card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 10px;
+            font-size: 0.75rem;
+            line-height: 1.35;
+            border-radius: 0.4rem;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+            white-space: nowrap;
+            z-index: 100;
+        }
+        .chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.9rem;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            margin-bottom: 0.35rem;
+        }
+        .chart-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+        .chart-legend-swatch {
+            display: inline-block;
+            width: 14px;
+            height: 2px;
+            background: currentColor;
+        }
+        .chart-legend-swatch.dashed {
+            background: transparent;
+            border-top: 2px dashed currentColor;
+            height: 0;
+        }
+
         /* Loading & Error states */
         .loading {
             display: flex;

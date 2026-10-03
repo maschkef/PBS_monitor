@@ -32,10 +32,12 @@ from dotenv import load_dotenv
 
 from alerting.normalization import (
     _MAX_RESCALE_HISTORY_ENTRIES,
+    append_storage_sample,
     coerce_int,
     default_datastore_state,
     default_group_rules,
     default_state,
+    default_storage_history,
     is_group_ignored,
     make_rule_key,
     merge_rescale_entries,
@@ -50,7 +52,10 @@ from alerting.normalization import (
     normalize_ignored_groups,
     normalize_rescale_entries,
     normalize_snapshot_entries,
+    normalize_storage_history,
     normalize_weekly_slots,
+    promote_storage_history,
+    prune_storage_history,
     purge_expired_ignored_groups,
     unix_to_iso,
 )
@@ -623,6 +628,7 @@ def ensure_datastore_state(state, ds_id, name):
         ds_state.get("rescale_history"),
         _MAX_RESCALE_HISTORY_ENTRIES,
     )
+    ds_state["storage_history"] = normalize_storage_history(ds_state.get("storage_history"))
     return ds_state
 
 
@@ -1178,6 +1184,21 @@ def run_check(config, state):
                         new_rescale,
                         _MAX_RESCALE_HISTORY_ENTRIES,
                     )
+
+            ds_state_ref = state["datastores"].get(ds_id)
+            if isinstance(ds_state_ref, dict):
+                storage_history = ds_state_ref.setdefault(
+                    "storage_history", default_storage_history(),
+                )
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                append_storage_sample(storage_history, {
+                    "ts": now_ts,
+                    "used_bytes": metrics.get("used_bytes"),
+                    "available_bytes": metrics.get("available_bytes"),
+                    "used_percent": metrics.get("used_percent"),
+                }, config)
+                promote_storage_history(storage_history, config, now_ts=now_ts)
+                prune_storage_history(storage_history, config, now_ts=now_ts)
 
         status_str = "OFFLINE" if not metrics else f"{metrics.get('used_percent', '?')}%"
         gc_status = (ds.get("gc") or {}).get("status", "?")

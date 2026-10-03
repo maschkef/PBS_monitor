@@ -20,6 +20,10 @@
         const loadingBackupBrowsers = new Set();
         const openBackupBrowsers = new Set();
         const openAlertingPanels = new Set();
+        const openUsageHistoryPanels = new Set();
+        const usageHistoryCache = new Map();          // dsId → { range, data }
+        const loadingUsageHistory = new Set();
+        const usageHistoryRanges = new Map();         // dsId → "30d" (default)
 
         // ── Cache helpers ──────────────────────────────────────────────────────
         function saveStateToCache(datastores, stats) {
@@ -258,6 +262,41 @@
                 unitIndex += 1;
             }
             return `${size.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        // SI/decimal byte formatter, matching the Python-side format_bytes in webui/normalizers.py
+        // so chart tick/tooltip units line up with the datastore-card "used/free/total" values.
+        function formatBytesSI(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) return 'N/A';
+            let size = Number(value);
+            if (size === 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+            let unitIndex = 0;
+            while (Math.abs(size) >= 1000 && unitIndex < units.length - 1) {
+                size /= 1000;
+                unitIndex += 1;
+            }
+            return `${size.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        // Pick a single SI/decimal unit for a whole chart axis so all tick labels share one scale.
+        function pickBytesScale(maxBytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+            let scale = 1;
+            let unitIndex = 0;
+            while (maxBytes / scale >= 1000 && unitIndex < units.length - 1) {
+                scale *= 1000;
+                unitIndex += 1;
+            }
+            return { scale, label: units[unitIndex] };
+        }
+
+        // Format bytes with a fixed scale/unit (so chart tooltip values match the chart's y-axis unit).
+        function formatBytesInUnit(value, scale, unit) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) return 'N/A';
+            const v = Number(value) / scale;
+            const digits = Math.abs(v) < 10 ? 2 : 1;
+            return `${v.toFixed(digits)} ${unit}`;
         }
 
         function formatUnixDate(timestamp) {
@@ -877,6 +916,7 @@
             const color = gaugeColor(pct, m.storage_warn_percent, m.storage_crit_percent);
             const browserLabel = openBackupBrowsers.has(ds.id) ? 'Hide Backups' : 'Browse Backups';
             const alertingLabel = openAlertingPanels.has(ds.id) ? 'Hide Alerting' : 'Show Alerting';
+            const usageHistoryLabel = openUsageHistoryPanels.has(ds.id) ? 'Hide Usage History' : 'Show Usage History';
             const alerting = ds.alerting || { alerts: [], schedule_learning: {} };
 
             const issuesHtml = ds.issues.map(i => {
@@ -897,6 +937,7 @@
                     <div class="ds-header-side">
                         <div class="ds-issues">${issuesHtml}</div>
                         <button class="btn btn-secondary" onclick="toggleAlertingPanel(${escHtml(JSON.stringify(ds.id))})">${alertingLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleUsageHistoryPanel(${escHtml(JSON.stringify(ds.id))})">${usageHistoryLabel}</button>
                         <button class="btn btn-secondary" onclick="toggleBackupBrowser(${escHtml(JSON.stringify(ds.id))})">${browserLabel}</button>
                     </div>
                 </div>
@@ -1002,9 +1043,10 @@
                         <!-- Rescale Log -->
                         <div class="section" style="grid-column: 1 / -1;">
                             <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
-                            <div class="soft-note" style="margin-bottom:0.5rem;">Resize events only (up-/downscaling) — not actual storage usage.${ds.rescale_history_source === 'api' ? ' Longer ranges fill in from the alerting daemon over time.' : ''}</div>
                             ${renderRescaleLog(ds.rescale_log)}
                         </div>
+
+                        ${openUsageHistoryPanels.has(ds.id) ? renderUsageHistoryPanel(ds.id) : ''}
 
                         ${openAlertingPanels.has(ds.id) ? renderAlertingSection(ds.id, alerting) : ''}
                     </div>
@@ -1062,6 +1104,240 @@
             renderDatastoreGrid();
         }
 
+        // ── Usage history panel ────────────────────────────────────────────────
+
+        const USAGE_HISTORY_RANGES = ['7d', '30d', '90d', '365d', 'all'];
+        const USAGE_HISTORY_RANGE_LABELS = { '7d': '7 days', '30d': '30 days', '90d': '90 days', '365d': '1 year', 'all': 'All' };
+
+        function usageHistoryRangeFor(dsId) {
+            return usageHistoryRanges.get(dsId) || '30d';
+        }
+
+        async function toggleUsageHistoryPanel(dsId) {
+            if (openUsageHistoryPanels.has(dsId)) {
+                openUsageHistoryPanels.delete(dsId);
+                renderDatastoreGrid();
+                return;
+            }
+            openUsageHistoryPanels.add(dsId);
+            renderDatastoreGrid();
+            await loadUsageHistory(dsId, usageHistoryRangeFor(dsId));
+        }
+
+        async function loadUsageHistory(dsId, range, { silent = false } = {}) {
+            const key = `${dsId}:${range}`;
+            if (loadingUsageHistory.has(key)) return;
+            loadingUsageHistory.add(key);
+            if (!silent) renderDatastoreGrid();
+            try {
+                const data = await fetchJson(`/api/datastores/${encodeURIComponent(dsId)}/storage-history?range=${encodeURIComponent(range)}`);
+                usageHistoryCache.set(dsId, { range, data });
+            } catch (error) {
+                // On silent refresh, keep the stale chart visible rather than
+                // replacing it with an error message — the next retry may succeed.
+                if (!silent) {
+                    usageHistoryCache.set(dsId, { range, data: { error: error.message } });
+                }
+            } finally {
+                loadingUsageHistory.delete(key);
+                renderDatastoreGrid();
+            }
+        }
+
+        function refreshOpenUsageHistoryPanels() {
+            if (!openUsageHistoryPanels.size) return Promise.resolve();
+            return Promise.all(
+                [...openUsageHistoryPanels].map(dsId =>
+                    loadUsageHistory(dsId, usageHistoryRangeFor(dsId), { silent: true })
+                )
+            );
+        }
+
+        function switchUsageHistoryRange(dsId, range) {
+            if (!USAGE_HISTORY_RANGES.includes(range)) return;
+            usageHistoryRanges.set(dsId, range);
+            loadUsageHistory(dsId, range);
+        }
+
+        function renderUsageHistoryPanel(dsId) {
+            const range = usageHistoryRangeFor(dsId);
+            const key = `${dsId}:${range}`;
+            const dsIdAttr = escHtml(JSON.stringify(dsId));
+            const rangeOptions = USAGE_HISTORY_RANGES.map(r =>
+                `<option value="${r}" ${r === range ? 'selected' : ''}>${USAGE_HISTORY_RANGE_LABELS[r]}</option>`
+            ).join('');
+            const header = `
+                <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+                    <span>Usage History</span>
+                    <select class="header-select" onchange="switchUsageHistoryRange(${dsIdAttr}, this.value)">
+                        ${rangeOptions}
+                    </select>
+                </div>`;
+
+            let body;
+            const cached = usageHistoryCache.get(dsId);
+            if (loadingUsageHistory.has(key) || !cached || cached.range !== range) {
+                body = `<div class="browser-loading">Loading usage history…</div>`;
+            } else if (cached.data && cached.data.error) {
+                body = `<div class="browser-error">${escHtml(cached.data.error)}</div>`;
+            } else {
+                body = renderUsageHistoryBody(cached.data, dsId);
+            }
+            return `<div class="section" style="grid-column: 1 / -1;">${header}${body}</div>`;
+        }
+
+        function renderUsageHistoryBody(data, dsId) {
+            const points = (data && data.points) || [];
+            if (!points.length) {
+                return `<div class="soft-note">No usage history yet — the alerting daemon has not recorded any samples for this range. History grows from the first daemon run onward.</div>`;
+            }
+            const thresholds = data.thresholds || {};
+            const warn = typeof thresholds.storage_warn_percent === 'number' ? thresholds.storage_warn_percent : null;
+            const crit = typeof thresholds.storage_crit_percent === 'number' ? thresholds.storage_crit_percent : null;
+            const latest = points[points.length - 1];
+            const meta = [
+                `${data.sample_count} point${data.sample_count === 1 ? '' : 's'}`,
+                `tiers: ${(data.tiers || []).join('+')}`,
+                `oldest ${formatUnixDate(data.oldest_ts)}`,
+                `newest ${formatUnixDate(data.newest_ts)}`,
+                latest.used_percent != null ? `latest ${latest.used_percent.toFixed(1)}% · ${formatBytesSI(latest.used_bytes)}` : null,
+            ].filter(Boolean).join(' · ');
+            const legend = renderUsageHistoryLegend(warn, crit);
+            return `
+                <div class="soft-note" style="margin-bottom:0.5rem;">${escHtml(meta)}</div>
+                ${legend}
+                ${renderUsageHistoryChart(points, warn, crit, dsId)}
+            `;
+        }
+
+        function renderUsageHistoryLegend(warnPct, critPct) {
+            const items = [
+                `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--cyan);"></span>Used %</span>`,
+                `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--purple);"></span>Used (bytes)</span>`,
+                `<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--text-dim);"></span>Total (bytes)</span>`,
+            ];
+            if (typeof warnPct === 'number' && warnPct > 0) {
+                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>Warn %</span>`);
+            }
+            if (typeof critPct === 'number' && critPct > 0) {
+                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--red);"></span>Crit %</span>`);
+            }
+            return `<div class="chart-legend">${items.join('')}</div>`;
+        }
+
+        function renderUsageHistoryChart(points, warnPct, critPct, dsId) {
+            // Logical SVG coordinate space; the <svg> stretches to the parent width.
+            const vbW = 1000;
+            const vbH = 220;
+            const padL = 48, padR = 56, padT = 12, padB = 28;
+            const plotW = vbW - padL - padR;
+            const plotH = vbH - padT - padB;
+
+            const times = points.map(p => p.ts);
+            const tMin = times[0];
+            const tMax = times[times.length - 1];
+            const tSpan = Math.max(1, tMax - tMin);
+            const percents = points.map(p => p.used_percent).filter(v => typeof v === 'number');
+            // Give the chart some headroom; always include the warn/crit thresholds in the Y range.
+            const dataMax = percents.length ? Math.max(...percents) : 0;
+            const thresholdMax = Math.max(warnPct ?? 0, critPct ?? 0);
+            const yMax = Math.min(100, Math.max(10, Math.ceil(Math.max(dataMax, thresholdMax) * 1.1 / 10) * 10));
+
+            const totalBytesFor = p => (Number(p.used_bytes) || 0) + (Number(p.available_bytes) || 0);
+            const totalMaxRaw = points.reduce((m, p) => Math.max(m, totalBytesFor(p)), 0);
+            const bytesMax = totalMaxRaw > 0 ? totalMaxRaw * 1.05 : 1;
+            const { scale: bytesScale, label: bytesUnit } = pickBytesScale(bytesMax);
+
+            const xFor = ts => padL + ((ts - tMin) / tSpan) * plotW;
+            const yFor = pct => padT + (1 - (pct / yMax)) * plotH;
+            const yForBytes = bytes => padT + (1 - (bytes / bytesMax)) * plotH;
+
+            const gridlines = [];
+            const yTickCount = 4;
+            for (let i = 0; i <= yTickCount; i++) {
+                const pct = (yMax / yTickCount) * i;
+                const y = yFor(pct);
+                gridlines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`);
+                gridlines.push(`<text x="${padL - 8}" y="${y + 4}" fill="var(--text-dim)" font-size="11" text-anchor="end">${pct.toFixed(0)}%</text>`);
+                // Right axis: byte labels aligned with the same gridline positions.
+                const bytesValue = (bytesMax / yTickCount) * i;
+                const bytesLabel = `${(bytesValue / bytesScale).toFixed(1)} ${bytesUnit}`;
+                gridlines.push(`<text x="${padL + plotW + 8}" y="${y + 4}" fill="var(--text-dim)" font-size="11" text-anchor="start">${escHtml(bytesLabel)}</text>`);
+            }
+
+            const xTickCount = 5;
+            const xTicks = [];
+            for (let i = 0; i <= xTickCount; i++) {
+                const t = tMin + (tSpan * i / xTickCount);
+                const x = xFor(t);
+                xTicks.push(`<line x1="${x}" y1="${padT + plotH}" x2="${x}" y2="${padT + plotH + 4}" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>`);
+                const label = formatChartTimestamp(t, tSpan);
+                xTicks.push(`<text x="${x}" y="${padT + plotH + 18}" fill="var(--text-dim)" font-size="11" text-anchor="middle">${escHtml(label)}</text>`);
+            }
+
+            const percentPolyline = points
+                .filter(p => typeof p.used_percent === 'number')
+                .map(p => `${xFor(p.ts).toFixed(2)},${yFor(p.used_percent).toFixed(2)}`)
+                .join(' ');
+
+            const usedBytesPolyline = points
+                .filter(p => typeof p.used_bytes === 'number')
+                .map(p => `${xFor(p.ts).toFixed(2)},${yForBytes(p.used_bytes).toFixed(2)}`)
+                .join(' ');
+
+            const totalBytesPolyline = points
+                .filter(p => totalBytesFor(p) > 0)
+                .map(p => `${xFor(p.ts).toFixed(2)},${yForBytes(totalBytesFor(p)).toFixed(2)}`)
+                .join(' ');
+
+            const thresholdLines = [];
+            if (typeof warnPct === 'number' && warnPct > 0 && warnPct <= yMax) {
+                const y = yFor(warnPct);
+                thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--yellow)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
+                thresholdLines.push(`<text x="${padL + plotW - 4}" y="${y - 4}" fill="var(--yellow)" font-size="10" text-anchor="end">warn ${warnPct}%</text>`);
+            }
+            if (typeof critPct === 'number' && critPct > 0 && critPct <= yMax) {
+                const y = yFor(critPct);
+                thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--red)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
+                thresholdLines.push(`<text x="${padL + plotW - 4}" y="${y - 4}" fill="var(--red)" font-size="10" text-anchor="end">crit ${critPct}%</text>`);
+            }
+
+            // Hover-targets live on the used-% line; the interactive HTML tooltip reads the full point from the cache.
+            const dots = points.map(p => {
+                if (typeof p.used_percent !== 'number') return '';
+                const cx = xFor(p.ts).toFixed(2);
+                const cy = yFor(p.used_percent).toFixed(2);
+                return `<circle cx="${cx}" cy="${cy}" r="2.5" fill="var(--cyan)"/>`;
+            }).join('');
+
+            const dsIdAttr = escHtml(JSON.stringify(dsId));
+            return `
+            <div class="chart-wrap" data-ds-id='${dsIdAttr}' data-vb-w="${vbW}" data-t-min="${tMin}" data-t-max="${tMax}" data-pad-l="${padL}" data-plot-w="${plotW}" data-bytes-scale="${bytesScale}" data-bytes-unit="${bytesUnit}">
+                <svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" width="100%" height="200" role="img" aria-label="Storage usage history chart">
+                    <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)"/>
+                    ${gridlines.join('')}
+                    ${xTicks.join('')}
+                    ${thresholdLines.join('')}
+                    <polyline fill="none" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="2 4" opacity="0.5" points="${totalBytesPolyline}"/>
+                    <polyline fill="none" stroke="var(--purple)" stroke-width="1.5" points="${usedBytesPolyline}"/>
+                    <polyline fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"/>
+                    ${dots}
+                </svg>
+                <div class="chart-tooltip" aria-hidden="true"></div>
+            </div>`;
+        }
+
+        function formatChartTimestamp(ts, spanSeconds) {
+            const d = new Date(ts * 1000);
+            if (spanSeconds <= 2 * 86400) {
+                return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+            }
+            if (spanSeconds <= 60 * 86400) {
+                return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+            }
+            return d.toLocaleDateString('de-DE', { month: '2-digit', year: '2-digit' });
+        }
+
         async function loadAll() {
             const content = document.getElementById('content');
 
@@ -1089,6 +1365,8 @@
 
                 document.getElementById('lastUpdated').textContent =
                     'Updated ' + new Date().toLocaleTimeString('de-DE') + ' (full)';
+
+                refreshOpenUsageHistoryPanels();
 
             } catch (e) {
                 showRefreshError(e.message);
@@ -1131,6 +1409,7 @@
                 hideRefreshErrorBanner();
                 document.getElementById('lastUpdated').textContent =
                     'Updated ' + new Date().toLocaleTimeString('de-DE') + ' (light)';
+                refreshOpenUsageHistoryPanels();
             } catch (e) {
                 showRefreshErrorBanner(e.message);
             } finally {
@@ -1508,6 +1787,90 @@
             const tip = icon.querySelector('.tooltip-text');
             if (!tip) return;
             tip.style.cssText = '';
+        }, true);
+
+        // ── Usage-history chart tooltip (interactive) ─────────────────────────
+        function renderChartTooltipContent(point, bytesScale, bytesUnit) {
+            const date = formatUnixDate(point.ts);
+            const usedPct = typeof point.used_percent === 'number' ? point.used_percent : null;
+            const freePct = usedPct !== null ? Math.max(0, 100 - usedPct) : null;
+            const total = (Number(point.used_bytes) || 0) + (Number(point.available_bytes) || 0);
+            // Use the chart's y-axis unit so tooltip values match the right-axis labels.
+            const fmt = (b) => (bytesScale && bytesUnit)
+                ? formatBytesInUnit(b, bytesScale, bytesUnit)
+                : formatBytesSI(b);
+            const usedLine = usedPct !== null
+                ? `Used: ${fmt(point.used_bytes)} (${usedPct.toFixed(1)}%)`
+                : `Used: ${fmt(point.used_bytes)}`;
+            const freeLine = freePct !== null
+                ? `Free: ${fmt(point.available_bytes)} (${freePct.toFixed(1)}%)`
+                : `Free: ${fmt(point.available_bytes)}`;
+            const totalLine = total > 0 ? `Total: ${fmt(total)}` : '';
+            return [
+                `<div style="font-weight:600;margin-bottom:2px;">${escHtml(date)}</div>`,
+                `<div>${escHtml(usedLine)}</div>`,
+                `<div>${escHtml(freeLine)}</div>`,
+                totalLine ? `<div style="color:var(--text-dim);">${escHtml(totalLine)}</div>` : '',
+            ].join('');
+        }
+
+        function findNearestChartPoint(points, targetTs) {
+            if (!points.length) return null;
+            let lo = 0, hi = points.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (points[mid].ts < targetTs) lo = mid + 1; else hi = mid;
+            }
+            const cand = points[lo];
+            const prev = lo > 0 ? points[lo - 1] : null;
+            if (prev && Math.abs(prev.ts - targetTs) < Math.abs(cand.ts - targetTs)) return prev;
+            return cand;
+        }
+
+        document.addEventListener('mousemove', function(e) {
+            const wrap = e.target.closest('.chart-wrap');
+            if (!wrap) return;
+            const tip = wrap.querySelector('.chart-tooltip');
+            if (!tip) return;
+            let dsId;
+            try { dsId = JSON.parse(wrap.dataset.dsId); } catch (_) { return; }
+            const cached = usageHistoryCache.get(dsId);
+            const points = (cached && cached.data && cached.data.points) || [];
+            if (!points.length) { tip.style.display = 'none'; return; }
+
+            const vbW = Number(wrap.dataset.vbW) || 1000;
+            const tMin = Number(wrap.dataset.tMin);
+            const tMax = Number(wrap.dataset.tMax);
+            const padL = Number(wrap.dataset.padL);
+            const plotW = Number(wrap.dataset.plotW);
+            const rect = wrap.getBoundingClientRect();
+            // SVG uses preserveAspectRatio="none", so the chart stretches to the wrap width.
+            const svgX = (e.clientX - rect.left) * (vbW / rect.width);
+            if (svgX < padL || svgX > padL + plotW) { tip.style.display = 'none'; return; }
+            const tSpan = Math.max(1, tMax - tMin);
+            const targetTs = tMin + ((svgX - padL) / plotW) * tSpan;
+            const point = findNearestChartPoint(points, targetTs);
+            if (!point) { tip.style.display = 'none'; return; }
+
+            const bytesScale = Number(wrap.dataset.bytesScale) || null;
+            const bytesUnit = wrap.dataset.bytesUnit || null;
+            tip.innerHTML = renderChartTooltipContent(point, bytesScale, bytesUnit);
+            // Position: measure once in a hidden state, then clamp to the viewport.
+            Object.assign(tip.style, { display: 'block', visibility: 'hidden', left: '0px', top: '0px' });
+            const tipW = tip.offsetWidth;
+            const tipH = tip.offsetHeight;
+            let leftVal = e.clientX + 12;
+            if (leftVal + tipW + 10 > window.innerWidth) leftVal = e.clientX - tipW - 12;
+            let topVal = e.clientY + 12;
+            if (topVal + tipH + 10 > window.innerHeight) topVal = e.clientY - tipH - 12;
+            Object.assign(tip.style, { left: leftVal + 'px', top: topVal + 'px', visibility: 'visible' });
+        });
+
+        document.addEventListener('mouseleave', function(e) {
+            const wrap = e.target.closest && e.target.closest('.chart-wrap');
+            if (!wrap) return;
+            const tip = wrap.querySelector('.chart-tooltip');
+            if (tip) tip.style.display = 'none';
         }, true);
 
         // Load config when settings modal opens

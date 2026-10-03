@@ -243,6 +243,18 @@ should_hide_zfs_recv = _normalizers.should_hide_zfs_recv
 
 RESCALE_RANGE_ALLOWED = ("7d", "14d", "30d", "90d", "365d", "all")
 
+STORAGE_HISTORY_RANGE_ALLOWED = ("7d", "30d", "90d", "365d", "all")
+
+# Which tiers to serve per range request.  Longer ranges concatenate multiple
+# tiers (raw stays full-resolution for recent data; older spans are coarser).
+STORAGE_HISTORY_RANGE_TIERS = {
+    "7d": ("raw",),
+    "30d": ("raw", "hourly"),
+    "90d": ("raw", "hourly", "sixhour"),
+    "365d": ("raw", "hourly", "sixhour", "daily"),
+    "all": ("raw", "hourly", "sixhour", "daily"),
+}
+
 
 def _rescale_range_cutoff(range_str):
     """Return a UTC datetime cutoff for a rescale range string, or None for 'all'."""
@@ -250,6 +262,13 @@ def _rescale_range_cutoff(range_str):
         return None
     days = int(range_str.rstrip("d"))
     return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _storage_history_range_seconds(range_str):
+    """Return the cutoff window in seconds for a storage-history range, or None for 'all'."""
+    if range_str == "all":
+        return None
+    return int(range_str.rstrip("d")) * 86400
 
 
 def _filter_rescale_history(entries, cutoff):
@@ -1297,6 +1316,69 @@ def get_datastore_backups(datastore_id):
         },
         "namespaces": namespaces,
         "protocols": protocols,
+    })
+
+
+@app.route("/api/datastores/<datastore_id>/storage-history")
+@require_auth
+def get_storage_history(datastore_id):
+    """Return the persisted storage-usage time series for one datastore.
+
+    The alerting daemon writes raw samples on every poll and downsamples older
+    data into hourly/6-hourly/daily tiers.  This endpoint reads straight from
+    state.json — no upstream API call — so the response is empty until the
+    daemon has run at least once.
+    """
+    range_str = request.args.get("range", "30d")
+    if range_str not in STORAGE_HISTORY_RANGE_ALLOWED:
+        allowed = ", ".join(STORAGE_HISTORY_RANGE_ALLOWED)
+        return jsonify({"error": f"Invalid range. Allowed: {allowed}."}), 400
+
+    alerting_config = load_visual_alerting_config()
+    alerting_state, state_source = load_visual_alerting_state()
+    ds_state = alerting_state.get("datastores", {}).get(datastore_id) or {}
+    history = ds_state.get("storage_history") or {}
+
+    tiers = STORAGE_HISTORY_RANGE_TIERS.get(range_str, ("raw", "hourly"))
+    cutoff_seconds = _storage_history_range_seconds(range_str)
+    cutoff_ts = None
+    if cutoff_seconds is not None:
+        cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - cutoff_seconds
+
+    deduped = {}
+    for tier in tiers:
+        entries = history.get(tier) or []
+        for point in entries:
+            if not isinstance(point, dict):
+                continue
+            ts = point.get("ts")
+            if not isinstance(ts, int):
+                continue
+            if cutoff_ts is not None and ts < cutoff_ts:
+                continue
+            deduped[ts] = {
+                "ts": ts,
+                "used_bytes": point.get("used_bytes"),
+                "available_bytes": point.get("available_bytes"),
+                "used_percent": point.get("used_percent"),
+            }
+    ordered = sorted(deduped.values(), key=lambda p: p["ts"])
+
+    thresholds = alerting_config.get("thresholds") or {}
+    return jsonify({
+        "datastore_id": datastore_id,
+        "range": range_str,
+        "tiers": list(tiers),
+        "points": ordered,
+        "sample_count": len(ordered),
+        "oldest_ts": ordered[0]["ts"] if ordered else None,
+        "newest_ts": ordered[-1]["ts"] if ordered else None,
+        "source": "daemon" if ordered else "empty",
+        "state_source": state_source,
+        "thresholds": {
+            "storage_warn_percent": thresholds.get("storage_warn_percent"),
+            "storage_crit_percent": thresholds.get("storage_crit_percent"),
+        },
     })
 
 

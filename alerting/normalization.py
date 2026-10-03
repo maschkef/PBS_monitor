@@ -254,6 +254,11 @@ def empty_inventory_summary():
     }
 
 
+def default_storage_history():
+    """Return empty storage-history tiers for one datastore."""
+    return {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+
+
 def default_datastore_state(name="unknown"):
     """Return default persistent state for one datastore."""
     return {
@@ -266,6 +271,7 @@ def default_datastore_state(name="unknown"):
         },
         "backup_groups": {},
         "rescale_history": [],
+        "storage_history": default_storage_history(),
     }
 
 
@@ -375,6 +381,213 @@ def merge_rescale_entries(existing_entries, new_entries, limit):
     for entry in normalize_rescale_entries(new_entries):
         merged[_rescale_dedupe_key(entry)] = entry
     return normalize_rescale_entries(merged.values(), limit)
+
+
+# ── Storage-usage history helpers ────────────────────────────────────────────
+
+_STORAGE_HISTORY_TIER_KEYS = ("raw", "hourly", "sixhour", "daily")
+_STORAGE_HISTORY_RAW_RETENTION_DAYS = 7
+_STORAGE_HISTORY_HOURLY_RETENTION_DAYS = 30
+_STORAGE_HISTORY_SIXHOUR_RETENTION_DAYS = 90
+_STORAGE_HISTORY_DAILY_RETENTION_DAYS = None  # None → never prune daily tier.
+_STORAGE_HISTORY_MIN_INTERVAL_SECONDS = 300
+
+_STORAGE_HISTORY_BUCKET_SECONDS = {
+    "hourly": 3600,
+    "sixhour": 6 * 3600,
+    "daily": 86400,
+}
+_SECONDS_PER_DAY = 86400
+
+
+def _coerce_float(value):
+    """Convert a value to float when possible, else return None."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_storage_point(entry):
+    """Normalize one storage-history data point; return None for invalid input."""
+    if not isinstance(entry, dict):
+        return None
+    ts = coerce_int(entry.get("ts"))
+    if ts is None or ts <= 0:
+        return None
+    return {
+        "ts": ts,
+        "used_bytes": _coerce_float(entry.get("used_bytes")),
+        "available_bytes": _coerce_float(entry.get("available_bytes")),
+        "used_percent": _coerce_float(entry.get("used_percent")),
+    }
+
+
+def normalize_storage_history(obj):
+    """Normalize a storage_history object into the canonical four-tier shape."""
+    result = {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+    if not isinstance(obj, dict):
+        return result
+    for tier in _STORAGE_HISTORY_TIER_KEYS:
+        entries = obj.get(tier)
+        if not isinstance(entries, list):
+            continue
+        deduped = {}
+        for raw in entries:
+            point = _normalize_storage_point(raw)
+            if point is None:
+                continue
+            deduped[point["ts"]] = point
+        result[tier] = sorted(deduped.values(), key=lambda p: p["ts"])
+    return result
+
+
+def _storage_history_config(config):
+    """Resolve storage-history settings from a config dict with safe fallbacks."""
+    sh_cfg = {}
+    if isinstance(config, dict):
+        maybe_cfg = config.get("storage_history")
+        if isinstance(maybe_cfg, dict):
+            sh_cfg = maybe_cfg
+
+    def _pos_int(key, default):
+        val = coerce_int(sh_cfg.get(key))
+        return val if val is not None and val > 0 else default
+
+    daily_raw = sh_cfg.get("daily_retention_days", _STORAGE_HISTORY_DAILY_RETENTION_DAYS)
+    if daily_raw is None:
+        daily_retention = None
+    else:
+        daily_retention = coerce_int(daily_raw)
+        if daily_retention is not None and daily_retention <= 0:
+            daily_retention = None
+
+    return {
+        "raw_retention_days": _pos_int("raw_retention_days", _STORAGE_HISTORY_RAW_RETENTION_DAYS),
+        "hourly_retention_days": _pos_int(
+            "hourly_retention_days", _STORAGE_HISTORY_HOURLY_RETENTION_DAYS,
+        ),
+        "sixhour_retention_days": _pos_int(
+            "sixhour_retention_days", _STORAGE_HISTORY_SIXHOUR_RETENTION_DAYS,
+        ),
+        "daily_retention_days": daily_retention,
+        "min_sample_interval_seconds": _pos_int(
+            "min_sample_interval_seconds", _STORAGE_HISTORY_MIN_INTERVAL_SECONDS,
+        ),
+    }
+
+
+def append_storage_sample(history, sample, config=None):
+    """Append a sample to the raw tier; dedup when the previous sample is close.
+
+    Mutates *history* in place.  Expects the input already shaped by
+    ``normalize_storage_history`` (missing keys are created on demand).
+    Returns True when the sample was appended, False when skipped.
+    """
+    point = _normalize_storage_point(sample)
+    if point is None:
+        return False
+    resolved = _storage_history_config(config)
+    min_interval = resolved["min_sample_interval_seconds"]
+
+    raw = history.setdefault("raw", [])
+    if raw and (point["ts"] - raw[-1]["ts"]) < min_interval:
+        return False
+    for existing in raw:
+        if existing["ts"] == point["ts"]:
+            return False
+    raw.append(point)
+    raw.sort(key=lambda p: p["ts"])
+    return True
+
+
+def _median(values):
+    """Return the median of *values*, ignoring None.  Empty input → None."""
+    numbers = [v for v in values if v is not None]
+    if not numbers:
+        return None
+    numbers.sort()
+    n = len(numbers)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(numbers[mid])
+    return (numbers[mid - 1] + numbers[mid]) / 2.0
+
+
+def _promote_tier(src_entries, dst_entries, bucket_seconds, cutoff_ts):
+    """Move src points older than cutoff into dst as bucket medians.
+
+    Returns ``(remaining_src, updated_dst)``.  Buckets already present in
+    *dst_entries* are preserved (we do not re-aggregate stable history).
+    """
+    keep = []
+    aged = []
+    for entry in src_entries:
+        (aged if entry["ts"] < cutoff_ts else keep).append(entry)
+
+    dst_by_ts = {entry["ts"]: entry for entry in dst_entries}
+    buckets = {}
+    for entry in aged:
+        bucket_start = entry["ts"] - (entry["ts"] % bucket_seconds)
+        buckets.setdefault(bucket_start, []).append(entry)
+
+    for bucket_start, entries in buckets.items():
+        if bucket_start in dst_by_ts:
+            continue
+        dst_by_ts[bucket_start] = {
+            "ts": bucket_start,
+            "used_bytes": _median(e["used_bytes"] for e in entries),
+            "available_bytes": _median(e["available_bytes"] for e in entries),
+            "used_percent": _median(e["used_percent"] for e in entries),
+        }
+
+    return keep, sorted(dst_by_ts.values(), key=lambda p: p["ts"])
+
+
+def promote_storage_history(history, config=None, now_ts=None):
+    """Downsample aged points from one tier into the next.
+
+    Chain: raw → hourly → sixhour → daily.  Each promotion step groups aged
+    points by the destination tier's bucket size and stores the per-field
+    median.  Mutates *history* in place.
+    """
+    if not isinstance(history, dict):
+        return
+
+    resolved = _storage_history_config(config)
+    if now_ts is None:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+
+    for tier in _STORAGE_HISTORY_TIER_KEYS:
+        history.setdefault(tier, [])
+
+    promotions = [
+        ("raw", "hourly", resolved["raw_retention_days"]),
+        ("hourly", "sixhour", resolved["hourly_retention_days"]),
+        ("sixhour", "daily", resolved["sixhour_retention_days"]),
+    ]
+    for src_key, dst_key, retention_days in promotions:
+        cutoff = now_ts - retention_days * _SECONDS_PER_DAY
+        bucket_seconds = _STORAGE_HISTORY_BUCKET_SECONDS[dst_key]
+        history[src_key], history[dst_key] = _promote_tier(
+            history[src_key], history[dst_key], bucket_seconds, cutoff,
+        )
+
+
+def prune_storage_history(history, config=None, now_ts=None):
+    """Drop daily points older than daily_retention_days when a limit is set."""
+    if not isinstance(history, dict):
+        return
+    resolved = _storage_history_config(config)
+    daily_retention = resolved["daily_retention_days"]
+    if daily_retention is None:
+        return
+    if now_ts is None:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+    cutoff = now_ts - daily_retention * _SECONDS_PER_DAY
+    history["daily"] = [p for p in history.get("daily", []) if p["ts"] >= cutoff]
 
 
 # ── State / rule migration ────────────────────────────────────────────────────
@@ -505,6 +718,9 @@ def migrate_state(raw_state):
             migrated_ds_state["rescale_history"] = normalize_rescale_entries(
                 raw_ds_state.get("rescale_history"),
                 _MAX_RESCALE_HISTORY_ENTRIES,
+            )
+            migrated_ds_state["storage_history"] = normalize_storage_history(
+                raw_ds_state.get("storage_history"),
             )
 
         state["datastores"][str(ds_id)] = migrated_ds_state
