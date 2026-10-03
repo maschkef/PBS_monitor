@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
@@ -239,6 +239,37 @@ time_ago = _normalizers.time_ago
 time_until = _normalizers.time_until
 normalize_namespace = _normalizers.normalize_namespace
 should_hide_zfs_recv = _normalizers.should_hide_zfs_recv
+
+
+RESCALE_RANGE_ALLOWED = ("7d", "14d", "30d", "90d", "365d", "all")
+
+
+def _rescale_range_cutoff(range_str):
+    """Return a UTC datetime cutoff for a rescale range string, or None for 'all'."""
+    if range_str == "all":
+        return None
+    days = int(range_str.rstrip("d"))
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _filter_rescale_history(entries, cutoff):
+    """Filter normalized rescale entries by UTC cutoff; entries older than cutoff are dropped."""
+    if cutoff is None:
+        return list(entries or [])
+    filtered = []
+    for entry in entries or []:
+        ts = entry.get("timestamp")
+        if not isinstance(ts, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if parsed >= cutoff:
+            filtered.append(entry)
+    return filtered
 
 
 # ── Misc route helpers ────────────────────────────────────────────────────────
@@ -476,12 +507,14 @@ def get_datastores_metrics():
 @require_auth
 def get_datastores():
     """Fetch all datastores with full details."""
-    rescale_range = request.args.get("rescale_range", "90d")
-    if rescale_range not in {"7d", "30d", "90d", "180d", "365d"}:
-        return jsonify({"error": "Invalid rescale_range. Allowed: 7d, 30d, 90d, 180d, 365d."}), 400
+    rescale_range = request.args.get("rescale_range", "30d")
+    if rescale_range not in RESCALE_RANGE_ALLOWED:
+        allowed = ", ".join(RESCALE_RANGE_ALLOWED)
+        return jsonify({"error": f"Invalid rescale_range. Allowed: {allowed}."}), 400
     alerting_config = load_visual_alerting_config()
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
+    rescale_cutoff = _rescale_range_cutoff(rescale_range)
     try:
         datastores = api_get("/monitoring/v1/datastores")
     except requests.RequestException as e:
@@ -497,14 +530,25 @@ def get_datastores():
         except requests.RequestException:
             detail = ds
 
-        # Fetch rescale log
-        try:
-            rescale_log = api_get(
-                f"/monitoring/v1/datastores/{ds_id}/rescale-log",
-                params={"range": rescale_range},
-            )
-        except requests.RequestException:
-            rescale_log = []
+        # Prefer the locally-persisted rescale history (merged by the alerting
+        # daemon on every poll). Upstream API only serves ~30 days; local state
+        # grows beyond that from the moment the daemon starts recording.
+        local_history = (
+            alerting_state.get("datastores", {}).get(ds_id, {}).get("rescale_history")
+            or []
+        )
+        if local_history:
+            rescale_log = _filter_rescale_history(local_history, rescale_cutoff)
+            rescale_history_source = "local"
+        else:
+            try:
+                rescale_log = api_get(
+                    f"/monitoring/v1/datastores/{ds_id}/rescale-log",
+                    params={"range": "30d" if rescale_range == "all" else rescale_range},
+                )
+            except requests.RequestException:
+                rescale_log = []
+            rescale_history_source = "api"
 
         metrics = detail.get("metrics") or {}
         gc = detail.get("gc") or {}
@@ -620,7 +664,8 @@ def get_datastores():
                 **visual_alerting,
                 "state_source": state_source,
             },
-            "rescale_log": rescale_log[:10],
+            "rescale_log": rescale_log,
+            "rescale_history_source": rescale_history_source,
         })
 
     return jsonify(enriched)

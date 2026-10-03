@@ -1002,6 +1002,7 @@
                         <!-- Rescale Log -->
                         <div class="section" style="grid-column: 1 / -1;">
                             <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
+                            <div class="soft-note" style="margin-bottom:0.5rem;">Resize events only (up-/downscaling) — not actual storage usage.${ds.rescale_history_source === 'api' ? ' Longer ranges fill in from the alerting daemon over time.' : ''}</div>
                             ${renderRescaleLog(ds.rescale_log)}
                         </div>
 

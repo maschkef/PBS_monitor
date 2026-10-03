@@ -265,6 +265,7 @@ def default_datastore_state(name="unknown"):
             "active_slot_count": 0,
         },
         "backup_groups": {},
+        "rescale_history": [],
     }
 
 
@@ -322,6 +323,58 @@ def merge_snapshot_histories(existing_entries, new_entries, limit):
     for entry in normalize_snapshot_entries(new_entries):
         merged[entry["backup_time"]] = entry
     return normalize_snapshot_entries(merged.values(), limit)
+
+
+# ── Rescale history helpers ───────────────────────────────────────────────────
+
+def _rescale_dedupe_key(entry):
+    """Return a stable dedupe key for a normalized rescale entry."""
+    entry_id = entry.get("id")
+    if entry_id:
+        return ("id", entry_id)
+    return ("composite", entry.get("timestamp"), entry.get("from_gb"), entry.get("to_gb"))
+
+
+def normalize_rescale_entries(entries, limit=None):
+    """Normalize and deduplicate persisted rescale-log entries.
+
+    Entries are sorted newest first (lexicographic sort on ISO 8601 timestamps
+    is equivalent to chronological order for well-formed UTC timestamps).
+    """
+    normalized = {}
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        timestamp = entry.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            continue
+        from_gb = coerce_int(entry.get("from_gb"))
+        to_gb = coerce_int(entry.get("to_gb"))
+        reason = entry.get("reason") if isinstance(entry.get("reason"), str) else None
+        entry_id = entry.get("id") if isinstance(entry.get("id"), str) else None
+        clean = {
+            "id": entry_id,
+            "timestamp": timestamp,
+            "from_gb": from_gb,
+            "to_gb": to_gb,
+            "reason": reason,
+            "automatic": bool(entry.get("automatic", False)),
+        }
+        normalized[_rescale_dedupe_key(clean)] = clean
+    ordered = sorted(normalized.values(), key=lambda item: item["timestamp"], reverse=True)
+    if limit is not None:
+        ordered = ordered[:limit]
+    return ordered
+
+
+def merge_rescale_entries(existing_entries, new_entries, limit):
+    """Merge rescale history by id (or composite key), keeping newest first."""
+    merged = {}
+    for entry in normalize_rescale_entries(existing_entries):
+        merged[_rescale_dedupe_key(entry)] = entry
+    for entry in normalize_rescale_entries(new_entries):
+        merged[_rescale_dedupe_key(entry)] = entry
+    return normalize_rescale_entries(merged.values(), limit)
 
 
 # ── State / rule migration ────────────────────────────────────────────────────
@@ -449,6 +502,10 @@ def migrate_state(raw_state):
                     str(group_key): migrate_backup_group_state(group_state)
                     for group_key, group_state in raw_groups.items()
                 }
+            migrated_ds_state["rescale_history"] = normalize_rescale_entries(
+                raw_ds_state.get("rescale_history"),
+                _MAX_RESCALE_HISTORY_ENTRIES,
+            )
 
         state["datastores"][str(ds_id)] = migrated_ds_state
 
@@ -479,3 +536,4 @@ def migrate_group_rules(raw_rules):
 # These are set to match monitor.py's MAX_* constants and must stay in sync.
 _MAX_CURRENT_SNAPSHOT_DETAILS = 24
 _MAX_OBSERVED_SNAPSHOT_HISTORY = 1000
+_MAX_RESCALE_HISTORY_ENTRIES = 1000

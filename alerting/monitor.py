@@ -31,12 +31,14 @@ import requests
 from dotenv import load_dotenv
 
 from alerting.normalization import (
+    _MAX_RESCALE_HISTORY_ENTRIES,
     coerce_int,
     default_datastore_state,
     default_group_rules,
     default_state,
     is_group_ignored,
     make_rule_key,
+    merge_rescale_entries,
     merge_snapshot_histories,
     migrate_backup_group_state,
     migrate_group_rules,
@@ -46,6 +48,7 @@ from alerting.normalization import (
     normalize_group_rule,
     normalize_ignored_group,  # noqa: F401 — re-export for callers using alert_monitor.*
     normalize_ignored_groups,
+    normalize_rescale_entries,
     normalize_snapshot_entries,
     normalize_weekly_slots,
     purge_expired_ignored_groups,
@@ -416,6 +419,16 @@ def extract_namespace_backup_groups(namespace, namespace_data, snapshot_cap=MAX_
     return groups
 
 
+def fetch_rescale_log(config, datastore_id):
+    """Fetch the recent rescale-log entries (upstream default window: 30d)."""
+    entries = api_get(
+        config,
+        f"/monitoring/v1/datastores/{datastore_id}/rescale-log",
+        params={"range": "30d"},
+    )
+    return entries if isinstance(entries, list) else []
+
+
 def fetch_backup_inventory(config, datastore_id):
     """Fetch full PBS backup inventory for a datastore, grouped by namespace."""
     snapshot_cap = max(1, coerce_int(
@@ -606,6 +619,10 @@ def ensure_datastore_state(state, ds_id, name):
         str(group_key): migrate_backup_group_state(group_state)
         for group_key, group_state in backup_groups.items()
     }
+    ds_state["rescale_history"] = normalize_rescale_entries(
+        ds_state.get("rescale_history"),
+        _MAX_RESCALE_HISTORY_ENTRIES,
+    )
     return ds_state
 
 
@@ -1146,6 +1163,21 @@ def run_check(config, state):
             group_rules=group_rules,
             persist_group_rules=True,
         )
+
+        ds_id = ds.get("id", "")
+        if ds_id and metrics:
+            try:
+                new_rescale = fetch_rescale_log(config, ds_id)
+            except (requests.RequestException, RuntimeError) as e:
+                print(f"    • Rescale log unavailable: {e}")
+            else:
+                ds_state_ref = state["datastores"].get(ds_id)
+                if isinstance(ds_state_ref, dict):
+                    ds_state_ref["rescale_history"] = merge_rescale_entries(
+                        ds_state_ref.get("rescale_history"),
+                        new_rescale,
+                        _MAX_RESCALE_HISTORY_ENTRIES,
+                    )
 
         status_str = "OFFLINE" if not metrics else f"{metrics.get('used_percent', '?')}%"
         gc_status = (ds.get("gc") or {}).get("status", "?")

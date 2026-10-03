@@ -1409,14 +1409,15 @@
     <div class="header">
         <h1><img src="{{ url_for('static', filename='favicon.png') }}" alt="Logo" style="height: 1.8rem; width: 1.8rem; object-fit: contain;"> PBS Monitor</h1>
         <div class="header-actions">
-            <div class="header-control" title="Time range for the rescale history (only fetched on a full refresh)">
+            <div class="header-control" title="Time range for the rescale history. The upstream API only serves ~30 days; longer ranges read from the locally-persisted event history built up by the alerting daemon. Shows resize events only — not actual storage usage.">
                 Rescale:
                 <select class="header-select" id="rescaleRange" onchange="loadAll()">
                     <option value="7d">7 days</option>
-                    <option value="30d">30 days</option>
-                    <option value="90d" selected>90 days</option>
-                    <option value="180d">180 days</option>
+                    <option value="14d">14 days</option>
+                    <option value="30d" selected>30 days</option>
+                    <option value="90d">90 days</option>
                     <option value="365d">1 year</option>
+                    <option value="all">All</option>
                 </select>
             </div>
             <div class="header-control" title="Auto-refresh: only reloads frequently-changing data (metrics, health, GC/verification timestamps, alerts). Configuration, rescale-log and backup inventory are not fetched again.">
