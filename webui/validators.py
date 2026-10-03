@@ -135,6 +135,28 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 if v is None or v <= 0:
                     raise ValueError(f"schedule_learning.{int_key} must be a positive integer.")
 
+    if "storage_history" in payload:
+        if not isinstance(payload["storage_history"], dict):
+            raise ValueError("storage_history must be an object.")
+        sh = payload["storage_history"]
+        for int_key in ("raw_retention_days", "hourly_retention_days", "sixhour_retention_days"):
+            if int_key in sh:
+                v = coerce_int_fn(sh[int_key])
+                if v is None or v <= 0:
+                    raise ValueError(f"storage_history.{int_key} must be a positive integer.")
+        if "daily_retention_days" in sh:
+            raw = sh["daily_retention_days"]
+            if raw is not None and raw != "":
+                v = coerce_int_fn(raw)
+                if v is None or v <= 0:
+                    raise ValueError(
+                        "storage_history.daily_retention_days must be a positive integer or null."
+                    )
+        if "min_sample_interval_seconds" in sh:
+            v = coerce_int_fn(sh["min_sample_interval_seconds"])
+            if v is None or v < 60:
+                raise ValueError("storage_history.min_sample_interval_seconds must be at least 60.")
+
     if "notification_priorities" in payload:
         if not isinstance(payload["notification_priorities"], dict):
             raise ValueError("notification_priorities must be an object.")

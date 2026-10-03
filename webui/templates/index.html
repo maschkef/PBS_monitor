@@ -1520,6 +1520,7 @@
           <button class="tab-btn" onclick="switchTab('tab-thresholds',this)">Thresholds</button>
           <button class="tab-btn" onclick="switchTab('tab-quiet',this)">Quiet Hours</button>
           <button class="tab-btn" onclick="switchTab('tab-learning',this)">Schedule Learning</button>
+          <button class="tab-btn" onclick="switchTab('tab-history',this)">Usage History</button>
           <button class="tab-btn" onclick="switchTab('tab-cron',this)">Cron Setup</button>
           <button class="tab-btn" onclick="switchTab('tab-about',this);renderAboutTab()">About</button>
         </div>
@@ -1975,6 +1976,51 @@
               <option value="true">Yes</option>
               <option value="false">No</option>
             </select>
+          </div>
+        </div>
+
+        <!-- Usage History -->
+        <div id="tab-history" class="tab-panel">
+          <p class="soft-note" style="margin-top:0;margin-bottom:0.75rem;">
+            The alerting daemon records one storage-usage sample per run. Older samples are automatically
+            downsampled to the next tier (hourly median → 6-hourly median → daily median) using the
+            retention values below. Chart data is read from state.json — changes take effect on the next
+            daemon run.
+          </p>
+          <div class="form-group">
+            <label>Raw retention <span class="tooltip-icon">i<span class="tooltip-text">How long raw per-run samples are kept before being promoted to the hourly tier (median per hour). Lower values save state size; higher values preserve full resolution for recent history. Default: 7 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-raw" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Hourly retention <span class="tooltip-icon">i<span class="tooltip-text">How long hourly medians are kept before being promoted to the 6-hourly tier. Should typically be longer than the raw retention. Default: 30 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-hourly" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>6-hourly retention <span class="tooltip-icon">i<span class="tooltip-text">How long 6-hourly medians are kept before being promoted to the daily tier. Should typically be longer than the hourly retention. Default: 90 days.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-sixhour" min="1" step="1">
+              <span class="input-suffix">days</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Daily retention <span class="tooltip-icon">i<span class="tooltip-text">How long daily medians are kept. Leave empty to keep daily points indefinitely (recommended — one point per day is cheap). Set a value only if you want to cap long-term history. Default: unlimited.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-daily" min="1" step="1" placeholder="unlimited">
+              <span class="input-suffix">days</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Min. sample interval <span class="tooltip-icon">i<span class="tooltip-text">Minimum spacing between raw samples. Samples arriving sooner are dropped — prevents duplicate points when the daemon runs more frequently than this interval (e.g. multiple cron runs). Minimum: 60 seconds. Default: 300 (5 minutes).</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-interval" min="60" step="1">
+              <span class="input-suffix">sec</span>
+            </div>
           </div>
         </div>
 

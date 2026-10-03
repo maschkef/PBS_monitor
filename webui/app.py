@@ -987,6 +987,27 @@ def save_alerting_config():
                 if val is not None and val > 0:
                     raw_sl[int_key] = val
 
+    if "storage_history" in payload and isinstance(payload["storage_history"], dict):
+        raw_sh = raw_config.setdefault("storage_history", {})
+        sh = payload["storage_history"]
+        for int_key in ("raw_retention_days", "hourly_retention_days", "sixhour_retention_days"):
+            if int_key in sh:
+                val = alert_monitor.coerce_int(sh[int_key])
+                if val is not None and val > 0:
+                    raw_sh[int_key] = val
+        if "daily_retention_days" in sh:
+            raw_val = sh["daily_retention_days"]
+            if raw_val is None or raw_val == "":
+                raw_sh["daily_retention_days"] = None
+            else:
+                val = alert_monitor.coerce_int(raw_val)
+                if val is not None and val > 0:
+                    raw_sh["daily_retention_days"] = val
+        if "min_sample_interval_seconds" in sh:
+            val = alert_monitor.coerce_int(sh["min_sample_interval_seconds"])
+            if val is not None and val >= 60:
+                raw_sh["min_sample_interval_seconds"] = val
+
     if "notification_priorities" in payload and isinstance(payload["notification_priorities"], dict):
         raw_np = raw_config.setdefault("notification_priorities", {})
         for sev in ("warning", "critical"):

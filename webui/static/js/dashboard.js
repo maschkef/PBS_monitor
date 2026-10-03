@@ -1747,6 +1747,13 @@
                 document.getElementById('cfg-sl-retention').value = sl.snapshot_retention_count ?? 24;
                 document.getElementById('cfg-sl-downgrade').value = sl.downgrade_when_offschedule === false ? 'false' : 'true';
 
+                const sh = c.storage_history || {};
+                document.getElementById('cfg-sh-raw').value = sh.raw_retention_days ?? 7;
+                document.getElementById('cfg-sh-hourly').value = sh.hourly_retention_days ?? 30;
+                document.getElementById('cfg-sh-sixhour').value = sh.sixhour_retention_days ?? 90;
+                document.getElementById('cfg-sh-daily').value = sh.daily_retention_days == null ? '' : sh.daily_retention_days;
+                document.getElementById('cfg-sh-interval').value = sh.min_sample_interval_seconds ?? 300;
+
                 if (res.read_only) {
                     document.getElementById('saveConfigBtn').disabled = true;
                     document.querySelectorAll('#settingsModal input, #settingsModal select')
@@ -1937,6 +1944,16 @@
                     snapshot_retention_count: parseInt(document.getElementById('cfg-sl-retention').value),
                     downgrade_when_offschedule: document.getElementById('cfg-sl-downgrade').value === 'true',
                 },
+                storage_history: (() => {
+                    const dailyRaw = document.getElementById('cfg-sh-daily').value.trim();
+                    return {
+                        raw_retention_days: parseInt(document.getElementById('cfg-sh-raw').value),
+                        hourly_retention_days: parseInt(document.getElementById('cfg-sh-hourly').value),
+                        sixhour_retention_days: parseInt(document.getElementById('cfg-sh-sixhour').value),
+                        daily_retention_days: dailyRaw === '' ? null : parseInt(dailyRaw),
+                        min_sample_interval_seconds: parseInt(document.getElementById('cfg-sh-interval').value),
+                    };
+                })(),
             };
 
             try {

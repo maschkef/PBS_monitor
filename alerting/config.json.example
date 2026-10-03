@@ -54,5 +54,14 @@
   "alert_cooldown_minutes": 60,
 
   "_comment_daemon": "Interval for daemon mode checks in seconds.",
-  "daemon_interval_seconds": 1800
+  "daemon_interval_seconds": 1800,
+
+  "_comment_storage_history": "Retention and sampling for the per-datastore usage-history chart. Samples are collected by the alerting daemon on each run. Tiered downsampling moves aged samples into coarser buckets: raw → hourly (median per hour) → 6-hourly (median per 6h) → daily (median per day). raw_retention_days: how long raw samples are kept before being promoted to the hourly tier. hourly_retention_days: how long hourly medians are kept before being promoted to 6-hourly. sixhour_retention_days: how long 6-hourly medians are kept before being promoted to daily. daily_retention_days: null = keep daily medians forever, otherwise days to retain. min_sample_interval_seconds: minimum spacing between raw samples (dedup for rapid daemon reruns).",
+  "storage_history": {
+    "raw_retention_days": 7,
+    "hourly_retention_days": 30,
+    "sixhour_retention_days": 90,
+    "daily_retention_days": null,
+    "min_sample_interval_seconds": 300
+  }
 }

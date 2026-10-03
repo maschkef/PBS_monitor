@@ -98,6 +98,39 @@ class TestConfigSave:
         assert qh["start"] == "22:00"
         assert qh["min_priority"] == 4
 
+    def test_storage_history_saved(self, monkeypatch, client_auth, tmp_path):
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"storage_history": {
+                "raw_retention_days": 10,
+                "hourly_retention_days": 45,
+                "sixhour_retention_days": 180,
+                "daily_retention_days": 730,
+                "min_sample_interval_seconds": 600,
+            }},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        sh = read_config(tmp_path)["storage_history"]
+        assert sh["raw_retention_days"] == 10
+        assert sh["hourly_retention_days"] == 45
+        assert sh["sixhour_retention_days"] == 180
+        assert sh["daily_retention_days"] == 730
+        assert sh["min_sample_interval_seconds"] == 600
+
+    def test_storage_history_daily_null_persisted(self, monkeypatch, client_auth, tmp_path):
+        """Submitting null for daily_retention_days must store null (unlimited)."""
+        write_config(tmp_path, {"storage_history": {"daily_retention_days": 42}})
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"storage_history": {"daily_retention_days": None}},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        assert read_config(tmp_path)["storage_history"]["daily_retention_days"] is None
+
     def test_notification_priorities_saved(self, monkeypatch, client_auth, tmp_path):
         csrf = self._setup(client_auth, tmp_path, monkeypatch)
         rv = client_auth.post(

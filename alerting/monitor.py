@@ -177,6 +177,13 @@ DEFAULT_CONFIG = {
     },
     "alert_cooldown_minutes": 60,
     "daemon_interval_seconds": 1800,  # 30 minutes default for daemon mode
+    "storage_history": {
+        "raw_retention_days": 7,
+        "hourly_retention_days": 30,
+        "sixhour_retention_days": 90,
+        "daily_retention_days": None,  # null → never prune daily tier.
+        "min_sample_interval_seconds": 300,
+    },
 }
 
 
@@ -245,6 +252,10 @@ def load_config():
         merged["schedule_learning"] = {
             **DEFAULT_CONFIG["schedule_learning"],
             **cfg.get("schedule_learning", {}),
+        }
+        merged["storage_history"] = {
+            **DEFAULT_CONFIG["storage_history"],
+            **cfg.get("storage_history", {}),
         }
         merged["ignored_groups"] = normalize_ignored_groups(cfg.get("ignored_groups"))
         return merged

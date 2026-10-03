@@ -144,6 +144,89 @@ class TestConfigTimeFormat:
         assert "min_priority" in rv.get_json().get("error", "")
 
 
+# ── Config: storage_history validation ───────────────────────────────────────
+
+class TestConfigStorageHistory:
+    """Validation of the storage_history retention/sampling block."""
+
+    def test_non_object_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": "not-an-object"})
+        assert rv.status_code == 400
+        assert "storage_history" in rv.get_json().get("error", "")
+
+    @pytest.mark.parametrize(
+        "field",
+        ["raw_retention_days", "hourly_retention_days", "sixhour_retention_days"],
+    )
+    def test_zero_retention_returns_400(self, monkeypatch, client_auth, tmp_path, field):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {field: 0}})
+        assert rv.status_code == 400
+        assert f"storage_history.{field}" in rv.get_json().get("error", "")
+
+    @pytest.mark.parametrize(
+        "field",
+        ["raw_retention_days", "hourly_retention_days", "sixhour_retention_days"],
+    )
+    def test_negative_retention_returns_400(self, monkeypatch, client_auth, tmp_path, field):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {field: -3}})
+        assert rv.status_code == 400
+
+    @pytest.mark.parametrize(
+        "field",
+        ["raw_retention_days", "hourly_retention_days", "sixhour_retention_days"],
+    )
+    def test_non_integer_retention_returns_400(self, monkeypatch, client_auth, tmp_path, field):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {field: "many"}})
+        assert rv.status_code == 400
+
+    def test_daily_retention_null_is_valid(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"daily_retention_days": None}})
+        assert rv.status_code == 200
+
+    def test_daily_retention_empty_string_is_valid(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"daily_retention_days": ""}})
+        assert rv.status_code == 200
+
+    def test_daily_retention_zero_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"daily_retention_days": 0}})
+        assert rv.status_code == 400
+        assert "storage_history.daily_retention_days" in rv.get_json().get("error", "")
+
+    def test_daily_retention_positive_is_valid(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"daily_retention_days": 365}})
+        assert rv.status_code == 200
+
+    def test_min_sample_interval_below_60_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"min_sample_interval_seconds": 59}})
+        assert rv.status_code == 400
+        assert "storage_history.min_sample_interval_seconds" in rv.get_json().get("error", "")
+
+    def test_min_sample_interval_60_is_valid(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"min_sample_interval_seconds": 60}})
+        assert rv.status_code == 200
+
+    def test_full_valid_block_accepted(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {
+            "raw_retention_days": 7,
+            "hourly_retention_days": 30,
+            "sixhour_retention_days": 90,
+            "daily_retention_days": None,
+            "min_sample_interval_seconds": 300,
+        }})
+        assert rv.status_code == 200
+
+
 # ── Group-rule: string length limits ─────────────────────────────────────────
 
 class TestGroupRuleStringLengths:
