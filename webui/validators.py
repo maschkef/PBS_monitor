@@ -109,6 +109,20 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                 v = coerce_int_fn(thr[k])
                 if v is None or v <= 0:
                     raise ValueError(f"thresholds.{k} must be a positive integer.")
+        if "replication_stale_multiplier" in thr:
+            raw = thr["replication_stale_multiplier"]
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError("thresholds.replication_stale_multiplier must be a number > 1.0.")
+            if v <= 1.0:
+                raise ValueError("thresholds.replication_stale_multiplier must be a number > 1.0.")
+        if "replication_stale_grace_minutes" in thr:
+            v = coerce_int_fn(thr["replication_stale_grace_minutes"])
+            if v is None or v < 0:
+                raise ValueError(
+                    "thresholds.replication_stale_grace_minutes must be a non-negative integer."
+                )
 
     if "quiet_hours" in payload:
         if not isinstance(payload["quiet_hours"], dict):
@@ -129,7 +143,8 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
         if "timezone" in sl and (not isinstance(sl["timezone"], str) or len(sl["timezone"]) > 64):
             raise ValueError("schedule_learning.timezone must be a string of at most 64 characters.")
         for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
-                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
+                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count",
+                        "observed_snapshot_history_max"):
             if int_key in sl:
                 v = coerce_int_fn(sl[int_key])
                 if v is None or v <= 0:
@@ -156,6 +171,12 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
             v = coerce_int_fn(sh["min_sample_interval_seconds"])
             if v is None or v < 60:
                 raise ValueError("storage_history.min_sample_interval_seconds must be at least 60.")
+        if "rescale_history_max_entries" in sh:
+            v = coerce_int_fn(sh["rescale_history_max_entries"])
+            if v is None or v <= 0:
+                raise ValueError(
+                    "storage_history.rescale_history_max_entries must be a positive integer."
+                )
 
     if "notification_priorities" in payload:
         if not isinstance(payload["notification_priorities"], dict):

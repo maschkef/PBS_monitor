@@ -1887,6 +1887,20 @@
               <span class="input-suffix">days</span>
             </div>
           </div>
+          <div class="form-group">
+            <label>Replication stale multiplier <span class="tooltip-icon">i<span class="tooltip-text">Replication-stale alerts fire when the lag exceeds max(interval + grace, interval × multiplier). Example: at a 60-min interval and multiplier 2.0, an alert fires after 120 min. Must be greater than 1.0. Default: 2.0.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-replication-mult" min="1.01" step="0.1">
+              <span class="input-suffix">× interval</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Replication stale grace <span class="tooltip-icon">i<span class="tooltip-text">Minimum buffer added to the replication interval before an alert fires, in addition to the multiplier. Protects short-interval replications from premature alerts caused by brief delays. Default: 30 minutes.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-thr-replication-grace" min="0" step="1">
+              <span class="input-suffix">min</span>
+            </div>
+          </div>
         </div>
 
         <!-- Quiet Hours -->
@@ -1964,9 +1978,16 @@
             </div>
           </div>
           <div class="form-group">
-            <label>Snapshot retention <span class="tooltip-icon">i<span class="tooltip-text">How many recent snapshots per backup group are kept in state for schedule learning and snapshot-loss detection. Raise this to improve detection coverage for groups with many daily backups.</span></span></label>
+            <label>Snapshot retention <span class="tooltip-icon">i<span class="tooltip-text">How many recent snapshots per backup group are kept in state and shown in the Backup Browser. Used for schedule learning and snapshot-loss detection. Raise this if you have more daily backups per group than the current value (e.g., groups keeping 50+ snapshots).</span></span></label>
             <div class="input-group">
               <input type="number" id="cfg-sl-retention" min="1" step="1">
+              <span class="input-suffix">/ grp</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Observed snapshot history <span class="tooltip-icon">i<span class="tooltip-text">Longer-term snapshot history retained per backup group for schedule inference. Higher values give schedule learning more data at the cost of state size. Default: 1000 entries per group.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sl-observed-max" min="1" step="1">
               <span class="input-suffix">/ grp</span>
             </div>
           </div>
@@ -2020,6 +2041,13 @@
             <div class="input-group">
               <input type="number" id="cfg-sh-interval" min="60" step="1">
               <span class="input-suffix">sec</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Rescale history max entries <span class="tooltip-icon">i<span class="tooltip-text">How many plan-rescale events to keep per datastore. Rescale events are shown as vertical markers on the usage-history chart. Higher values preserve longer rescale history at the cost of state size. Default: 1000 entries.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sh-rescale-max" min="1" step="1">
+              <span class="input-suffix">entries</span>
             </div>
           </div>
         </div>

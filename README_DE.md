@@ -118,7 +118,8 @@ Dashboard öffnen: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 - **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden; Intervall-Schedules unterstützen eine optionale Ankerzeit (z. B. `06:00` → Backups erwartet um 06:00, 08:00, 10:00 …)
 - **Nächstes Backup** — jede Backup-Gruppe im Alerting-Panel zeigt den berechneten nächsten erwarteten Backup-Zeitpunkt basierend auf dem aktiven Schedule
 - **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten; ignorierte Gruppen werden in einer ausklappbaren Liste angezeigt und können jederzeit reaktiviert werden (Unignore)
-- **Rescale-History** — Timeline der letzten 90 Tage (Autoscaling-Events, manuelle Resizes)
+- **Usage-History-Chart** — Liniendiagramm pro Datastore mit linker %-Achse und rechter SI-Byte-Achse, Polylinien für Verwendung in %, verwendete Bytes und Gesamtgröße (Referenzlinie), interaktivem Tooltip und einem Range-Selektor (7d / 30d / 90d / 365d / all). Der Alerting-Daemon persistiert Samples getiert in den State (raw → stündlich → 6-stündlich → täglich per Median-Aggregation), sodass die Historie deutlich über das Live-Fenster der API hinauswächst; Retention und Sampling sind im Settings-Tab **Usage History** konfigurierbar
+- **Rescale-History** — Timeline von Autoscaling-Events und manuellen Resizes mit konfigurierbarem Zeitraum (7d / 14d / 30d / 90d / 365d / all, Standard 30d); der Alerting-Daemon fügt neue Events in den lokalen State ein, sodass die Historie im Diagramm über das ~30-Tage-Fenster der API hinauswächst
 - **Benachrichtigungs-Log** — persistente History aller gesendeten Alerts (inkl. Test-Benachrichtigungen); über den **📋 Log**-Button in der Kopfzeile einsehbar, komplett löschbar oder zeilenweise entfernbar
 - **About-Tab** — zeigt aktuelle laufende Version und Umgebung (Docker/Native) inklusive manuellem GitHub-Release-Updatecheck
 - **Visuelles Alerting** — aktuelle Alarmzustände und gelernte Backup-Fenster direkt im Dashboard
@@ -225,7 +226,7 @@ python -m alerting.monitor --daemon 1800
 - **Missed-Backup-Alerts** — warnt bei verpassten gelernten Backup-Fenstern und behandelt manuelle Off-Schedule-Läufe als Ausreißer; kann diese Alerts optional auf normale Priorität herabstufen und Wiederholungen bis zum nächsten erwarteten Backup unterdrücken, wenn am selben Tag bereits ein Off-Schedule-Snapshot erkannt wurde
 - **Gesperrte Gruppenregeln** — manuelle Zeitpläne können das Lernen für einzelne Backup-Gruppen übersteuern; Intervall-Schedules akzeptieren eine optionale Ankerzeit (HH:MM), sodass die Erwartung an einem festen Startzeitpunkt ausgerichtet ist statt am letzten beobachteten Backup
 - **Ignorierte Gruppen** — Backup-Gruppen können über die UI oder Konfiguration komplett vom Monitoring ausgeschlossen und jederzeit über die Web UI wieder reaktiviert werden
-- **Replication-Lag-Alerts** — warnt wenn eine konfigurierte Replikation deutlich hinterherhängt
+- **Replication-Lag-Alerts** — warnt wenn eine konfigurierte Replikation deutlich hinterherhängt; der Schwellwert ist `max(interval + grace, interval × multiplier)` mit konfigurierbarem Multiplikator (Standard `2.0`, muss > 1.0 sein) und Grace-Minuten (Standard `30`)
 - **Host-Offline-Erkennung** — Alert wenn der Server nicht erreichbar ist
 - **Immutable Backup Warnung** — Alert bei pending Disable-Request
 - **API-Health-Check** — Prüft die Plattform-Erreichbarkeit
@@ -337,12 +338,14 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
   
-  "_comment_thresholds": "Warning and critical thresholds for datastore events.",
+  "_comment_thresholds": "Warning and critical thresholds for datastore events. replication_stale_multiplier and replication_stale_grace_minutes control when the 'Replication Stale' alert fires: threshold_minutes = max(interval + grace, interval * multiplier). Multiplier must be > 1.0 (otherwise an alert would fire on every interval).",
   "thresholds": {
     "storage_warn_percent": 80,
     "storage_crit_percent": 90,
     "gc_max_age_hours": 36,
-    "verification_max_age_days": 14
+    "verification_max_age_days": 14,
+    "replication_stale_multiplier": 2.0,
+    "replication_stale_grace_minutes": 30
   },
   
   "_comment_quiet_hours": "Suppresses lower-priority alerts during specified hours.",
@@ -360,7 +363,7 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "per_alert": {}
   },
   
-  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day.",
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day. snapshot_retention_count also caps how many snapshots per group are shown in the backup browser. observed_snapshot_history_max is the longer-term snapshot history retained for schedule inference.",
   "schedule_learning": {
     "enabled": true,
     "timezone": "local",
@@ -369,7 +372,8 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
     "stale_after_days": 8,
-    "snapshot_retention_count": 24,
+    "snapshot_retention_count": 50,
+    "observed_snapshot_history_max": 1000,
     "downgrade_when_offschedule": true
   },
   
@@ -377,7 +381,17 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
   "alert_cooldown_minutes": 60,
   
   "_comment_daemon": "Interval for daemon mode checks in seconds.",
-  "daemon_interval_seconds": 1800
+  "daemon_interval_seconds": 1800,
+
+  "_comment_storage_history": "Retention und Sampling für das Usage-History-Chart pro Datastore. Samples werden bei jedem Alerting-Daemon-Lauf gesammelt. Getiertes Downsampling verschiebt alte Samples in gröbere Buckets: raw → stündlich (Median je Stunde) → 6-stündlich (Median je 6h) → täglich (Median je Tag). raw_retention_days: wie lange Rohsamples gehalten werden, bevor sie in den stündlichen Tier promotet werden. hourly_retention_days: wie lange stündliche Mediane gehalten werden, bevor sie in 6-stündlich promotet werden. sixhour_retention_days: wie lange 6-stündliche Mediane gehalten werden, bevor sie in den täglichen Tier promotet werden. daily_retention_days: null = Mediane im täglichen Tier dauerhaft behalten, sonst Tage. min_sample_interval_seconds: Mindestabstand zwischen Rohsamples (Dedup bei schnellen Daemon-Reruns). rescale_history_max_entries: maximale Anzahl der pro Datastore gespeicherten Plan-Rescale-Events (als Marker im Chart dargestellt).",
+  "storage_history": {
+    "raw_retention_days": 7,
+    "hourly_retention_days": 30,
+    "sixhour_retention_days": 90,
+    "daily_retention_days": null,
+    "min_sample_interval_seconds": 300,
+    "rescale_history_max_entries": 1000
+  }
 }
 ```
 
@@ -396,6 +410,8 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `storage_crit_percent` | Speicher-Kritisch ab diesem Prozentsatz |
 | `gc_max_age_hours` | GC gilt als überfällig nach X Stunden |
 | `verification_max_age_days` | Verification gilt als überfällig nach X Tagen |
+| `replication_stale_multiplier` | Multiplikator, der auf das Replikations-Intervall angewendet wird, um den „Replication Stale"-Schwellwert zu bilden. Muss > 1.0 sein (sonst würde ein Alert bei jedem Intervall feuern). Standard: `2.0`. In der Web UI unter **Thresholds** konfigurierbar |
+| `replication_stale_grace_minutes` | Nicht-negativer Puffer, der zum Replikations-Intervall hinzugerechnet wird, bevor der Stale-Schwellwert greift. Finaler Schwellwert: `max(interval + grace, interval × multiplier)`. Standard: `30` |
 | `notification_priorities.warning` | ntfy-Priorität für Warning-Tier-Alerts (Standard: `4` = high). Gilt für: GC failed/overdue/never ran, Host offline, verpasste Backups, Storage Warning, Replication stale, Immutable Disable pending, Snapshots unerwartet entfernt. Wenn `schedule_learning.downgrade_when_offschedule` aktiviert ist und am selben Tag ein Off-Schedule-Snapshot existiert, werden Missed-Backup-Alerts stattdessen auf Priorität `3` herabgestuft |
 | `notification_priorities.critical` | ntfy-Priorität für Critical-Tier-Alerts (Standard: `5` = urgent). Gilt für: Storage Critical, Verification failed, All Backups Gone, API unreachable, Heartbeat failed |
 | `notification_priorities.per_alert` | Optionales Objekt für individuelle Prioritäts-Overrides pro Alert-Typ. Schlüssel entsprechen dem Alert-Typ (z. B. `"gc_failed"`, `"verification_overdue"`, `"all_backups_gone"`). Wert `1`-`5` zum Überschreiben, `"ignore"` zum vollständigen Unterdrücken dieses Alert-Typs; weglassen oder `null` um auf den Tier-Default zurückzufallen. Konfigurierbar über **Per-Alert Priority Overrides** in der Web UI |
@@ -408,10 +424,17 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `schedule_learning.time_tolerance_minutes` | Erlaubte zeitliche Abweichung in Minuten für das Lernen und Matchen. Standard: `30` |
 | `schedule_learning.due_grace_minutes` | Wie lange ein gelerntes Backup-Fenster verspätet sein darf, bevor ein Alert erzeugt wird. Standard: `30` |
 | `schedule_learning.stale_after_days` | Zusätzliche Tage über die normale wöchentliche Slot-Kadenz hinaus, bevor ein gelernter Slot als veraltet gilt |
-| `schedule_learning.snapshot_retention_count` | Wie viele der neuesten Snapshots pro Backup-Gruppe im State gespeichert werden (Standard: 24). Wird für Schedule-Learning und Snapshot-Verlust-Erkennung verwendet — bei Gruppen mit vielen täglichen Backups erhöhen |
+| `schedule_learning.snapshot_retention_count` | Wie viele der neuesten Snapshots pro Backup-Gruppe im State gespeichert **und im Backup-Browser angezeigt** werden (Standard: 50). Wird für Schedule-Learning und Snapshot-Verlust-Erkennung verwendet — bei Gruppen mit mehr täglichen Backups als dem aktuellen Wert erhöhen |
+| `schedule_learning.observed_snapshot_history_max` | Längerfristige, pro Backup-Gruppe gehaltene Snapshot-Historie für die Schedule-Inferenz (Standard: 1000). Höhere Werte geben dem Schedule-Learning mehr Datenbasis, erhöhen aber die State-Größe |
 | `schedule_learning.downgrade_when_offschedule` | Wenn `true` (Standard), werden Missed-Backup-Alerts bei bereits vorhandenem Off-Schedule-Snapshot am selben Tag von Priorität `4` auf `3` herabgestuft und weitere Alerts für denselben verpassten Lauf bis zum nächsten erwarteten Backup unterdrückt |
 | `alert_cooldown_minutes` | Mindestzeit zwischen wiederholten Alerts gleichen Typs |
 | `daemon_interval_seconds` | Wie oft der Daemon nach Problemen sucht im Daemon-Modus (`--daemon`, `--daemon 0` oder Docker-Container, Sekunden, Standard: 1800). Ein positiver CLI-Wert wie `--daemon 600` überschreibt diese Einstellung. In der Web UI unter **Daemon Interval (minutes)** konfigurierbar — die Umrechnung erfolgt automatisch. |
+| `storage_history.raw_retention_days` | Wie lange rohe Storage-Samples gehalten werden, bevor sie in den stündlichen Tier promotet werden (Standard: `7`). Werden bei jedem Alerting-Daemon-Lauf gesammelt |
+| `storage_history.hourly_retention_days` | Wie lange stündliche Mediane gehalten werden, bevor sie in den 6-stündlichen Tier promotet werden (Standard: `30`) |
+| `storage_history.sixhour_retention_days` | Wie lange 6-stündliche Mediane gehalten werden, bevor sie in den täglichen Tier promotet werden (Standard: `90`) |
+| `storage_history.daily_retention_days` | Retention für den täglichen Tier. `null` (Standard) behält tägliche Mediane dauerhaft; sonst ein positiver Integer in Tagen |
+| `storage_history.min_sample_interval_seconds` | Mindestabstand zwischen Rohsamples; Dedup bei schnellen Daemon-Reruns (Standard: `300`, Minimum `60`) |
+| `storage_history.rescale_history_max_entries` | Maximale Anzahl pro Datastore gespeicherter Plan-Rescale-Events (werden als Marker im Usage-History-Chart dargestellt, Standard: `1000`). Alle `storage_history.*`-Werte sind in der Web UI im Settings-Tab **Usage History** konfigurierbar |
 
 Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` oder der Shell):
 

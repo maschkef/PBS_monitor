@@ -957,6 +957,17 @@ def save_alerting_config():
                 val = alert_monitor.coerce_int(payload["thresholds"][k])
                 if val is not None and val > 0:
                     raw_thr[k] = val
+        if "replication_stale_multiplier" in payload["thresholds"]:
+            try:
+                mult_val = float(payload["thresholds"]["replication_stale_multiplier"])
+            except (TypeError, ValueError):
+                mult_val = None
+            if mult_val is not None and mult_val > 1.0:
+                raw_thr["replication_stale_multiplier"] = mult_val
+        if "replication_stale_grace_minutes" in payload["thresholds"]:
+            val = alert_monitor.coerce_int(payload["thresholds"]["replication_stale_grace_minutes"])
+            if val is not None and val >= 0:
+                raw_thr["replication_stale_grace_minutes"] = val
 
     if "quiet_hours" in payload and isinstance(payload["quiet_hours"], dict):
         raw_qh = raw_config.setdefault("quiet_hours", {})
@@ -981,7 +992,8 @@ def save_alerting_config():
         if "downgrade_when_offschedule" in sl:
             raw_sl["downgrade_when_offschedule"] = bool(sl["downgrade_when_offschedule"])
         for int_key in ("history_window_days", "min_occurrences", "time_tolerance_minutes",
-                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count"):
+                        "due_grace_minutes", "stale_after_days", "snapshot_retention_count",
+                        "observed_snapshot_history_max"):
             if int_key in sl:
                 val = alert_monitor.coerce_int(sl[int_key])
                 if val is not None and val > 0:
@@ -1007,6 +1019,10 @@ def save_alerting_config():
             val = alert_monitor.coerce_int(sh["min_sample_interval_seconds"])
             if val is not None and val >= 60:
                 raw_sh["min_sample_interval_seconds"] = val
+        if "rescale_history_max_entries" in sh:
+            val = alert_monitor.coerce_int(sh["rescale_history_max_entries"])
+            if val is not None and val > 0:
+                raw_sh["rescale_history_max_entries"] = val
 
     if "notification_priorities" in payload and isinstance(payload["notification_priorities"], dict):
         raw_np = raw_config.setdefault("notification_priorities", {})

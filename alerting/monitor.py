@@ -152,6 +152,8 @@ DEFAULT_CONFIG = {
         "storage_crit_percent": 90,
         "gc_max_age_hours": 36,
         "verification_max_age_days": 14,
+        "replication_stale_multiplier": 2.0,
+        "replication_stale_grace_minutes": 30,
     },
     "quiet_hours": {
         "enabled": False,
@@ -172,7 +174,8 @@ DEFAULT_CONFIG = {
         "time_tolerance_minutes": 30,
         "due_grace_minutes": 30,
         "stale_after_days": 8,
-        "snapshot_retention_count": 24,
+        "snapshot_retention_count": 50,
+        "observed_snapshot_history_max": 1000,
         "downgrade_when_offschedule": True,
     },
     "alert_cooldown_minutes": 60,
@@ -183,8 +186,44 @@ DEFAULT_CONFIG = {
         "sixhour_retention_days": 90,
         "daily_retention_days": None,  # null → never prune daily tier.
         "min_sample_interval_seconds": 300,
+        "rescale_history_max_entries": 1000,
     },
 }
+
+
+# ─── Config value resolvers ─────────────────────────────────────────────────
+
+def resolve_rescale_history_max(config):
+    """Resolve the per-datastore rescale-history cap from config with a safe fallback."""
+    sh_cfg = (config or {}).get("storage_history") if isinstance(config, dict) else None
+    val = coerce_int((sh_cfg or {}).get("rescale_history_max_entries"))
+    return val if val is not None and val > 0 else _MAX_RESCALE_HISTORY_ENTRIES
+
+
+def resolve_observed_snapshot_history_max(config):
+    """Resolve the per-group observed-snapshot history cap from config."""
+    sl_cfg = (config or {}).get("schedule_learning") if isinstance(config, dict) else None
+    val = coerce_int((sl_cfg or {}).get("observed_snapshot_history_max"))
+    return val if val is not None and val > 0 else MAX_OBSERVED_SNAPSHOT_HISTORY
+
+
+def resolve_replication_stale_params(config):
+    """Resolve (multiplier, grace_minutes) for the replication-stale alert."""
+    thr = (config or {}).get("thresholds") if isinstance(config, dict) else None
+    thr = thr or {}
+    raw_mult = thr.get("replication_stale_multiplier")
+    multiplier = 2.0
+    if raw_mult is not None:
+        try:
+            multiplier = float(raw_mult)
+        except (TypeError, ValueError):
+            multiplier = 2.0
+    if multiplier <= 1.0:
+        multiplier = 2.0
+    grace = coerce_int(thr.get("replication_stale_grace_minutes"))
+    if grace is None or grace < 0:
+        grace = 30
+    return multiplier, grace
 
 
 # ─── Config / state I/O ─────────────────────────────────────────────────────
@@ -616,7 +655,7 @@ def purge_ignored_backup_groups(ds_state, config, datastore_id):
 
 # ─── Datastore state management ──────────────────────────────────────────────
 
-def ensure_datastore_state(state, ds_id, name):
+def ensure_datastore_state(state, ds_id, name, config=None):
     """Ensure the persistent state for one datastore exists and is normalized."""
     ds_state = state["datastores"].setdefault(ds_id, default_datastore_state(name))
     ds_state["name"] = name
@@ -635,9 +674,10 @@ def ensure_datastore_state(state, ds_id, name):
         str(group_key): migrate_backup_group_state(group_state)
         for group_key, group_state in backup_groups.items()
     }
+    rescale_cap = resolve_rescale_history_max(config)
     ds_state["rescale_history"] = normalize_rescale_entries(
         ds_state.get("rescale_history"),
-        _MAX_RESCALE_HISTORY_ENTRIES,
+        rescale_cap,
     )
     ds_state["storage_history"] = normalize_storage_history(ds_state.get("storage_history"))
     return ds_state
@@ -723,7 +763,7 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         observed_snapshots = merge_snapshot_histories(
             existing_group.get("observed_snapshots"),
             current_snapshots,
-            MAX_OBSERVED_SNAPSHOT_HISTORY,
+            resolve_observed_snapshot_history_max(config),
         )
 
         display_name = group_record.get("display_name") or existing_group.get("display_name")
@@ -879,7 +919,7 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
     alerts = []
     ds_id = ds.get("id", "")
     name = ds.get("name", ds.get("id", "unknown"))
-    ds_state = ensure_datastore_state(state, ds_id, name)
+    ds_state = ensure_datastore_state(state, ds_id, name, config)
     purge_ignored_backup_groups(ds_state, config, ds_id)
     thresholds = config["thresholds"]
     metrics = ds.get("metrics") or {}
@@ -1014,14 +1054,15 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
                 tags=["warning", "arrow_repeat"],
             ))
         elif interval_minutes > 0:
-            threshold_minutes = max(interval_minutes + 30, interval_minutes * 2)
+            multiplier, grace_minutes = resolve_replication_stale_params(config)
+            threshold_minutes = max(interval_minutes + grace_minutes, interval_minutes * multiplier)
             lag_minutes = hours_since(last_sync) * 60
             if lag_minutes > threshold_minutes:
                 alerts.append(Alert(
                     name,
                     "Replication Stale",
                     f"Replication on '{name}' last synced {lag_minutes:.0f} minutes ago "
-                    f"(interval: {interval_minutes}m, threshold: {threshold_minutes}m).",
+                    f"(interval: {interval_minutes}m, threshold: {threshold_minutes:.0f}m).",
                     priority=4,
                     tags=["warning", "arrow_repeat"],
                 ))
@@ -1193,7 +1234,7 @@ def run_check(config, state):
                     ds_state_ref["rescale_history"] = merge_rescale_entries(
                         ds_state_ref.get("rescale_history"),
                         new_rescale,
-                        _MAX_RESCALE_HISTORY_ENTRIES,
+                        resolve_rescale_history_max(config),
                     )
 
             ds_state_ref = state["datastores"].get(ds_id)

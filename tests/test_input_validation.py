@@ -223,8 +223,117 @@ class TestConfigStorageHistory:
             "sixhour_retention_days": 90,
             "daily_retention_days": None,
             "min_sample_interval_seconds": 300,
+            "rescale_history_max_entries": 1500,
         }})
         assert rv.status_code == 200
+
+    def test_rescale_max_zero_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"rescale_history_max_entries": 0}})
+        assert rv.status_code == 400
+        assert "rescale_history_max_entries" in rv.get_json().get("error", "")
+
+    def test_rescale_max_negative_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"rescale_history_max_entries": -5}})
+        assert rv.status_code == 400
+
+    def test_rescale_max_non_integer_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"rescale_history_max_entries": "lots"}})
+        assert rv.status_code == 400
+
+    def test_rescale_max_positive_persists(self, monkeypatch, client_auth, tmp_path):
+        import json as _json
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"storage_history": {"rescale_history_max_entries": 2500}})
+        assert rv.status_code == 200
+        with open(tmp_path / "config.json") as f:
+            saved = _json.load(f)
+        assert saved["storage_history"]["rescale_history_max_entries"] == 2500
+
+
+# ── Config: replication-stale threshold validation ──────────────────────────
+
+class TestConfigReplicationStaleThreshold:
+    """Validation of the new replication-stale multiplier/grace keys under thresholds."""
+
+    def test_multiplier_at_1_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_multiplier": 1.0}})
+        assert rv.status_code == 400
+        assert "replication_stale_multiplier" in rv.get_json().get("error", "")
+
+    def test_multiplier_below_1_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_multiplier": 0.5}})
+        assert rv.status_code == 400
+
+    def test_multiplier_non_numeric_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_multiplier": "soon"}})
+        assert rv.status_code == 400
+
+    def test_multiplier_above_1_persists(self, monkeypatch, client_auth, tmp_path):
+        import json as _json
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_multiplier": 2.5}})
+        assert rv.status_code == 200
+        with open(tmp_path / "config.json") as f:
+            saved = _json.load(f)
+        assert saved["thresholds"]["replication_stale_multiplier"] == 2.5
+
+    def test_grace_negative_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_grace_minutes": -1}})
+        assert rv.status_code == 400
+        assert "replication_stale_grace_minutes" in rv.get_json().get("error", "")
+
+    def test_grace_zero_is_valid(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_grace_minutes": 0}})
+        assert rv.status_code == 200
+
+    def test_grace_positive_persists(self, monkeypatch, client_auth, tmp_path):
+        import json as _json
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {"thresholds": {"replication_stale_grace_minutes": 60}})
+        assert rv.status_code == 200
+        with open(tmp_path / "config.json") as f:
+            saved = _json.load(f)
+        assert saved["thresholds"]["replication_stale_grace_minutes"] == 60
+
+
+# ── Config: observed_snapshot_history_max validation ────────────────────────
+
+class TestConfigObservedSnapshotHistoryMax:
+    """Validation of the new observed_snapshot_history_max key under schedule_learning."""
+
+    def test_zero_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {
+            "schedule_learning": {"observed_snapshot_history_max": 0}
+        })
+        assert rv.status_code == 400
+        assert "observed_snapshot_history_max" in rv.get_json().get("error", "")
+
+    def test_negative_returns_400(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {
+            "schedule_learning": {"observed_snapshot_history_max": -10}
+        })
+        assert rv.status_code == 400
+
+    def test_positive_persists(self, monkeypatch, client_auth, tmp_path):
+        import json as _json
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = _post_config(client_auth, csrf, {
+            "schedule_learning": {"observed_snapshot_history_max": 2000}
+        })
+        assert rv.status_code == 200
+        with open(tmp_path / "config.json") as f:
+            saved = _json.load(f)
+        assert saved["schedule_learning"]["observed_snapshot_history_max"] == 2000
 
 
 # ── Group-rule: string length limits ─────────────────────────────────────────

@@ -438,7 +438,7 @@
                             ${subtitle ? `<span class="browser-group-subtitle">${escHtml(subtitle)}</span>` : ''}
                         </span>
                         <div class="browser-pills">
-                            <span class="browser-pill">${group.snapshot_count} snapshots</span>
+                            <span class="browser-pill" title="Showing up to the configured 'Snapshot retention' count per group. Raise it under Options → Schedule Learning to see more.">${group.snapshot_count} snapshots</span>
                             <span class="browser-pill">last backup ${lastBackup}</span>
                         </div>
                     </div>
@@ -1729,6 +1729,8 @@
                 document.getElementById('cfg-thr-crit').value = t.storage_crit_percent ?? 90;
                 document.getElementById('cfg-thr-gc').value = t.gc_max_age_hours ?? 36;
                 document.getElementById('cfg-thr-verify').value = t.verification_max_age_days ?? 14;
+                document.getElementById('cfg-thr-replication-mult').value = t.replication_stale_multiplier ?? 2.0;
+                document.getElementById('cfg-thr-replication-grace').value = t.replication_stale_grace_minutes ?? 30;
 
                 const qh = c.quiet_hours || {};
                 document.getElementById('cfg-qh-enabled').value = qh.enabled ? 'true' : 'false';
@@ -1744,7 +1746,8 @@
                 document.getElementById('cfg-sl-tolerance').value = sl.time_tolerance_minutes ?? 30;
                 document.getElementById('cfg-sl-grace').value = sl.due_grace_minutes ?? 30;
                 document.getElementById('cfg-sl-stale').value = sl.stale_after_days ?? 8;
-                document.getElementById('cfg-sl-retention').value = sl.snapshot_retention_count ?? 24;
+                document.getElementById('cfg-sl-retention').value = sl.snapshot_retention_count ?? 50;
+                document.getElementById('cfg-sl-observed-max').value = sl.observed_snapshot_history_max ?? 1000;
                 document.getElementById('cfg-sl-downgrade').value = sl.downgrade_when_offschedule === false ? 'false' : 'true';
 
                 const sh = c.storage_history || {};
@@ -1753,6 +1756,7 @@
                 document.getElementById('cfg-sh-sixhour').value = sh.sixhour_retention_days ?? 90;
                 document.getElementById('cfg-sh-daily').value = sh.daily_retention_days == null ? '' : sh.daily_retention_days;
                 document.getElementById('cfg-sh-interval').value = sh.min_sample_interval_seconds ?? 300;
+                document.getElementById('cfg-sh-rescale-max').value = sh.rescale_history_max_entries ?? 1000;
 
                 if (res.read_only) {
                     document.getElementById('saveConfigBtn').disabled = true;
@@ -1907,6 +1911,8 @@
                     storage_crit_percent: parseInt(document.getElementById('cfg-thr-crit').value),
                     gc_max_age_hours: parseInt(document.getElementById('cfg-thr-gc').value),
                     verification_max_age_days: parseInt(document.getElementById('cfg-thr-verify').value),
+                    replication_stale_multiplier: parseFloat(document.getElementById('cfg-thr-replication-mult').value),
+                    replication_stale_grace_minutes: parseInt(document.getElementById('cfg-thr-replication-grace').value),
                 },
                 quiet_hours: {
                     enabled: document.getElementById('cfg-qh-enabled').value === 'true',
@@ -1942,6 +1948,7 @@
                     due_grace_minutes: parseInt(document.getElementById('cfg-sl-grace').value),
                     stale_after_days: parseInt(document.getElementById('cfg-sl-stale').value),
                     snapshot_retention_count: parseInt(document.getElementById('cfg-sl-retention').value),
+                    observed_snapshot_history_max: parseInt(document.getElementById('cfg-sl-observed-max').value),
                     downgrade_when_offschedule: document.getElementById('cfg-sl-downgrade').value === 'true',
                 },
                 storage_history: (() => {
@@ -1952,6 +1959,7 @@
                         sixhour_retention_days: parseInt(document.getElementById('cfg-sh-sixhour').value),
                         daily_retention_days: dailyRaw === '' ? null : parseInt(dailyRaw),
                         min_sample_interval_seconds: parseInt(document.getElementById('cfg-sh-interval').value),
+                        rescale_history_max_entries: parseInt(document.getElementById('cfg-sh-rescale-max').value),
                     };
                 })(),
             };

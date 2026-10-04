@@ -14,12 +14,14 @@
   "_comment_ignored": "List of objects describing backup groups to ignore.",
   "ignored_groups": [],
   
-  "_comment_thresholds": "Warning and critical thresholds for datastore events.",
+  "_comment_thresholds": "Warning and critical thresholds for datastore events. replication_stale_multiplier and replication_stale_grace_minutes control when the 'Replication Stale' alert fires: threshold_minutes = max(interval + grace, interval * multiplier). Multiplier must be > 1.0 (otherwise an alert would fire on every interval).",
   "thresholds": {
     "storage_warn_percent": 80,
     "storage_crit_percent": 90,
     "gc_max_age_hours": 36,
-    "verification_max_age_days": 14
+    "verification_max_age_days": 14,
+    "replication_stale_multiplier": 2.0,
+    "replication_stale_grace_minutes": 30
   },
   
   "_comment_quiet_hours": "Suppresses lower-priority alerts during specified hours.",
@@ -37,7 +39,7 @@
     "per_alert": {}
   },
   
-  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day.",
+  "_comment_learning": "Toggles dynamic learning for missed backup window detection. When downgrade_when_offschedule is true, missed-backup alerts are sent at normal priority (instead of high) and suppressed until the next expected snapshot if an off-schedule backup was already detected on the same day. snapshot_retention_count also caps how many snapshots per group are shown in the backup browser. observed_snapshot_history_max is the longer-term snapshot history retained for schedule inference.",
   "schedule_learning": {
     "enabled": true,
     "timezone": "local",
@@ -46,7 +48,8 @@
     "time_tolerance_minutes": 30,
     "due_grace_minutes": 30,
     "stale_after_days": 8,
-    "snapshot_retention_count": 24,
+    "snapshot_retention_count": 50,
+    "observed_snapshot_history_max": 1000,
     "downgrade_when_offschedule": true
   },
   
@@ -56,12 +59,13 @@
   "_comment_daemon": "Interval for daemon mode checks in seconds.",
   "daemon_interval_seconds": 1800,
 
-  "_comment_storage_history": "Retention and sampling for the per-datastore usage-history chart. Samples are collected by the alerting daemon on each run. Tiered downsampling moves aged samples into coarser buckets: raw → hourly (median per hour) → 6-hourly (median per 6h) → daily (median per day). raw_retention_days: how long raw samples are kept before being promoted to the hourly tier. hourly_retention_days: how long hourly medians are kept before being promoted to 6-hourly. sixhour_retention_days: how long 6-hourly medians are kept before being promoted to daily. daily_retention_days: null = keep daily medians forever, otherwise days to retain. min_sample_interval_seconds: minimum spacing between raw samples (dedup for rapid daemon reruns).",
+  "_comment_storage_history": "Retention and sampling for the per-datastore usage-history chart. Samples are collected by the alerting daemon on each run. Tiered downsampling moves aged samples into coarser buckets: raw → hourly (median per hour) → 6-hourly (median per 6h) → daily (median per day). raw_retention_days: how long raw samples are kept before being promoted to the hourly tier. hourly_retention_days: how long hourly medians are kept before being promoted to 6-hourly. sixhour_retention_days: how long 6-hourly medians are kept before being promoted to daily. daily_retention_days: null = keep daily medians forever, otherwise days to retain. min_sample_interval_seconds: minimum spacing between raw samples (dedup for rapid daemon reruns). rescale_history_max_entries: max number of plan-rescale events (shown as markers on the chart) retained per datastore.",
   "storage_history": {
     "raw_retention_days": 7,
     "hourly_retention_days": 30,
     "sixhour_retention_days": 90,
     "daily_retention_days": null,
-    "min_sample_interval_seconds": 300
+    "min_sample_interval_seconds": 300,
+    "rescale_history_max_entries": 1000
   }
 }
