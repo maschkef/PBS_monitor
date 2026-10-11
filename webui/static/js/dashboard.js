@@ -1324,6 +1324,7 @@
                     <polyline fill="none" stroke="var(--purple)" stroke-width="1.5" points="${usedBytesPolyline}"/>
                     <polyline fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"/>
                     ${dots}
+                    <line class="chart-crosshair" x1="0" y1="${padT}" x2="0" y2="${padT + plotH}" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="2 3" style="display:none;pointer-events:none;"/>
                 </svg>
                 <div class="chart-tooltip" aria-hidden="true"></div>
             </div>`;
@@ -1844,12 +1845,13 @@
             const wrap = e.target.closest('.chart-wrap');
             if (!wrap) return;
             const tip = wrap.querySelector('.chart-tooltip');
+            const crosshair = wrap.querySelector('.chart-crosshair');
             if (!tip) return;
             let dsId;
             try { dsId = JSON.parse(wrap.dataset.dsId); } catch (_) { return; }
             const cached = usageHistoryCache.get(dsId);
             const points = (cached && cached.data && cached.data.points) || [];
-            if (!points.length) { tip.style.display = 'none'; return; }
+            if (!points.length) { tip.style.display = 'none'; if (crosshair) crosshair.style.display = 'none'; return; }
 
             const vbW = Number(wrap.dataset.vbW) || 1000;
             const tMin = Number(wrap.dataset.tMin);
@@ -1859,11 +1861,18 @@
             const rect = wrap.getBoundingClientRect();
             // SVG uses preserveAspectRatio="none", so the chart stretches to the wrap width.
             const svgX = (e.clientX - rect.left) * (vbW / rect.width);
-            if (svgX < padL || svgX > padL + plotW) { tip.style.display = 'none'; return; }
+            if (svgX < padL || svgX > padL + plotW) { tip.style.display = 'none'; if (crosshair) crosshair.style.display = 'none'; return; }
             const tSpan = Math.max(1, tMax - tMin);
             const targetTs = tMin + ((svgX - padL) / plotW) * tSpan;
             const point = findNearestChartPoint(points, targetTs);
-            if (!point) { tip.style.display = 'none'; return; }
+            if (!point) { tip.style.display = 'none'; if (crosshair) crosshair.style.display = 'none'; return; }
+
+            if (crosshair) {
+                const pointX = (padL + ((point.ts - tMin) / tSpan) * plotW).toFixed(2);
+                crosshair.setAttribute('x1', pointX);
+                crosshair.setAttribute('x2', pointX);
+                crosshair.style.display = 'block';
+            }
 
             const bytesScale = Number(wrap.dataset.bytesScale) || null;
             const bytesUnit = wrap.dataset.bytesUnit || null;
@@ -1884,6 +1893,8 @@
             if (!wrap) return;
             const tip = wrap.querySelector('.chart-tooltip');
             if (tip) tip.style.display = 'none';
+            const crosshair = wrap.querySelector('.chart-crosshair');
+            if (crosshair) crosshair.style.display = 'none';
         }, true);
 
         // Load config when settings modal opens
