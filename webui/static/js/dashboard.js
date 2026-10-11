@@ -28,6 +28,7 @@
         const USAGE_HISTORY_DEFAULT_HIDDEN_SERIES = ['points'];
         const usageHistoryZoom = new Map();           // dsId → { from, to } (unix seconds)
         let chartDragState = null;
+        let _statusBannerTimer = null;
 
         // ── Cache helpers ──────────────────────────────────────────────────────
         function saveStateToCache(datastores, stats) {
@@ -2611,7 +2612,6 @@
             }
         }
 
-        let _statusBannerTimer = null;
         function startStatusBannerPolling() {
             if (_statusBannerTimer) clearInterval(_statusBannerTimer);
             loadStatusBanner();
