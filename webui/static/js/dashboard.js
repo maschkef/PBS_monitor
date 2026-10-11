@@ -1195,16 +1195,20 @@
             const warn = typeof thresholds.storage_warn_percent === 'number' ? thresholds.storage_warn_percent : null;
             const crit = typeof thresholds.storage_crit_percent === 'number' ? thresholds.storage_crit_percent : null;
             const latest = points[points.length - 1];
-            const meta = [
-                `${data.sample_count} point${data.sample_count === 1 ? '' : 's'}`,
-                `tiers: ${(data.tiers || []).join('+')}`,
-                `oldest ${formatUnixDate(data.oldest_ts)}`,
-                `newest ${formatUnixDate(data.newest_ts)}`,
-                latest.used_percent != null ? `latest ${latest.used_percent.toFixed(1)}% · ${formatBytesSI(latest.used_bytes)}` : null,
-            ].filter(Boolean).join(' · ');
+            const rangeText = `oldest ${formatUnixDate(data.oldest_ts)} – newest ${formatUnixDate(data.newest_ts)}`;
+            const latestText = latest.used_percent != null
+                ? `latest ${latest.used_percent.toFixed(1)}% · ${formatBytesSI(latest.used_bytes)}`
+                : null;
+            const sampleCountText = `${data.sample_count} point${data.sample_count === 1 ? '' : 's'}`;
+            const tiersText = `tiers: ${(data.tiers || []).join('+')}`;
+            const metaParts = [
+                `<span class="chart-meta-range">${escHtml(rangeText)}</span>`,
+                latestText ? `<span class="chart-meta-latest">${escHtml(latestText)}</span>` : null,
+                `<span class="tooltip-icon">i<span class="tooltip-text">${escHtml(sampleCountText)} · ${escHtml(tiersText)}</span></span>`,
+            ].filter(Boolean).join('');
             const legend = renderUsageHistoryLegend(warn, crit);
             return `
-                <div class="soft-note" style="margin-bottom:0.5rem;">${escHtml(meta)}</div>
+                <div class="chart-meta">${metaParts}</div>
                 ${legend}
                 ${renderUsageHistoryChart(points, warn, crit, dsId)}
             `;
