@@ -5,7 +5,7 @@ from alerting.normalization.
 """
 
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from itertools import pairwise
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -50,20 +50,20 @@ def parse_iso(iso_str):
     """Parse an ISO timestamp string to a timezone-aware datetime, or None."""
     if not iso_str:
         return None
-    return datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    return datetime.fromisoformat(iso_str)
 
 
 def get_schedule_timezone(config):
     """Return the tzinfo used for schedule learning from config."""
     timezone_name = (config.get("schedule_learning") or {}).get("timezone", "local")
     if not timezone_name or timezone_name == "local":
-        return datetime.now(timezone.utc).astimezone().tzinfo
+        return datetime.now(UTC).astimezone().tzinfo
 
     try:
         return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
         print(f"[WARN] Unknown schedule timezone '{timezone_name}', using local timezone.")
-        return datetime.now(timezone.utc).astimezone().tzinfo
+        return datetime.now(UTC).astimezone().tzinfo
 
 
 def format_interval_minutes(interval_minutes):
@@ -86,7 +86,7 @@ def build_schedule_model_from_rule(rule, fallback_timezone):
             "kind": "interval",
             "status": "locked" if rule.get("locked") else "configured",
             "timezone": timezone_name,
-            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "evaluated_at": datetime.now(UTC).isoformat(),
             "slot_count": 1,
             "active_slot_count": 1,
             "interval_minutes": rule["interval_minutes"],
@@ -103,7 +103,7 @@ def build_schedule_model_from_rule(rule, fallback_timezone):
             "kind": "daily",
             "status": "locked" if rule.get("locked") else "configured",
             "timezone": timezone_name,
-            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "evaluated_at": datetime.now(UTC).isoformat(),
             "slot_count": len(daily_slots),
             "active_slot_count": len(daily_slots),
             "interval_minutes": None,
@@ -127,7 +127,7 @@ def build_schedule_model_from_rule(rule, fallback_timezone):
             "kind": "weekly",
             "status": "locked" if rule.get("locked") else "configured",
             "timezone": timezone_name,
-            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "evaluated_at": datetime.now(UTC).isoformat(),
             "slot_count": len(weekly_slots),
             "active_slot_count": len(weekly_slots),
             "slots": [
@@ -147,7 +147,7 @@ def build_schedule_model_from_rule(rule, fallback_timezone):
         "kind": "none",
         "status": "unconfigured",
         "timezone": timezone_name,
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluated_at": datetime.now(UTC).isoformat(),
         "slot_count": 0,
         "active_slot_count": 0,
         "slots": [],
@@ -188,7 +188,7 @@ def snapshot_to_local_occurrence(snapshot, tzinfo):
     if backup_time is None:
         return None
 
-    local_dt = datetime.fromtimestamp(backup_time, timezone.utc).astimezone(tzinfo)
+    local_dt = datetime.fromtimestamp(backup_time, UTC).astimezone(tzinfo)
     return {
         "backup_time": backup_time,
         "local_dt": local_dt,
@@ -206,7 +206,7 @@ def hours_since(iso_str):
     dt = parse_iso(iso_str)
     if not dt:
         return float("inf")
-    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    return (datetime.now(UTC) - dt).total_seconds() / 3600
 
 
 # ── Clustering and due-time computation ──────────────────────────────────────
@@ -335,7 +335,7 @@ def detect_interval_schedule(occurrences, config, now_local, tzinfo):
         "kind": "interval",
         "status": "learned",
         "timezone": str(tzinfo),
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluated_at": datetime.now(UTC).isoformat(),
         "slot_count": 1,
         "active_slot_count": 1,
         "interval_minutes": candidate_interval,
@@ -395,7 +395,7 @@ def detect_daily_schedule(occurrences, config, tzinfo):
         "kind": "daily",
         "status": "learned" if active_slot_count else "stale",
         "timezone": str(tzinfo),
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluated_at": datetime.now(UTC).isoformat(),
         "slot_count": len(learned_slots),
         "active_slot_count": active_slot_count,
         "interval_minutes": None,
@@ -411,14 +411,14 @@ def evaluate_schedule_model(group_state, config, tzinfo):
     min_occurrences = max(coerce_int(learning_cfg.get("min_occurrences")) or 2, 2)
     tolerance_minutes = max(coerce_int(learning_cfg.get("time_tolerance_minutes")) or 30, 15)
     stale_after_days = max(coerce_int(learning_cfg.get("stale_after_days")) or 8, 1)
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     history_cutoff = now_utc - timedelta(days=history_window_days)
 
     recent_snapshots = [
         snapshot
         for snapshot in normalize_snapshot_entries(group_state.get("observed_snapshots"))
         if coerce_int(snapshot.get("backup_time")) is not None
-        and datetime.fromtimestamp(snapshot["backup_time"], timezone.utc) >= history_cutoff
+        and datetime.fromtimestamp(snapshot["backup_time"], UTC) >= history_cutoff
     ]
     occurrences = [
         occurrence

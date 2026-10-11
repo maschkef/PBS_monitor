@@ -56,7 +56,7 @@ Beide nutzen die [Monitoring API](https://api.remote-backups.com/reference#tag/m
 - Docker und Docker Compose
 
 **Für die manuelle Installation:**
-- Python 3.9+
+- Python 3.11+
 
 **Allgemein:**
 - Ein [remote-backups.com](https://remote-backups.com) Account mit mindestens einem Datastore

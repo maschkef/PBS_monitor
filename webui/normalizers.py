@@ -4,7 +4,7 @@ All functions in this module are stateless and have no external dependencies
 beyond the Python standard library.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def format_bytes(b):
@@ -36,7 +36,7 @@ def unix_to_iso(timestamp):
     """Convert a UNIX timestamp to an ISO 8601 string."""
     if timestamp is None:
         return None
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
 def normalize_backup_file(file_entry):
@@ -183,8 +183,8 @@ def time_ago(iso_str):
     """Convert ISO timestamp to human-readable 'time ago' string."""
     if not iso_str:
         return "never"
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
+    dt = datetime.fromisoformat(iso_str)
+    now = datetime.now(UTC)
     diff = now - dt
     seconds = int(diff.total_seconds())
     if seconds < 0:
@@ -211,8 +211,8 @@ def time_until(iso_str):
     """Convert ISO timestamp to 'time until' string."""
     if not iso_str:
         return "N/A"
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
+    dt = datetime.fromisoformat(iso_str)
+    now = datetime.now(UTC)
     diff = dt - now
     seconds = int(diff.total_seconds())
     if seconds < 0:

@@ -1,5 +1,5 @@
 """Tests for the missed-backup downgrade + suppression behavior."""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from alerting import schedule as sched_mod
@@ -15,7 +15,7 @@ TZ = ZoneInfo("Europe/Berlin")
 
 def _ts(local_dt):
     """Local Berlin datetime → unix timestamp."""
-    return int(local_dt.astimezone(timezone.utc).timestamp())
+    return int(local_dt.astimezone(UTC).timestamp())
 
 
 def _slot(minute_of_day=120, weekday_name="Daily", time_str="02:00"):
@@ -136,13 +136,13 @@ def test_missed_interval_alert_downgrades_on_late_coverage():
 # ── should_alert() suppression tests ──────────────────────────────────────────
 
 def test_should_alert_respects_active_suppression():
-    future = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+    future = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
     state = {"alert_suppress_until": {"k1": future}, "last_alerts": {}}
     assert should_alert({}, state, "k1") is False
 
 
 def test_should_alert_clears_expired_suppression():
-    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     state = {"alert_suppress_until": {"k1": past}, "last_alerts": {}}
     assert should_alert({}, state, "k1") is True
     assert "k1" not in state["alert_suppress_until"]
@@ -153,7 +153,7 @@ def test_should_alert_falls_back_to_cooldown_when_no_suppression():
     assert should_alert({"alert_cooldown_minutes": 60}, state, "k1") is True
 
     # Now record a recent send → cooldown should block
-    state["last_alerts"]["k1"] = datetime.now(timezone.utc).isoformat()
+    state["last_alerts"]["k1"] = datetime.now(UTC).isoformat()
     assert should_alert({"alert_cooldown_minutes": 60}, state, "k1") is False
 
 

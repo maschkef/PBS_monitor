@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
@@ -261,7 +261,7 @@ def _rescale_range_cutoff(range_str):
     if range_str == "all":
         return None
     days = int(range_str.rstrip("d"))
-    return datetime.now(timezone.utc) - timedelta(days=days)
+    return datetime.now(UTC) - timedelta(days=days)
 
 
 def _storage_history_range_seconds(range_str):
@@ -281,11 +281,11 @@ def _filter_rescale_history(entries, cutoff):
         if not isinstance(ts, str):
             continue
         try:
-            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(ts)
         except ValueError:
             continue
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
         if parsed >= cutoff:
             filtered.append(entry)
     return filtered
@@ -745,7 +745,7 @@ def save_group_rule():
         "weekly_slots": weekly_slots if schedule_kind == "weekly" else [],
         "interval_minutes": interval_minutes if schedule_kind == "interval" else None,
         "interval_anchor_minute": alert_monitor.coerce_int(payload.get("interval_anchor_minute")) if schedule_kind == "interval" else None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "updated_by": "user",
     })
     group_rules["groups"][rule_key] = alert_monitor.normalize_group_rule(rule)
@@ -1204,7 +1204,7 @@ def alerting_test_notify():
         )
         resp.raise_for_status()
         alert_monitor.append_notification_log(ALERTING_LOG_PATH, {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "webui-test",
             "title": f"PBS Monitor - Test Notification ({severity_label})",
             "message": f"Test {severity_label} notification from PBS Monitor (ntfy priority {priority}).",
@@ -1380,7 +1380,7 @@ def get_storage_history(datastore_id):
     cutoff_seconds = _storage_history_range_seconds(range_str)
     cutoff_ts = None
     if cutoff_seconds is not None:
-        cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - cutoff_seconds
+        cutoff_ts = int(datetime.now(UTC).timestamp()) - cutoff_seconds
 
     deduped = {}
     for tier in tiers:

@@ -5,7 +5,7 @@ beyond the Python standard library.  Imported by schedule.py and monitor.py.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # ── Basic numeric / time converters ──────────────────────────────────────────
 
@@ -22,7 +22,7 @@ def unix_to_iso(timestamp):
     timestamp = coerce_int(timestamp)
     if timestamp is None:
         return None
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
 def format_schedule_time(minute_of_day):
@@ -150,7 +150,7 @@ def _parse_expires_at(raw_value):
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.isoformat()
 
 
@@ -166,10 +166,10 @@ def _is_expired(expires_at_iso, now_utc=None):
     if dt is None:
         return False
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
-    return dt.astimezone(timezone.utc) <= now_utc
+        now_utc = datetime.now(UTC)
+    return dt.astimezone(UTC) <= now_utc
 
 
 def normalize_ignored_group(raw_group):
@@ -227,7 +227,7 @@ def is_group_ignored(config, datastore_id, namespace, backup_type, backup_id):
     backup_type = str(backup_type or "")
     backup_id = str(backup_id or "")
 
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     for ignored_group in config.get("ignored_groups") or []:
         if _is_expired(ignored_group.get("expires_at"), now_utc=now_utc):
             continue
@@ -558,7 +558,7 @@ def promote_storage_history(history, config=None, now_ts=None):
 
     resolved = _storage_history_config(config)
     if now_ts is None:
-        now_ts = int(datetime.now(timezone.utc).timestamp())
+        now_ts = int(datetime.now(UTC).timestamp())
 
     for tier in _STORAGE_HISTORY_TIER_KEYS:
         history.setdefault(tier, [])
@@ -585,7 +585,7 @@ def prune_storage_history(history, config=None, now_ts=None):
     if daily_retention is None:
         return
     if now_ts is None:
-        now_ts = int(datetime.now(timezone.utc).timestamp())
+        now_ts = int(datetime.now(UTC).timestamp())
     cutoff = now_ts - daily_retention * _SECONDS_PER_DAY
     history["daily"] = [p for p in history.get("daily", []) if p["ts"] >= cutoff]
 

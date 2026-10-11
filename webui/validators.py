@@ -239,6 +239,6 @@ def _validate_ignore_group_payload(payload: dict) -> None:
         if len(expires_at) > 40:
             raise ValueError("expires_at must not exceed 40 characters.")
         try:
-            datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            datetime.fromisoformat(expires_at)
         except ValueError:
             raise ValueError("expires_at must be a valid ISO 8601 timestamp.")

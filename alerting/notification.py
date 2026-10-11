@@ -7,7 +7,7 @@ import json
 import os
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -109,7 +109,7 @@ def is_quiet_hours(config):
     qh = config.get("quiet_hours", {})
     if not qh.get("enabled"):
         return False
-    now = datetime.now(timezone.utc).astimezone().strftime("%H:%M")
+    now = datetime.now(UTC).astimezone().strftime("%H:%M")
     start = qh.get("start", "22:00")
     end = qh.get("end", "07:00")
     if start <= end:
@@ -120,7 +120,7 @@ def is_quiet_hours(config):
 def should_alert(config, state, alert_key):
     """Return True if the alert cooldown has expired for *alert_key*."""
     from alerting.schedule import parse_iso  # avoid top-level circular import
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
     suppress_map = state.get("alert_suppress_until") or {}
     suppress_until = suppress_map.get(alert_key)
@@ -131,8 +131,8 @@ def should_alert(config, state, alert_key):
             suppress_dt = None
         if suppress_dt is not None:
             if suppress_dt.tzinfo is None:
-                suppress_dt = suppress_dt.replace(tzinfo=timezone.utc)
-            if now_utc < suppress_dt.astimezone(timezone.utc):
+                suppress_dt = suppress_dt.replace(tzinfo=UTC)
+            if now_utc < suppress_dt.astimezone(UTC):
                 return False
         suppress_map.pop(alert_key, None)
 

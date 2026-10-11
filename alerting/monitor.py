@@ -23,7 +23,7 @@ import shutil
 import signal
 import socket
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -567,7 +567,7 @@ def sync_group_rule_from_schedule(rule, datastore_id, group_state, schedule_mode
     rule["backup_id"] = str(group_state.get("backup_id", ""))
     rule["display_name"] = group_state.get("display_name")
     rule["timezone"] = schedule_model.get("timezone") or rule.get("timezone") or "local"
-    rule["updated_at"] = datetime.now(timezone.utc).isoformat()
+    rule["updated_at"] = datetime.now(UTC).isoformat()
     rule["updated_by"] = "learning"
 
     if schedule_model.get("kind") == "interval" and schedule_model.get("interval_minutes"):
@@ -699,7 +699,7 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         return [], f"inventory skipped (metrics={metric_backup_count}, browser=0)", False
 
     previous_summary = migrate_inventory_summary(ds_state.get("inventory_summary"))
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     current_group_keys = set()
     backup_groups = ds_state["backup_groups"]
     visible_namespaces = set()
@@ -833,7 +833,7 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
         time_detail = ""
         if vanished_times:
             sample = ", ".join(
-                datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                datetime.fromtimestamp(t, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
                 for t in vanished_times[:3]
             )
             extra = f" (+{len(vanished_times) - 3} more)" if len(vanished_times) > 3 else ""
@@ -1134,7 +1134,7 @@ def run_check(config, state):
 
     prio_cfg = config.get("notification_priorities") or {}
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}")
     print(f"PBS Monitor Check — {now}")
     print(f"{'='*60}")
@@ -1155,7 +1155,7 @@ def run_check(config, state):
             alert.priority = _resolve_alert_priority(alert, prio_cfg)
             if should_alert(config, state, alert.key):
                 safe_send_ntfy(config, alert)
-                state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
+                state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
     except requests.RequestException as e:
         net_issue = _diagnose_network(config["api_base"])
         if net_issue:
@@ -1171,7 +1171,7 @@ def run_check(config, state):
         alert.priority = _resolve_alert_priority(alert, prio_cfg)
         if should_alert(config, state, alert.key):
             safe_send_ntfy(config, alert)
-            state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
+            state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
         save_state(state)
         return
 
@@ -1190,7 +1190,7 @@ def run_check(config, state):
         alert.priority = _resolve_alert_priority(alert, prio_cfg)
         if should_alert(config, state, alert.key):
             safe_send_ntfy(config, alert)
-            state.setdefault("last_alerts", {})[alert.key] = datetime.now(timezone.utc).isoformat()
+            state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
         save_state(state)
         return
 
@@ -1242,7 +1242,7 @@ def run_check(config, state):
                 storage_history = ds_state_ref.setdefault(
                     "storage_history", default_storage_history(),
                 )
-                now_ts = int(datetime.now(timezone.utc).timestamp())
+                now_ts = int(datetime.now(UTC).timestamp())
                 append_storage_sample(storage_history, {
                     "ts": now_ts,
                     "used_bytes": metrics.get("used_bytes"),
@@ -1285,7 +1285,7 @@ def run_check(config, state):
             skipped += 1
             continue
         if safe_send_ntfy(config, alert):
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(UTC).isoformat()
             state.setdefault("last_alerts", {})[alert.key] = now_iso
             suppress_until = getattr(alert, "suppress_until", None)
             if suppress_until:
@@ -1345,7 +1345,7 @@ def run_check(config, state):
             )
             ntfy_alert.priority = _resolve_alert_priority(ntfy_alert, prio_cfg)
             if should_alert(config, state, ntfy_alert.key):
-                now_iso = datetime.now(timezone.utc).isoformat()
+                now_iso = datetime.now(UTC).isoformat()
                 state.setdefault("last_alerts", {})[ntfy_alert.key] = now_iso
                 append_notification_log(NOTIFICATION_LOG_PATH, {
                     "timestamp": now_iso,
@@ -1371,7 +1371,7 @@ def run_check(config, state):
             )
             hb_alert.priority = _resolve_alert_priority(hb_alert, prio_cfg)
             if should_alert(config, state, hb_alert.key):
-                now_iso = datetime.now(timezone.utc).isoformat()
+                now_iso = datetime.now(UTC).isoformat()
                 state.setdefault("last_alerts", {})[hb_alert.key] = now_iso
                 append_notification_log(NOTIFICATION_LOG_PATH, {
                     "timestamp": now_iso,

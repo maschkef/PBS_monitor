@@ -3,7 +3,7 @@
 ## Introduction
 The PBS Monitor is an open-source (MIT), dependency-lean hobby project. It is designed to track the health of Proxmox Backup Server (PBS) datastores via the `remote-backups.com` monitoring API. 
 
-The software stack relies on Python 3.9+, Flask, Flask-Limiter, Waitress, python-dotenv, Requests, HTML/Vanilla JS/CSS, and `ntfy.sh` for push notifications.
+The software stack relies on Python 3.11+, Flask, Flask-Limiter, Waitress, python-dotenv, Requests, HTML/Vanilla JS/CSS, and `ntfy.sh` for push notifications.
 
 ## Architectural Components
 
