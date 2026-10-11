@@ -1545,7 +1545,10 @@
     </div>
 
     <div class="footer">
-        PBS Monitor · remote-backups.com Monitoring API
+        PBS Monitor ·
+        <a href="https://remote-backups.com" target="_blank" rel="noopener" style="color:var(--cyan)">remote-backups.com</a> ·
+        <a href="https://status.remote-backups.com" target="_blank" rel="noopener" style="color:var(--cyan)">status.remote-backups.com</a> ·
+        <a href="#" onclick="openStatusFeedModal();return false;" style="color:var(--cyan)">Status Feed</a>
     </div>
 
     <!-- ── Settings Modal ─────────────────────────────────── -->
@@ -2223,6 +2226,27 @@
           </table>
           <p id="logModalEmpty" style="display:none;color:var(--text-dim);font-size:0.85rem;text-align:center;padding:1.5rem 0">No entries yet.</p>
           <p id="logModalError" style="display:none;color:var(--red,#e06c75);font-size:0.84rem;padding:0.5rem 0"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Status Feed Modal ──────────────────────────────── -->
+    <div id="statusFeedModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal('statusFeedModal')">
+      <div class="modal-box" style="max-width:800px">
+        <div class="modal-header">
+          <h2>📡 Remote-Backups Status Feed</h2>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <button class="btn btn-secondary" style="font-size:0.82rem" onclick="loadStatusFeed(true)" title="Cache leeren und neu laden">⟳ Refresh</button>
+            <button class="modal-close" onclick="closeModal('statusFeedModal')">✕</button>
+          </div>
+        </div>
+        <div id="statusFeedBody" style="max-height:60vh;overflow-y:auto">
+          <div class="loading"><div class="spinner"></div>Loading…</div>
+        </div>
+        <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-dim);text-align:center">
+          Quelle:
+          <a href="https://status.remote-backups.com" target="_blank" rel="noopener" style="color:var(--cyan)">status.remote-backups.com</a>
+          · <span id="statusFeedMeta">cached max. 10 min</span>
         </div>
       </div>
     </div>

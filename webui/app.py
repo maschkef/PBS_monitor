@@ -6,6 +6,8 @@ import json
 import os
 import secrets
 import sys
+import time
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -1463,6 +1465,52 @@ def get_storage_history(datastore_id):
         payload["from"] = window_from
         payload["to"] = window_to
     return jsonify(payload)
+
+
+_STATUS_FEED_URL = "https://status.remote-backups.com/feed.rss"
+_STATUS_FEED_TTL = 600  # 10 minutes
+_status_feed_cache = {"ts": 0.0, "data": None}
+
+
+@app.route("/api/status/feed")
+@require_auth
+def get_status_feed():
+    """Proxy for the remote-backups.com status RSS feed.
+    Cached server-side; `?refresh=1` forces a fresh fetch and replaces the cache."""
+    force_refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+
+    now = time.monotonic()
+    if (not force_refresh
+            and _status_feed_cache["data"] is not None
+            and (now - _status_feed_cache["ts"]) < _STATUS_FEED_TTL):
+        return jsonify({**_status_feed_cache["data"], "cached": True})
+
+    try:
+        resp = requests.get(_STATUS_FEED_URL, timeout=10)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        return jsonify({"error": f"Failed to fetch status feed: {e}"}), 502
+
+    try:
+        root = ET.fromstring(resp.content)
+    except ET.ParseError as e:
+        return jsonify({"error": f"Failed to parse status feed: {e}"}), 502
+
+    items = []
+    for item in root.findall(".//item"):
+        items.append({
+            "title":       (item.findtext("title") or "").strip(),
+            "link":        (item.findtext("link") or "").strip(),
+            "pubDate":     (item.findtext("pubDate") or "").strip(),
+            "category":    (item.findtext("category") or "").strip(),
+            "description": (item.findtext("description") or "").strip(),
+            "guid":        (item.findtext("guid") or "").strip(),
+        })
+
+    payload = {"items": items[:25], "fetched_at": time.time()}
+    _status_feed_cache["ts"] = now
+    _status_feed_cache["data"] = payload
+    return jsonify({**payload, "cached": False})
 
 
 @app.route("/api/platform-stats")

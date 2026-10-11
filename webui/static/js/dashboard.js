@@ -1539,7 +1539,7 @@
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                ['settingsModal', 'testModal', 'logModal', 'errorModal'].forEach(closeModal);
+                ['settingsModal', 'testModal', 'logModal', 'errorModal', 'statusFeedModal'].forEach(closeModal);
             }
         });
 
@@ -2345,4 +2345,78 @@
                 btn.disabled = false;
                 btn.textContent = '📬 Send test notification';
             }
+        }
+
+        // ── Status Feed Modal ──────────────────────────────────────────────
+        const STATUS_FEED_ESCAPE = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        function escapeFeedHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => STATUS_FEED_ESCAPE[c]);
+        }
+
+        function formatFeedDate(raw) {
+            if (!raw) return '';
+            const d = new Date(raw);
+            if (isNaN(d.getTime())) return raw;
+            return d.toLocaleString(undefined, {
+                year: 'numeric', month: 'short', day: '2-digit',
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function openStatusFeedModal() {
+            openModal('statusFeedModal');
+            loadStatusFeed(false);
+        }
+
+        async function loadStatusFeed(forceRefresh) {
+            const body = document.getElementById('statusFeedBody');
+            const meta = document.getElementById('statusFeedMeta');
+            body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading…</div>';
+            try {
+                const url = '/api/status/feed' + (forceRefresh ? '?refresh=1' : '');
+                const resp = await fetch(url, { credentials: 'same-origin' });
+                if (!resp.ok) {
+                    let errText = 'HTTP ' + resp.status;
+                    try { const j = await resp.json(); if (j && j.error) errText = j.error; } catch (_) {}
+                    throw new Error(errText);
+                }
+                const data = await resp.json();
+                renderStatusFeed(data.items || []);
+                if (meta) {
+                    if (data.fetched_at) {
+                        const d = new Date(data.fetched_at * 1000);
+                        const tag = data.cached ? 'cached' : 'frisch geladen';
+                        meta.textContent = `${tag} · letzter Abruf ${d.toLocaleTimeString()}`;
+                    } else {
+                        meta.textContent = 'cached max. 10 min';
+                    }
+                }
+            } catch (e) {
+                body.innerHTML = '<div style="color:var(--red);text-align:center;padding:1rem">' +
+                    'Status-Feed konnte nicht geladen werden: ' + escapeFeedHtml(e.message || String(e)) + '</div>';
+            }
+        }
+
+        function renderStatusFeed(items) {
+            const body = document.getElementById('statusFeedBody');
+            if (!items.length) {
+                body.innerHTML = '<div style="text-align:center;padding:1rem;color:var(--text-dim)">Keine Einträge.</div>';
+                return;
+            }
+            const rows = items.map(it => {
+                const catColor = it.category === 'Maintenance' ? 'var(--cyan)' : 'var(--red)';
+                const titleHtml = it.link
+                    ? `<a href="${escapeFeedHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--text)">${escapeFeedHtml(it.title)}</a>`
+                    : escapeFeedHtml(it.title);
+                return `
+                  <div style="padding:0.75rem 0;border-bottom:1px solid var(--border)">
+                    <div style="display:flex;justify-content:space-between;gap:1rem;margin-bottom:0.25rem;align-items:baseline">
+                      <span style="font-size:0.75rem;color:${catColor};font-weight:700;text-transform:uppercase">${escapeFeedHtml(it.category || '—')}</span>
+                      <span style="font-size:0.75rem;color:var(--text-dim)" title="${escapeFeedHtml(it.pubDate)}">${escapeFeedHtml(formatFeedDate(it.pubDate))}</span>
+                    </div>
+                    <div style="font-weight:600;margin-bottom:0.25rem">${titleHtml}</div>
+                    <div style="font-size:0.85rem;color:var(--text-dim)">${escapeFeedHtml(it.description)}</div>
+                  </div>`;
+            }).join('');
+            body.innerHTML = rows;
         }
