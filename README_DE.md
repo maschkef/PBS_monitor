@@ -118,11 +118,12 @@ Dashboard öffnen: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 - **Editierbare Gruppen-Schedules** — gelernte Zeitpläne können in der Web UI geprüft, angepasst und gesperrt werden; Intervall-Schedules unterstützen eine optionale Ankerzeit (z. B. `06:00` → Backups erwartet um 06:00, 08:00, 10:00 …)
 - **Nächstes Backup** — jede Backup-Gruppe im Alerting-Panel zeigt den berechneten nächsten erwarteten Backup-Zeitpunkt basierend auf dem aktiven Schedule
 - **Ignorierte Gruppen** — Alerts für spezifische Backup-Gruppen direkt über das Web-Interface stummschalten; ignorierte Gruppen werden in einer ausklappbaren Liste angezeigt und können jederzeit reaktiviert werden (Unignore)
-- **Usage-History-Chart** — Liniendiagramm pro Datastore mit linker %-Achse und rechter SI-Byte-Achse, Polylinien für Verwendung in %, verwendete Bytes und Gesamtgröße (Referenzlinie), interaktivem Tooltip und einem Range-Selektor (7d / 30d / 90d / 365d / all). Der Alerting-Daemon persistiert Samples getiert in den State (raw → stündlich → 6-stündlich → täglich per Median-Aggregation), sodass die Historie deutlich über das Live-Fenster der API hinauswächst; Retention und Sampling sind im Settings-Tab **Usage History** konfigurierbar
+- **Usage-History-Chart** — Liniendiagramm pro Datastore mit linker %-Achse und rechter SI-Byte-Achse, Polylinien für Verwendung in %, verwendete Bytes und Gesamtgröße (Referenzlinie), interaktivem Tooltip mit vertikalem Crosshair zum nächstgelegenen Sample und einem Range-Selektor (7d / 30d / 90d / 365d / all). **Ziehen innerhalb des Charts** zoomt in ein eigenes Zeitfenster (in der Meta-Line mit Reset-Button angezeigt); **Klick auf einen Legenden-Eintrag** blendet einzelne Serien ein- oder aus (verwendet %, Datenpunkte, verwendete Bytes, Gesamtgröße, warn/crit-Schwellen — Datenpunkte sind standardmäßig ausgeblendet). Der Alerting-Daemon persistiert Samples getiert in den State (raw → stündlich → 6-stündlich → täglich per Median-Aggregation), sodass die Historie deutlich über das Live-Fenster der API hinauswächst; Retention und Sampling sind im Settings-Tab **Usage History** konfigurierbar
 - **Rescale-History** — Timeline von Autoscaling-Events und manuellen Resizes mit konfigurierbarem Zeitraum (7d / 14d / 30d / 90d / 365d / all, Standard 30d); der Alerting-Daemon fügt neue Events in den lokalen State ein, sodass die Historie im Diagramm über das ~30-Tage-Fenster der API hinauswächst
 - **Benachrichtigungs-Log** — persistente History aller gesendeten Alerts (inkl. Test-Benachrichtigungen); über den **📋 Log**-Button in der Kopfzeile einsehbar, komplett löschbar oder zeilenweise entfernbar
 - **About-Tab** — zeigt aktuelle laufende Version und Umgebung (Docker/Native) inklusive manuellem GitHub-Release-Updatecheck
 - **Visuelles Alerting** — aktuelle Alarmzustände und gelernte Backup-Fenster direkt im Dashboard
+- **Platform-Status-Integration** — Footer-Links zu remote-backups.com und zur öffentlichen Statusseite; über den Header-Eintrag **Status Feed** öffnet sich ein Modal mit den aktuellen Incidents und Wartungen von `status.remote-backups.com` (Tabs für laufend/behoben, Badges für Incident/Maintenance, Chips für betroffene Hosts, „only my hosts"-Filter auf Basis der konfigurierten Host-Overrides). Ein ausblendbarer Banner über dem Dashboard erscheint, sobald der aggregierte Plattform-Status nicht operational ist oder ein konfigurierter Host in einem offenen Incident auftaucht
 - **Platform-Stats** — Gesamtspeicher, Backup-Count und Traffic der Plattform
 - **Zweistufige Aktualisierung** — der **⟳ Refresh**-Button führt eine vollständige Aktualisierung durch (alle Daten inkl. Rescale-Log, Backup-Inventar und Platform-Stats); der **Auto-Refresh**-Timer lädt dagegen nur häufig wechselnde Daten nach (Speicher-Metriken, GC-/Verification-Zeitangaben, Replikations-Sync, Alerting-Zustand). Das reduziert die API-Aufrufe beim automatischen Refresh von ~22+ auf ~4 (bei einem typischen Account mit drei Datastores). Über jeden Button und das Intervall-Dropdown zeigt ein Tooltip, was dabei geladen bzw. ausgelassen wird.
 - **Auto-Refresh** Toggle mit konfigurierbaren Intervallen von 5 bis 30 Minuten, Standard: 10 Minuten
@@ -230,6 +231,7 @@ python -m alerting.monitor --daemon 1800
 - **Host-Offline-Erkennung** — Alert wenn der Server nicht erreichbar ist
 - **Immutable Backup Warnung** — Alert bei pending Disable-Request
 - **API-Health-Check** — Prüft die Plattform-Erreichbarkeit
+- **Status-Feed-Enrichment** — Backup- und API-bezogene Alerts werden gegen den JSON-Status-Feed von remote-backups.com abgeglichen und um aktuell offene oder kürzlich zeitlich überlappende Incidents des zugeordneten Hosts angereichert. Der Alert-Host wird in drei Stufen aufgelöst: `status_feed.default_host` → `host_overrides` pro Datastore → `host_overrides` pro Datastore + Namespace. Konfigurierbar im Web-UI-Settings-Tab **Status Feed**
 - **Quiet Hours** — Niedrig-priore Alerts nachts unterdrücken
 - **Konfigurierbare Benachrichtigungs-Prioritäten** — ntfy-Priorität pro Severity-Tier (Warning / Critical) festlegen und optional für jeden einzelnen Alert-Typ überschreiben (z. B. "GC Never Ran" unabhängig von anderen Warnings leiser stellen, oder einen Typ auf `ignore` setzen um ihn komplett zu unterdrücken); dieselbe Skala 1–5 nutzt auch der Quiet-Hours-Mindestschwellwert
 - **Alert-Cooldown** — Verhindert Spam bei anhaltenden Problemen
@@ -391,7 +393,19 @@ Bei manueller Konfiguration (Option 2 oben) wird die Datei `alerting/config.json
     "daily_retention_days": null,
     "min_sample_interval_seconds": 300,
     "rescale_history_max_entries": 1000
-  }
+  },
+
+  "_comment_status_feed": "Reichert Backup-/API-bezogene Alerts mit Kontext von der remote-backups.com-Statusseite an. Wenn ein Backup-bezogener Alert feuert, holt der Daemon den Status-Feed (prozessintern gecached) und hängt aktuell offene oder zeitlich überlappende Incidents für den konfigurierten Host an. 'url' zeigt auf den JSON-Feed. 'cache_minutes' begrenzt wie oft der Feed neu geholt wird. 'lookback_minutes' steuert, wie weit zurück ab Alert-Zeitpunkt ein Incident noch als 'möglicherweise verwandt' gilt. 'default_host' ist der globale Fallback-Host für das Matching (z. B. 'dus1-1.pbs-host.de'); Overrides pro Datastore / Namespace liegen in 'host_overrides'.",
+  "status_feed": {
+    "enabled": true,
+    "url": "https://status.remote-backups.com/index.json",
+    "cache_minutes": 10,
+    "lookback_minutes": 120,
+    "default_host": ""
+  },
+
+  "_comment_host_overrides": "Overrides pro Datastore (und optional pro Namespace) für den Host, der beim Matchen gegen den Status-Feed benutzt wird. Jeder Eintrag: {datastore_id, namespace, host}. Ein leerer Namespace gilt für den gesamten Datastore. Aufgelöst wird vom spezifischsten Treffer: (datastore_id, namespace) > (datastore_id, '') > status_feed.default_host.",
+  "host_overrides": []
 }
 ```
 
@@ -435,6 +449,12 @@ Unterstützte manuelle Schedule-Typen sind `daily`, `weekly` und `interval`.
 | `storage_history.daily_retention_days` | Retention für den täglichen Tier. `null` (Standard) behält tägliche Mediane dauerhaft; sonst ein positiver Integer in Tagen |
 | `storage_history.min_sample_interval_seconds` | Mindestabstand zwischen Rohsamples; Dedup bei schnellen Daemon-Reruns (Standard: `300`, Minimum `60`) |
 | `storage_history.rescale_history_max_entries` | Maximale Anzahl pro Datastore gespeicherter Plan-Rescale-Events (werden als Marker im Usage-History-Chart dargestellt, Standard: `1000`). Alle `storage_history.*`-Werte sind in der Web UI im Settings-Tab **Usage History** konfigurierbar |
+| `status_feed.enabled` | Anreicherung der Alerts mit Kontext aus dem remote-backups.com-Status-Feed aktivieren (Standard: `true`). Wenn deaktiviert, finden keine Fetches statt und Alerts werden unverändert versendet |
+| `status_feed.url` | URL des JSON-Status-Feeds (Standard: `https://status.remote-backups.com/index.json`). Muss eine `http://`- oder `https://`-URL sein, max. 2048 Zeichen |
+| `status_feed.cache_minutes` | Wie lange ein erfolgreich geholter Feed prozessintern gecached wird, bevor er erneut geladen wird. Bereich `1`–`1440`, Standard: `10` |
+| `status_feed.lookback_minutes` | Wie weit zurück (ab Alert-Zeitpunkt) ein bereits behobener Incident noch als „möglicherweise verwandt" gilt und an einen Alert angehängt wird. Bereich `5`–`10080`, Standard: `120` |
+| `status_feed.default_host` | Globaler Fallback-Host für das Status-Feed-Matching (z. B. `dus1-1.pbs-host.de`). Leer bedeutet: kein Match, es sei denn `host_overrides` liefert einen. Max. 253 Zeichen |
+| `host_overrides` | Liste von `{datastore_id, namespace, host}`-Einträgen, die den Host für das Status-Feed-Matching überschreiben. Leerer `namespace` gilt für den gesamten Datastore; der spezifischste Treffer gewinnt. Einträge müssen pro `(datastore_id, namespace)`-Paar eindeutig sein. In der Web UI im Settings-Tab **Status Feed** konfigurierbar |
 
 Folgende Werte können auch als Umgebungsvariablen gesetzt werden (in `.env` oder der Shell):
 

@@ -117,11 +117,12 @@ Open the dashboard: [http://127.0.0.1:5111](http://127.0.0.1:5111)
 - **Editable group schedules** — learned schedules can be reviewed, edited, and locked from the Web UI; interval schedules support an optional anchor start time (e.g. `06:00` → backups expected at 06:00, 08:00, 10:00 …)
 - **Next backup indicator** — each backup group in the alerting panel shows the calculated next expected backup time based on the active schedule
 - **Ignored groups** — mute alerts for specific backup groups directly via the web interface; ignored groups are shown in a collapsible list and can be re-activated (Unignore) at any time
-- **Usage history chart** — per-datastore line chart with a left % axis and a right SI-byte axis, polylines for used %, used bytes and total bytes (reference line), interactive tooltip and a range selector (7d / 30d / 90d / 365d / all). The alerting daemon persists tiered samples to state (raw → hourly → 6-hourly → daily via median aggregation) so history grows well beyond the API's live window; retention and sampling are configurable in the **Usage History** settings tab
+- **Usage history chart** — per-datastore line chart with a left % axis and a right SI-byte axis, polylines for used %, used bytes and total bytes (reference line), interactive tooltip with vertical crosshair snapped to the nearest sample, and a range selector (7d / 30d / 90d / 365d / all). **Drag inside the chart** to zoom into a custom time window (shown in the meta line with a reset button); **click a legend entry** to toggle individual series on or off (used %, data points, used bytes, total bytes, warn/crit thresholds — data points hidden by default). The alerting daemon persists tiered samples to state (raw → hourly → 6-hourly → daily via median aggregation) so history grows well beyond the API's live window; retention and sampling are configurable in the **Usage History** settings tab
 - **Rescale history** — timeline of autoscaling events and manual resizes with configurable range (7d / 14d / 30d / 90d / 365d / all, default 30d); the alerting daemon merges new events into local state so the on-chart history grows beyond the API's ~30-day window
 - **Notification log** — persistent history of all sent alerts (and test notifications); view, clear, or delete individual rows via the **📋 Log** button in the header
 - **About tab** — shows current running version and environment (Docker/Native), with a manual GitHub release update check
 - **Visual alerting** — current alert conditions and learned backup windows directly in the dashboard
+- **Platform status integration** — footer links to remote-backups.com and the public status page; a header **Status Feed** entry opens a modal with the latest incidents and maintenances from `status.remote-backups.com` (ongoing/resolved tabs, incident/maintenance badges, affected-host chips, an "only my hosts" filter driven by the configured host overrides). A dismissable banner appears above the dashboard when the aggregate platform state is not operational or when a configured host is caught in an open incident
 - **Platform stats** — total storage, backup count and traffic across the platform
 - **Two-tier refresh** — the **⟳ Refresh** button performs a full reload (all data including rescale-log, backup inventory, and platform stats); the **Auto-Refresh** timer runs a lightweight update that only fetches frequently-changing data (storage metrics, GC/verification timestamps, replication sync times, alerting state). This reduces API calls during auto-refresh from ~22+ to ~4 for a typical three-datastore account. Hover over each button or control for a tooltip describing what is and isn't refreshed.
 - **Auto-Refresh** toggle with configurable intervals from 5 to 30 minutes, defaulting to 10 minutes
@@ -229,6 +230,7 @@ python -m alerting.monitor --daemon 1800
 - **Host offline detection** — alert when the server is unreachable
 - **Immutable backup warning** — alert on pending disable request
 - **API health check** — verifies platform availability
+- **Status feed enrichment** — backup- and API-related alerts are matched against the remote-backups.com JSON status feed and augmented with any currently-open or recently-overlapping incidents affecting the resolved host. The alert host is picked via a three-tier config: `status_feed.default_host` → per-datastore `host_overrides` → per-datastore-plus-namespace `host_overrides`. Configurable in the Web UI **Status Feed** settings tab
 - **Quiet hours** — suppress low-priority alerts at night
 - **Configurable notification priorities** — set ntfy priority per severity tier (warning / critical) and optionally override it for each individual alert type (e.g. silence "GC Never Ran" independently of other warnings, or set an alert type to `ignore` to suppress it entirely); the same 1–5 scale is used by the Quiet Hours minimum threshold
 - **Alert cooldown** — prevents spam for persistent issues
@@ -390,7 +392,19 @@ When using manual configuration (Option 2 above), the file `alerting/config.json
     "daily_retention_days": null,
     "min_sample_interval_seconds": 300,
     "rescale_history_max_entries": 1000
-  }
+  },
+
+  "_comment_status_feed": "Enrich backup-/API-related alerts with context from the remote-backups.com status page. When a backup-related alert fires, the daemon fetches the status feed (cached in-process) and appends any currently-open or recently-overlapping incidents affecting the configured host. 'url' points at the JSON feed. 'cache_minutes' limits how often the feed is re-fetched. 'lookback_minutes' controls how far back from the alert time an incident is still considered 'possibly related'. 'default_host' is the global fallback host used for matching (e.g. 'dus1-1.pbs-host.de'); per-datastore / per-namespace overrides live in 'host_overrides'.",
+  "status_feed": {
+    "enabled": true,
+    "url": "https://status.remote-backups.com/index.json",
+    "cache_minutes": 10,
+    "lookback_minutes": 120,
+    "default_host": ""
+  },
+
+  "_comment_host_overrides": "Per-datastore (and optionally per-namespace) overrides for the host used when matching alerts against the status feed. Each entry: {datastore_id, namespace, host}. An empty namespace applies to the whole datastore. Resolution picks the most specific match: (datastore_id, namespace) > (datastore_id, '') > status_feed.default_host.",
+  "host_overrides": []
 }
 ```
 
@@ -437,6 +451,12 @@ Supported manual schedule types are `daily`, `weekly`, and `interval`.
 | `storage_history.daily_retention_days` | Retention for the daily tier. `null` (default) keeps daily medians forever; otherwise a positive integer in days |
 | `storage_history.min_sample_interval_seconds` | Minimum spacing between raw samples; dedup for rapid daemon reruns (default: `300`, minimum `60`) |
 | `storage_history.rescale_history_max_entries` | Max number of plan-rescale events retained per datastore (shown as markers on the usage-history chart, default: `1000`). All `storage_history.*` keys are configurable via the Web UI **Usage History** settings tab |
+| `status_feed.enabled` | Enable enrichment of alerts with context from the remote-backups.com status feed (default: `true`). When disabled, no fetches are made and alerts are sent as-is |
+| `status_feed.url` | URL of the JSON status feed (default: `https://status.remote-backups.com/index.json`). Must be an `http://` or `https://` URL, max 2048 chars |
+| `status_feed.cache_minutes` | How long a successful feed fetch is cached in-process before being refreshed. Range `1`–`1440`, default: `10` |
+| `status_feed.lookback_minutes` | How far back (from the alert time) a resolved incident may still be considered "possibly related" and attached to an alert. Range `5`–`10080`, default: `120` |
+| `status_feed.default_host` | Global fallback host used for status-feed matching (e.g. `dus1-1.pbs-host.de`). Empty means no match unless `host_overrides` resolves one. Max 253 chars |
+| `host_overrides` | List of `{datastore_id, namespace, host}` entries overriding the host used for status-feed matching. Empty `namespace` applies to the whole datastore; the most specific match wins. Entries must be unique per `(datastore_id, namespace)` pair. Configurable via the Web UI **Status Feed** settings tab |
 
 The following can also be set as environment variables (in `.env` or the shell):
 
