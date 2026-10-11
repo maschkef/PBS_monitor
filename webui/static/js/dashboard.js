@@ -26,6 +26,8 @@
         const usageHistoryRanges = new Map();         // dsId → "30d" (default)
         const usageHistoryHiddenSeries = new Map();   // dsId → Set<"percent"|"used-bytes"|"total-bytes"|"points"|"warn"|"crit">
         const USAGE_HISTORY_DEFAULT_HIDDEN_SERIES = ['points'];
+        const usageHistoryZoom = new Map();           // dsId → { from, to } (unix seconds)
+        let chartDragState = null;
 
         // ── Cache helpers ──────────────────────────────────────────────────────
         function saveStateToCache(datastores, stats) {
@@ -1127,23 +1129,48 @@
         }
 
         async function loadUsageHistory(dsId, range, { silent = false } = {}) {
-            const key = `${dsId}:${range}`;
+            const zoom = usageHistoryZoom.get(dsId) || null;
+            const key = zoom ? `${dsId}:zoom:${zoom.from}-${zoom.to}` : `${dsId}:${range}`;
             if (loadingUsageHistory.has(key)) return;
             loadingUsageHistory.add(key);
             if (!silent) renderDatastoreGrid();
             try {
-                const data = await fetchJson(`/api/datastores/${encodeURIComponent(dsId)}/storage-history?range=${encodeURIComponent(range)}`);
-                usageHistoryCache.set(dsId, { range, data });
+                const url = zoom
+                    ? `/api/datastores/${encodeURIComponent(dsId)}/storage-history?from=${zoom.from}&to=${zoom.to}`
+                    : `/api/datastores/${encodeURIComponent(dsId)}/storage-history?range=${encodeURIComponent(range)}`;
+                const data = await fetchJson(url);
+                usageHistoryCache.set(dsId, { range, zoom, data });
             } catch (error) {
                 // On silent refresh, keep the stale chart visible rather than
                 // replacing it with an error message — the next retry may succeed.
                 if (!silent) {
-                    usageHistoryCache.set(dsId, { range, data: { error: error.message } });
+                    usageHistoryCache.set(dsId, { range, zoom, data: { error: error.message } });
                 }
             } finally {
                 loadingUsageHistory.delete(key);
                 renderDatastoreGrid();
             }
+        }
+
+        function zoomsEqual(a, b) {
+            if (!a && !b) return true;
+            if (!a || !b) return false;
+            return a.from === b.from && a.to === b.to;
+        }
+
+        function resetUsageHistoryZoom(dsId) {
+            if (!usageHistoryZoom.has(dsId)) return;
+            usageHistoryZoom.delete(dsId);
+            loadUsageHistory(dsId, usageHistoryRangeFor(dsId));
+        }
+
+        function formatZoomTimestamp(ts) {
+            const d = new Date(ts * 1000);
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mi = String(d.getMinutes()).padStart(2, '0');
+            return `${dd}.${mm}. ${hh}:${mi}`;
         }
 
         function refreshOpenUsageHistoryPanels() {
@@ -1158,6 +1185,7 @@
         function switchUsageHistoryRange(dsId, range) {
             if (!USAGE_HISTORY_RANGES.includes(range)) return;
             usageHistoryRanges.set(dsId, range);
+            usageHistoryZoom.delete(dsId);
             loadUsageHistory(dsId, range);
         }
 
@@ -1179,22 +1207,30 @@
 
         function renderUsageHistoryPanel(dsId) {
             const range = usageHistoryRangeFor(dsId);
-            const key = `${dsId}:${range}`;
+            const zoom = usageHistoryZoom.get(dsId) || null;
+            const key = zoom ? `${dsId}:zoom:${zoom.from}-${zoom.to}` : `${dsId}:${range}`;
             const dsIdAttr = escHtml(JSON.stringify(dsId));
             const rangeOptions = USAGE_HISTORY_RANGES.map(r =>
                 `<option value="${r}" ${r === range ? 'selected' : ''}>${USAGE_HISTORY_RANGE_LABELS[r]}</option>`
             ).join('');
+            const resetBtn = zoom
+                ? `<button type="button" class="header-select chart-zoom-reset-btn" onclick="resetUsageHistoryZoom(${dsIdAttr})" title="Clear zoom and return to the selected range">Reset zoom</button>`
+                : '';
             const header = `
                 <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;">
                     <span>Usage History</span>
-                    <select class="header-select" onchange="switchUsageHistoryRange(${dsIdAttr}, this.value)">
-                        ${rangeOptions}
-                    </select>
+                    <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+                        <select class="header-select" onchange="switchUsageHistoryRange(${dsIdAttr}, this.value)">
+                            ${rangeOptions}
+                        </select>
+                        ${resetBtn}
+                    </div>
                 </div>`;
 
             let body;
             const cached = usageHistoryCache.get(dsId);
-            if (loadingUsageHistory.has(key) || !cached || cached.range !== range) {
+            const cacheStale = !cached || cached.range !== range || !zoomsEqual(cached.zoom, zoom);
+            if (loadingUsageHistory.has(key) || cacheStale) {
                 body = `<div class="browser-loading">Loading usage history…</div>`;
             } else if (cached.data && cached.data.error) {
                 body = `<div class="browser-error">${escHtml(cached.data.error)}</div>`;
@@ -1206,8 +1242,13 @@
 
         function renderUsageHistoryBody(data, dsId) {
             const points = (data && data.points) || [];
+            const zoom = usageHistoryZoom.get(dsId) || null;
+            const dsIdAttr = escHtml(JSON.stringify(dsId));
             if (!points.length) {
-                return `<div class="soft-note">No usage history yet — the alerting daemon has not recorded any samples for this range. History grows from the first daemon run onward.</div>`;
+                const emptyHint = zoom
+                    ? `<div class="soft-note">No samples in the selected zoom window. <button type="button" class="chart-zoom-reset-inline" onclick="resetUsageHistoryZoom(${dsIdAttr})">Reset zoom</button></div>`
+                    : `<div class="soft-note">No usage history yet — the alerting daemon has not recorded any samples for this range. History grows from the first daemon run onward.</div>`;
+                return emptyHint;
             }
             const thresholds = data.thresholds || {};
             const warn = typeof thresholds.storage_warn_percent === 'number' ? thresholds.storage_warn_percent : null;
@@ -1219,9 +1260,13 @@
                 : null;
             const sampleCountText = `${data.sample_count} point${data.sample_count === 1 ? '' : 's'}`;
             const tiersText = `tiers: ${(data.tiers || []).join('+')}`;
+            const zoomText = zoom
+                ? `Zoom: ${formatZoomTimestamp(zoom.from)} – ${formatZoomTimestamp(zoom.to)}`
+                : null;
             const metaParts = [
                 `<span class="chart-meta-range">${escHtml(rangeText)}</span>`,
                 latestText ? `<span class="chart-meta-latest">${escHtml(latestText)}</span>` : null,
+                zoomText ? `<span class="chart-meta-zoom">${escHtml(zoomText)}<button type="button" class="chart-zoom-reset-inline" onclick="resetUsageHistoryZoom(${dsIdAttr})" title="Reset zoom">×</button></span>` : null,
                 `<span class="tooltip-icon">i<span class="tooltip-text">${escHtml(sampleCountText)} · ${escHtml(tiersText)}</span></span>`,
             ].filter(Boolean).join('');
             const legend = renderUsageHistoryLegend(warn, crit, dsId);
@@ -1341,7 +1386,7 @@
 
             const dsIdAttr = escHtml(JSON.stringify(dsId));
             return `
-            <div class="chart-wrap" data-ds-id='${dsIdAttr}' data-vb-w="${vbW}" data-t-min="${tMin}" data-t-max="${tMax}" data-pad-l="${padL}" data-plot-w="${plotW}" data-bytes-scale="${bytesScale}" data-bytes-unit="${bytesUnit}">
+            <div class="chart-wrap" data-ds-id='${dsIdAttr}' data-vb-w="${vbW}" data-t-min="${tMin}" data-t-max="${tMax}" data-pad-l="${padL}" data-pad-t="${padT}" data-plot-w="${plotW}" data-plot-h="${plotH}" data-bytes-scale="${bytesScale}" data-bytes-unit="${bytesUnit}">
                 <svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" width="100%" role="img" aria-label="Storage usage history chart">
                     <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)"/>
                     ${gridlines.join('')}
@@ -1352,6 +1397,7 @@
                     <polyline class="chart-series-percent" fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"${hideStyle('percent')}/>
                     ${dots}
                     <line class="chart-crosshair" x1="0" y1="${padT}" x2="0" y2="${padT + plotH}" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="2 3" style="display:none;pointer-events:none;"/>
+                    <rect class="chart-zoom-rect" x="0" y="${padT}" width="0" height="${plotH}" fill="rgba(100,200,255,0.12)" stroke="rgba(100,200,255,0.5)" stroke-width="1" style="display:none;pointer-events:none;"/>
                 </svg>
                 <div class="chart-tooltip" aria-hidden="true"></div>
             </div>`;
@@ -1868,7 +1914,74 @@
             return cand;
         }
 
+        document.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            const wrap = e.target.closest && e.target.closest('.chart-wrap');
+            if (!wrap) return;
+            const vbW = Number(wrap.dataset.vbW) || 1000;
+            const padL = Number(wrap.dataset.padL);
+            const padT = Number(wrap.dataset.padT);
+            const plotW = Number(wrap.dataset.plotW);
+            const plotH = Number(wrap.dataset.plotH);
+            const rect = wrap.getBoundingClientRect();
+            const svgX = (e.clientX - rect.left) * (vbW / rect.width);
+            if (svgX < padL || svgX > padL + plotW) return;
+            const zoomRect = wrap.querySelector('.chart-zoom-rect');
+            if (!zoomRect) return;
+            let dsId;
+            try { dsId = JSON.parse(wrap.dataset.dsId); } catch (_) { return; }
+            chartDragState = {
+                dsId, wrap, zoomRect,
+                startSvgX: svgX,
+                endSvgX: svgX,
+                startClientX: e.clientX,
+                padL, plotW, vbW,
+            };
+            zoomRect.setAttribute('x', svgX);
+            zoomRect.setAttribute('y', padT);
+            zoomRect.setAttribute('width', 0);
+            zoomRect.setAttribute('height', plotH);
+            zoomRect.style.display = '';
+            const tip = wrap.querySelector('.chart-tooltip');
+            const crosshair = wrap.querySelector('.chart-crosshair');
+            if (tip) tip.style.display = 'none';
+            if (crosshair) crosshair.style.display = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mouseup', function(e) {
+            if (!chartDragState) return;
+            const state = chartDragState;
+            chartDragState = null;
+            state.zoomRect.style.display = 'none';
+            const pxDist = Math.abs(e.clientX - state.startClientX);
+            if (pxDist < 5) return;
+            const tMin = Number(state.wrap.dataset.tMin);
+            const tMax = Number(state.wrap.dataset.tMax);
+            const tSpan = Math.max(1, tMax - tMin);
+            const svgLo = Math.min(state.startSvgX, state.endSvgX);
+            const svgHi = Math.max(state.startSvgX, state.endSvgX);
+            const fromTs = Math.round(tMin + ((svgLo - state.padL) / state.plotW) * tSpan);
+            const toTs = Math.round(tMin + ((svgHi - state.padL) / state.plotW) * tSpan);
+            if (fromTs >= toTs) return;
+            usageHistoryZoom.set(state.dsId, { from: fromTs, to: toTs });
+            loadUsageHistory(state.dsId, usageHistoryRangeFor(state.dsId));
+        });
+
         document.addEventListener('mousemove', function(e) {
+            if (chartDragState) {
+                const { wrap, zoomRect, startSvgX, padL, plotW, vbW } = chartDragState;
+                const rect = wrap.getBoundingClientRect();
+                if (rect.width <= 0) return;
+                let svgX = (e.clientX - rect.left) * (vbW / rect.width);
+                svgX = Math.max(padL, Math.min(padL + plotW, svgX));
+                chartDragState.endSvgX = svgX;
+                const x = Math.min(startSvgX, svgX);
+                const width = Math.abs(svgX - startSvgX);
+                zoomRect.setAttribute('x', x);
+                zoomRect.setAttribute('width', width);
+                return;
+            }
             const wrap = e.target.closest('.chart-wrap');
             if (!wrap) return;
             const tip = wrap.querySelector('.chart-tooltip');

@@ -614,6 +614,7 @@
             aspect-ratio: 1000 / 220;
             max-height: 320px;
             min-height: 180px;
+            cursor: crosshair;
         }
         .chart-tooltip {
             position: fixed;
@@ -665,6 +666,23 @@
             color: var(--text-dim);
             margin-bottom: 0.35rem;
         }
+        .chart-meta-zoom {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--cyan);
+        }
+        .chart-zoom-reset-inline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font: inherit;
+            line-height: 1;
+            padding: 1px 6px;
+            border-radius: 0.3rem;
+            cursor: pointer;
+        }
+        .chart-zoom-reset-inline:hover { color: var(--text); border-color: var(--text-dim); }
 
         /* Loading & Error states */
         .loading {
