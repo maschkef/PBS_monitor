@@ -1217,10 +1217,10 @@
                 `<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--text-dim);"></span>Total (bytes)</span>`,
             ];
             if (typeof warnPct === 'number' && warnPct > 0) {
-                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>Warn %</span>`);
+                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>Warn ${warnPct}%</span>`);
             }
             if (typeof critPct === 'number' && critPct > 0) {
-                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--red);"></span>Crit %</span>`);
+                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--red);"></span>Crit ${critPct}%</span>`);
             }
             return `<div class="chart-legend">${items.join('')}</div>`;
         }
@@ -1294,12 +1294,10 @@
             if (typeof warnPct === 'number' && warnPct > 0 && warnPct <= yMax) {
                 const y = yFor(warnPct);
                 thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--yellow)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
-                thresholdLines.push(`<text x="${padL + plotW - 4}" y="${y - 4}" fill="var(--yellow)" font-size="10" text-anchor="end">warn ${warnPct}%</text>`);
             }
             if (typeof critPct === 'number' && critPct > 0 && critPct <= yMax) {
                 const y = yFor(critPct);
                 thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--red)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
-                thresholdLines.push(`<text x="${padL + plotW - 4}" y="${y - 4}" fill="var(--red)" font-size="10" text-anchor="end">crit ${critPct}%</text>`);
             }
 
             // Hover-targets live on the used-% line; the interactive HTML tooltip reads the full point from the cache.
