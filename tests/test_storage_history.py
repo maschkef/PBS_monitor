@@ -319,6 +319,108 @@ def test_storage_history_endpoint_all_range_includes_every_tier(client_logged_in
     assert body["tiers"] == ["raw", "hourly", "sixhour", "daily"]
 
 
+def test_storage_history_endpoint_from_to_narrows_window(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {
+        "ds-1": {
+            "name": "ds-1",
+            "storage_history": {
+                "raw": [_sample(1000), _sample(2000), _sample(3000)],
+                "hourly": [],
+                "sixhour": [],
+                "daily": [],
+            },
+        },
+    })
+    resp = client.get("/api/datastores/ds-1/storage-history?from=1500&to=2500")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert [p["ts"] for p in body["points"]] == [2000]
+    assert body["range"] is None
+    assert body["from"] == 1500
+    assert body["to"] == 2500
+
+
+def test_storage_history_endpoint_from_to_selects_tier_by_span(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {"ds-1": {"name": "ds-1", "storage_history": {}}})
+    long_span = 200 * _SECONDS_PER_DAY
+    resp = client.get(f"/api/datastores/ds-1/storage-history?from=1000&to={1000 + long_span}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["tiers"] == ["raw", "hourly", "sixhour", "daily"]
+
+
+def test_storage_history_endpoint_rejects_only_from(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.get("/api/datastores/ds-1/storage-history?from=100")
+    assert resp.status_code == 400
+
+
+def test_storage_history_endpoint_rejects_only_to(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.get("/api/datastores/ds-1/storage-history?to=100")
+    assert resp.status_code == 400
+
+
+def test_storage_history_endpoint_rejects_from_greater_than_to(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.get("/api/datastores/ds-1/storage-history?from=200&to=100")
+    assert resp.status_code == 400
+
+
+def test_storage_history_endpoint_rejects_non_integer_from(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.get("/api/datastores/ds-1/storage-history?from=abc&to=def")
+    assert resp.status_code == 400
+
+
+def test_storage_history_endpoint_from_to_overrides_range(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {
+        "ds-1": {
+            "name": "ds-1",
+            "storage_history": {
+                "raw": [_sample(1000), _sample(2000), _sample(3000)],
+                "hourly": [],
+                "sixhour": [],
+                "daily": [],
+            },
+        },
+    })
+    resp = client.get("/api/datastores/ds-1/storage-history?range=7d&from=1500&to=2500")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["range"] is None
+    assert body["from"] == 1500
+    assert body["to"] == 2500
+    assert [p["ts"] for p in body["points"]] == [2000]
+
+
+def test_storage_history_endpoint_from_before_oldest_sample(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {
+        "ds-1": {
+            "name": "ds-1",
+            "storage_history": {
+                "raw": [_sample(5000), _sample(6000)],
+                "hourly": [],
+                "sixhour": [],
+                "daily": [],
+            },
+        },
+    })
+    resp = client.get("/api/datastores/ds-1/storage-history?from=1&to=10000")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert [p["ts"] for p in body["points"]] == [5000, 6000]
+    assert body["source"] == "daemon"
+
+
 def test_storage_history_endpoint_requires_auth(client_auth, tmp_path):
     _write_state(tmp_path, {})
     resp = client_auth.get("/api/datastores/ds-1/storage-history?range=7d")

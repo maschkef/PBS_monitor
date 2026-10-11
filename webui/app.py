@@ -255,6 +255,23 @@ STORAGE_HISTORY_RANGE_TIERS = {
     "all": ("raw", "hourly", "sixhour", "daily"),
 }
 
+# Tier selection for a custom from/to window.  Each entry: (max_span_seconds, tiers).
+# The first entry whose max is >= the requested span wins; spans longer than the
+# last entry fall through to STORAGE_HISTORY_SPAN_TIERS_FALLBACK.
+STORAGE_HISTORY_SPAN_TIERS = (
+    (7 * 86400, ("raw",)),
+    (30 * 86400, ("raw", "hourly")),
+    (90 * 86400, ("raw", "hourly", "sixhour")),
+)
+STORAGE_HISTORY_SPAN_TIERS_FALLBACK = ("raw", "hourly", "sixhour", "daily")
+
+
+def _tiers_for_span(span_seconds):
+    for threshold, tiers in STORAGE_HISTORY_SPAN_TIERS:
+        if span_seconds <= threshold:
+            return tiers
+    return STORAGE_HISTORY_SPAN_TIERS_FALLBACK
+
 
 def _rescale_range_cutoff(range_str):
     """Return a UTC datetime cutoff for a rescale range string, or None for 'all'."""
@@ -1367,7 +1384,25 @@ def get_storage_history(datastore_id):
     daemon has run at least once.
     """
     range_str = request.args.get("range", "30d")
-    if range_str not in STORAGE_HISTORY_RANGE_ALLOWED:
+    from_raw = request.args.get("from")
+    to_raw = request.args.get("to")
+
+    use_window = from_raw is not None or to_raw is not None
+    window_from = None
+    window_to = None
+    if use_window:
+        if from_raw is None or to_raw is None:
+            return jsonify({"error": "Both 'from' and 'to' are required when either is set."}), 400
+        try:
+            window_from = int(from_raw)
+            window_to = int(to_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "'from' and 'to' must be integer unix timestamps."}), 400
+        if window_from <= 0 or window_to <= 0:
+            return jsonify({"error": "'from' and 'to' must be positive integers."}), 400
+        if window_from >= window_to:
+            return jsonify({"error": "'from' must be strictly less than 'to'."}), 400
+    elif range_str not in STORAGE_HISTORY_RANGE_ALLOWED:
         allowed = ", ".join(STORAGE_HISTORY_RANGE_ALLOWED)
         return jsonify({"error": f"Invalid range. Allowed: {allowed}."}), 400
 
@@ -1376,11 +1411,15 @@ def get_storage_history(datastore_id):
     ds_state = alerting_state.get("datastores", {}).get(datastore_id) or {}
     history = ds_state.get("storage_history") or {}
 
-    tiers = STORAGE_HISTORY_RANGE_TIERS.get(range_str, ("raw", "hourly"))
-    cutoff_seconds = _storage_history_range_seconds(range_str)
-    cutoff_ts = None
-    if cutoff_seconds is not None:
-        cutoff_ts = int(datetime.now(UTC).timestamp()) - cutoff_seconds
+    if use_window:
+        tiers = _tiers_for_span(window_to - window_from)
+        cutoff_ts = None
+    else:
+        tiers = STORAGE_HISTORY_RANGE_TIERS.get(range_str, ("raw", "hourly"))
+        cutoff_seconds = _storage_history_range_seconds(range_str)
+        cutoff_ts = None
+        if cutoff_seconds is not None:
+            cutoff_ts = int(datetime.now(UTC).timestamp()) - cutoff_seconds
 
     deduped = {}
     for tier in tiers:
@@ -1391,7 +1430,10 @@ def get_storage_history(datastore_id):
             ts = point.get("ts")
             if not isinstance(ts, int):
                 continue
-            if cutoff_ts is not None and ts < cutoff_ts:
+            if use_window:
+                if ts < window_from or ts > window_to:
+                    continue
+            elif cutoff_ts is not None and ts < cutoff_ts:
                 continue
             deduped[ts] = {
                 "ts": ts,
@@ -1402,9 +1444,9 @@ def get_storage_history(datastore_id):
     ordered = sorted(deduped.values(), key=lambda p: p["ts"])
 
     thresholds = alerting_config.get("thresholds") or {}
-    return jsonify({
+    payload = {
         "datastore_id": datastore_id,
-        "range": range_str,
+        "range": None if use_window else range_str,
         "tiers": list(tiers),
         "points": ordered,
         "sample_count": len(ordered),
@@ -1416,7 +1458,11 @@ def get_storage_history(datastore_id):
             "storage_warn_percent": thresholds.get("storage_warn_percent"),
             "storage_crit_percent": thresholds.get("storage_crit_percent"),
         },
-    })
+    }
+    if use_window:
+        payload["from"] = window_from
+        payload["to"] = window_to
+    return jsonify(payload)
 
 
 @app.route("/api/platform-stats")
