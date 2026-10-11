@@ -7,7 +7,6 @@ import os
 import secrets
 import sys
 import time
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -25,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from alerting import monitor as alert_monitor
+from alerting import status_feed as _status_feed
 from webui import alerting_ui as _alerting_ui
 from webui import normalizers as _normalizers
 from webui import validators as _validators
@@ -1467,50 +1467,172 @@ def get_storage_history(datastore_id):
     return jsonify(payload)
 
 
-_STATUS_FEED_URL = "https://status.remote-backups.com/feed.rss"
-_STATUS_FEED_TTL = 600  # 10 minutes
-_status_feed_cache = {"ts": 0.0, "data": None}
+_status_feed_cache_webui = {"ts": 0.0, "data": None}
+
+
+def _status_feed_params(config: dict) -> "tuple[str, int]":
+    """Return (url, cache_ttl_seconds) from alerting config, with defaults."""
+    sf = (config or {}).get("status_feed") or {}
+    url = (sf.get("url") or "").strip() or _status_feed.DEFAULT_FEED_URL
+    cm = sf.get("cache_minutes")
+    try:
+        ttl = int(cm) * 60 if cm is not None else 600
+    except (TypeError, ValueError):
+        ttl = 600
+    if ttl < 0:
+        ttl = 600
+    return url, ttl
+
+
+def _iso_or_none(dt):
+    return dt.isoformat() if dt else None
+
+
+def _feed_items_for_ui(feed: dict, max_items: int = 25) -> list[dict]:
+    """Flatten the raw JSON feed into a UI-friendly list of items."""
+    if not isinstance(feed, dict):
+        return []
+    _, id_to_name = _status_feed.index_resources(feed)
+    now = datetime.now(UTC)
+    items = []
+    for entry in feed.get("included", []) or []:
+        if entry.get("type") != "status_report":
+            continue
+        attrs = entry.get("attributes") or {}
+        starts_at = _status_feed.parse_iso(attrs.get("starts_at"))
+        ends_at = _status_feed.parse_iso(attrs.get("ends_at"))
+        agg = (attrs.get("aggregate_state") or "").lower()
+        is_ongoing = (
+            agg != "resolved"
+            and (ends_at is None or ends_at > now)
+        )
+        affected = attrs.get("affected_resources") or []
+        affected_hosts = [
+            id_to_name[str(a.get("status_page_resource_id") or "")]
+            for a in affected
+            if str(a.get("status_page_resource_id") or "") in id_to_name
+        ]
+        items.append({
+            "id": entry.get("id"),
+            "title": (attrs.get("title") or "").strip(),
+            "report_type": (attrs.get("report_type") or "").strip(),
+            "aggregate_state": agg,
+            "starts_at": _iso_or_none(starts_at),
+            "ends_at": _iso_or_none(ends_at),
+            "is_ongoing": is_ongoing,
+            "affected_hosts": affected_hosts,
+            "_sort": (0 if is_ongoing else 1, -(starts_at.timestamp() if starts_at else 0.0)),
+        })
+    items.sort(key=lambda x: x["_sort"])
+    for it in items:
+        it.pop("_sort", None)
+    return items[:max_items]
 
 
 @app.route("/api/status/feed")
 @require_auth
 def get_status_feed():
-    """Proxy for the remote-backups.com status RSS feed.
-    Cached server-side; `?refresh=1` forces a fresh fetch and replaces the cache."""
+    """Proxy for the remote-backups.com status JSON feed.
+
+    Cached server-side; ``?refresh=1`` forces a fresh fetch and replaces
+    the cache.  Response shape is normalized for direct consumption by the
+    dashboard modal (see ``_feed_items_for_ui``).
+    """
     force_refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+    config = alert_monitor.load_config()
+    url, cache_ttl = _status_feed_params(config)
 
-    now = time.monotonic()
-    if (not force_refresh
-            and _status_feed_cache["data"] is not None
-            and (now - _status_feed_cache["ts"]) < _STATUS_FEED_TTL):
-        return jsonify({**_status_feed_cache["data"], "cached": True})
+    feed = _status_feed.fetch_status_feed(
+        url,
+        cache=_status_feed_cache_webui,
+        cache_ttl_seconds=cache_ttl,
+        force_refresh=force_refresh,
+    )
+    if feed is None:
+        return jsonify({"error": "Failed to fetch status feed."}), 502
 
-    try:
-        resp = requests.get(_STATUS_FEED_URL, timeout=10)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        return jsonify({"error": f"Failed to fetch status feed: {e}"}), 502
+    cached = not force_refresh and (
+        time.monotonic() - _status_feed_cache_webui.get("ts", 0.0)
+    ) < cache_ttl and _status_feed_cache_webui.get("data") is feed
 
-    try:
-        root = ET.fromstring(resp.content)
-    except ET.ParseError as e:
-        return jsonify({"error": f"Failed to parse status feed: {e}"}), 502
+    attrs = (feed.get("data") or {}).get("attributes") or {}
+    payload = {
+        "aggregate_state": (attrs.get("aggregate_state") or "").lower(),
+        "updated_at": attrs.get("updated_at"),
+        "items": _feed_items_for_ui(feed),
+        "fetched_at": time.time(),
+        "cached": cached,
+    }
+    return jsonify(payload)
 
-    items = []
-    for item in root.findall(".//item"):
-        items.append({
-            "title":       (item.findtext("title") or "").strip(),
-            "link":        (item.findtext("link") or "").strip(),
-            "pubDate":     (item.findtext("pubDate") or "").strip(),
-            "category":    (item.findtext("category") or "").strip(),
-            "description": (item.findtext("description") or "").strip(),
-            "guid":        (item.findtext("guid") or "").strip(),
-        })
 
-    payload = {"items": items[:25], "fetched_at": time.time()}
-    _status_feed_cache["ts"] = now
-    _status_feed_cache["data"] = payload
-    return jsonify({**payload, "cached": False})
+@app.route("/api/status/summary")
+@require_auth
+def get_status_summary():
+    """Compact status summary used by the dashboard banner.
+
+    Returns ``aggregate_state``, whether any currently-open incident affects
+    a configured host (``has_relevant_incident``), and up to three relevant
+    incident records.
+    """
+    config = alert_monitor.load_config()
+    url, cache_ttl = _status_feed_params(config)
+    feed = _status_feed.fetch_status_feed(
+        url,
+        cache=_status_feed_cache_webui,
+        cache_ttl_seconds=cache_ttl,
+    )
+    if feed is None:
+        return jsonify({
+            "aggregate_state": "unknown",
+            "has_relevant_incident": False,
+            "relevant_incidents": [],
+            "configured_hosts": [],
+            "error": "Failed to fetch status feed.",
+        }), 200
+
+    attrs = (feed.get("data") or {}).get("attributes") or {}
+    aggregate_state = (attrs.get("aggregate_state") or "").lower()
+
+    sf = config.get("status_feed") or {}
+    overrides = config.get("host_overrides") or []
+    default_host = (sf.get("default_host") or "").strip()
+    hosts = []
+    seen = set()
+    for h in [default_host] + [
+        (e.get("host") or "").strip() for e in overrides if isinstance(e, dict)
+    ]:
+        if h and h.lower() not in seen:
+            hosts.append(h)
+            seen.add(h.lower())
+
+    now = datetime.now(UTC)
+    relevant: list[dict] = []
+    for host in hosts:
+        for inc in _status_feed.find_matching_incidents(
+            feed, host=host, at_time=now, lookback_minutes=0, max_results=5,
+        ):
+            if not inc["is_ongoing"]:
+                continue
+            if any(r.get("id") == inc["id"] for r in relevant):
+                continue
+            relevant.append({
+                "id": inc["id"],
+                "title": inc["title"],
+                "report_type": inc["report_type"],
+                "starts_at": _iso_or_none(inc["starts_at"]),
+                "ends_at": _iso_or_none(inc["ends_at"]),
+                "affected_hosts": inc["affected_hosts"],
+                "matched_host": inc.get("matched_host"),
+            })
+
+    return jsonify({
+        "aggregate_state": aggregate_state or "unknown",
+        "updated_at": attrs.get("updated_at"),
+        "has_relevant_incident": bool(relevant),
+        "relevant_incidents": relevant[:3],
+        "configured_hosts": hosts,
+    })
 
 
 @app.route("/api/platform-stats")

@@ -32,7 +32,7 @@ class Alert:
     # Priority levels: 1=min, 2=low, 3=default, 4=high, 5=urgent
     def __init__(self, datastore_name, title, message, priority=3, tags=None,
                  key=None, scope="datastore", group_rule_key=None,
-                 suppress_until=None):
+                 suppress_until=None, datastore_id=None, namespace=None):
         self.datastore_name = datastore_name
         self.title = title
         self.message = message
@@ -42,6 +42,8 @@ class Alert:
         self.scope = scope
         self.group_rule_key = group_rule_key
         self.suppress_until = suppress_until
+        self.datastore_id = datastore_id
+        self.namespace = namespace
 
 
 # ── Timezone helpers ──────────────────────────────────────────────────────────
@@ -528,6 +530,8 @@ def build_missed_slot_alert(ds, group_state, slot, due_dt_local, same_day_occurr
         scope="group",
         group_rule_key=group_state.get("group_rule_key"),
         suppress_until=next_expected_at if downgraded else None,
+        datastore_id=ds.get("id") or None,
+        namespace=group_state.get("namespace") or None,
     )
 
 
@@ -568,6 +572,8 @@ def build_missed_interval_alert(ds, group_state, schedule_model, now_local, last
         scope="group",
         group_rule_key=group_state.get("group_rule_key"),
         suppress_until=next_expected_at if downgraded else None,
+        datastore_id=ds.get("id") or None,
+        namespace=group_state.get("namespace") or None,
     )
 
 

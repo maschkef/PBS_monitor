@@ -1345,6 +1345,124 @@
             gap: 0.4rem;
         }
 
+        /* ── Status-feed banner & modal ──────────────────────── */
+        .status-banner {
+            margin: 0.6rem 1rem 0;
+            padding: 0.55rem 1rem;
+            border-radius: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-size: 0.84rem;
+            cursor: pointer;
+            background: rgba(234, 179, 8, 0.1);
+            border: 1px solid rgba(234, 179, 8, 0.35);
+            color: var(--yellow);
+            transition: background 0.15s ease;
+        }
+        .status-banner:hover { background: rgba(234, 179, 8, 0.16); }
+        .status-banner.severity-down {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: var(--red);
+        }
+        .status-banner.severity-down:hover { background: rgba(239, 68, 68, 0.18); }
+        .status-banner-icon { font-size: 1.05rem; }
+        .status-banner-text { flex: 1 1 auto; }
+        .status-banner-action { font-size: 0.78rem; opacity: 0.85; }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.25rem 0.7rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: rgba(var(--rgb-text), 0.05);
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .status-pill-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            display: inline-block;
+        }
+        .status-pill.state-operational { background: var(--green-bg); color: var(--green); }
+        .status-pill.state-degraded { background: rgba(234, 179, 8, 0.14); color: var(--yellow); }
+        .status-pill.state-down { background: var(--red-bg); color: var(--red); }
+
+        .sf-item {
+            border: 1px solid var(--border);
+            border-radius: 0.55rem;
+            padding: 0.7rem 0.85rem;
+            margin-bottom: 0.55rem;
+            background: var(--surface2);
+        }
+        .sf-item-head {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.3rem;
+        }
+        .sf-item-title {
+            flex: 1 1 auto;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .sf-badge {
+            display: inline-block;
+            font-size: 0.68rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 0.3rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            white-space: nowrap;
+        }
+        .sf-badge.state-ongoing { background: var(--red-bg); color: var(--red); }
+        .sf-badge.state-resolved { background: rgba(var(--rgb-text), 0.07); color: var(--text-dim); }
+        .sf-badge.kind-incident { background: rgba(234, 179, 8, 0.14); color: var(--yellow); }
+        .sf-badge.kind-maintenance { background: var(--blue-bg); color: var(--blue); }
+        .sf-item-meta {
+            font-size: 0.76rem;
+            color: var(--text-dim);
+            margin-bottom: 0.3rem;
+        }
+        .sf-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            margin-top: 0.35rem;
+        }
+        .sf-chip {
+            display: inline-block;
+            font-size: 0.72rem;
+            padding: 0.1rem 0.5rem;
+            border-radius: 999px;
+            background: rgba(var(--rgb-text), 0.06);
+            color: var(--text-dim);
+            font-family: monospace;
+        }
+        .sf-chip.highlight { background: var(--blue-bg); color: var(--blue); }
+        .sf-empty {
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            padding: 1.5rem 1rem;
+        }
+
+        .host-override-row td { padding: 0.3rem 0.3rem; vertical-align: top; }
+        .host-override-row input,
+        .host-override-row select {
+            width: 100%;
+            box-sizing: border-box;
+        }
+
         /* ── Blocking refresh-error modal ────────────────────── */
         .error-code-badge {
             display: inline-block;
@@ -1523,6 +1641,12 @@
         </div>
     </div>
 
+    <div id="statusBanner" class="status-banner" style="display:none" onclick="openStatusFeedModal()" role="button" tabindex="0" title="Open status feed">
+        <span class="status-banner-icon" id="statusBannerIcon">⚠</span>
+        <span class="status-banner-text" id="statusBannerText"></span>
+        <span class="status-banner-action">Details →</span>
+    </div>
+
     <div class="container">
         <div id="cachedBanner" class="cached-banner" style="display:none">
             <span>📦 Cached state from <strong id="cachedTimestamp">–</strong></span>
@@ -1564,6 +1688,7 @@
           <button class="tab-btn" onclick="switchTab('tab-quiet',this)">Quiet Hours</button>
           <button class="tab-btn" onclick="switchTab('tab-learning',this)">Schedule Learning</button>
           <button class="tab-btn" onclick="switchTab('tab-history',this)">Usage History</button>
+          <button class="tab-btn" onclick="switchTab('tab-status-feed',this)">Status Feed</button>
           <button class="tab-btn" onclick="switchTab('tab-cron',this)">Cron Setup</button>
           <button class="tab-btn" onclick="switchTab('tab-about',this);renderAboutTab()">About</button>
         </div>
@@ -2095,6 +2220,63 @@
           </div>
         </div>
 
+        <!-- Status Feed Enrichment -->
+        <div id="tab-status-feed" class="tab-panel">
+          <p class="soft-note" style="margin-top:0;margin-bottom:0.75rem;">
+            Enriches backup- and API-related alerts with context from the
+            <a href="https://status.remote-backups.com" target="_blank" rel="noopener" style="color:var(--cyan)">remote-backups.com status page</a>.
+            Each enrichable alert is matched against currently-open or recently-overlapping incidents affecting the resolved host.
+          </p>
+          <div class="form-group">
+            <label>Enabled <span class="tooltip-icon">i<span class="tooltip-text">When enabled, backup-/API-related alerts are enriched with context from the status feed. Non-enrichable alert types are never touched.</span></span></label>
+            <select id="cfg-sf-enabled">
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Feed URL <span class="tooltip-icon">i<span class="tooltip-text">URL of the JSON status feed. Change this only if the provider moves the endpoint. Default: https://status.remote-backups.com/index.json.</span></span></label>
+            <input type="text" id="cfg-sf-url" placeholder="https://status.remote-backups.com/index.json">
+          </div>
+          <div class="form-group">
+            <label>Cache <span class="tooltip-icon">i<span class="tooltip-text">How long a fetched feed is cached in-process before being refreshed. Default: 10 min.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sf-cache-minutes" min="1" max="1440" step="1">
+              <span class="input-suffix">min</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Lookback <span class="tooltip-icon">i<span class="tooltip-text">How far back from the alert time an incident is still considered 'possibly related'. Ongoing incidents are always kept, regardless of this value. Default: 120 min.</span></span></label>
+            <div class="input-group">
+              <input type="number" id="cfg-sf-lookback-minutes" min="5" max="10080" step="1">
+              <span class="input-suffix">min</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Default host <span class="tooltip-icon">i<span class="tooltip-text">Global fallback host used for matching alerts against the status feed. Matched case-insensitively against the public_name of status page resources. Per-datastore / per-namespace overrides below take precedence.</span></span></label>
+            <input type="text" id="cfg-sf-default-host" placeholder="dus1-1.pbs-host.de">
+          </div>
+
+          <p class="form-section-title" style="margin-top:1.25rem">Host Overrides <span class="tooltip-icon">i<span class="tooltip-text">Per-datastore (and optionally per-namespace) overrides for the matching host. Resolution picks the most specific match: (datastore, namespace) &gt; (datastore, any namespace) &gt; default host above.</span></span></p>
+          <p class="soft-note" style="margin-top:0;margin-bottom:0.5rem;">
+            Leave the namespace empty to apply the host to the whole datastore. Namespaces are entered manually (e.g. <code>root/customer-a</code>) — no dropdown, since namespaces are only known after a monitoring run.
+          </p>
+          <table id="hostOverridesTable" style="width:100%;font-size:0.84rem;border-collapse:collapse;margin-top:0.5rem">
+            <thead>
+              <tr style="text-align:left;color:var(--text-dim);border-bottom:1px solid var(--border)">
+                <th style="padding:0.4rem 0.3rem;width:40%">Datastore</th>
+                <th style="padding:0.4rem 0.3rem;width:25%">Namespace</th>
+                <th style="padding:0.4rem 0.3rem;width:30%">Host</th>
+                <th style="padding:0.4rem 0.3rem;width:5%"></th>
+              </tr>
+            </thead>
+            <tbody id="hostOverridesBody">
+              <tr class="host-override-empty"><td colspan="4" style="padding:0.6rem 0.3rem;color:var(--text-dim);font-style:italic">No overrides yet.</td></tr>
+            </tbody>
+          </table>
+          <button class="btn btn-secondary" style="margin-top:0.6rem;font-size:0.82rem" onclick="addHostOverrideRow()">+ Add override</button>
+        </div>
+
         <!-- Cron Setup -->
         <div id="tab-cron" class="tab-panel">
           <div id="docker-notice" style="display:none;">
@@ -2240,11 +2422,21 @@
             <button class="modal-close" onclick="closeModal('statusFeedModal')">✕</button>
           </div>
         </div>
+        <div id="statusFeedHeaderBar" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.6rem">
+          <div id="statusFeedPill" class="status-pill" style="display:none">
+            <span class="status-pill-dot"></span>
+            <span id="statusFeedPillText">—</span>
+          </div>
+          <label class="toggle-inline" style="font-size:0.82rem;color:var(--text-dim);display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer">
+            <input type="checkbox" id="statusFeedFilterMine" onchange="renderStatusFeed()">
+            Only my hosts
+          </label>
+        </div>
         <div id="statusFeedBody" style="max-height:60vh;overflow-y:auto">
           <div class="loading"><div class="spinner"></div>Loading…</div>
         </div>
         <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-dim);text-align:center">
-          Quelle:
+          Source:
           <a href="https://status.remote-backups.com" target="_blank" rel="noopener" style="color:var(--cyan)">status.remote-backups.com</a>
           · <span id="statusFeedMeta">cached max. 10 min</span>
         </div>

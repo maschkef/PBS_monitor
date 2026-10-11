@@ -90,6 +90,7 @@ from alerting.schedule import (
     snapshot_to_local_occurrence,  # noqa: F401 — re-export
     weekday_name,  # noqa: F401 — re-export
 )
+from alerting.status_feed import enrich_alert as _enrich_alert_with_status_feed
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -188,6 +189,18 @@ DEFAULT_CONFIG = {
         "min_sample_interval_seconds": 300,
         "rescale_history_max_entries": 1000,
     },
+    "status_feed": {
+        "enabled": True,
+        "url": "https://status.remote-backups.com/index.json",
+        "cache_minutes": 10,
+        "lookback_minutes": 120,
+        "default_host": "",
+    },
+    # Per-datastore (and optionally per-namespace) overrides for the host
+    # used when matching alerts against the status feed. Each entry:
+    #   {"datastore_id": "...", "namespace": "" | "...", "host": "..."}
+    # Empty namespace = applies to all namespaces of that datastore.
+    "host_overrides": [],
 }
 
 
@@ -296,6 +309,11 @@ def load_config():
             **DEFAULT_CONFIG["storage_history"],
             **cfg.get("storage_history", {}),
         }
+        merged["status_feed"] = {
+            **DEFAULT_CONFIG["status_feed"],
+            **(cfg.get("status_feed") or {}),
+        }
+        merged["host_overrides"] = cfg.get("host_overrides") or []
         merged["ignored_groups"] = normalize_ignored_groups(cfg.get("ignored_groups"))
         return merged
 
@@ -847,6 +865,8 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
             priority=4,
             tags=["warning", "package"],
             key=f"{ds.get('id', 'unknown')}:{group_key}:unexpected_snapshot_removal",
+            datastore_id=ds.get("id") or None,
+            namespace=ns or None,
         ))
 
     # ── All Backups Gone ──
@@ -860,6 +880,7 @@ def apply_backup_inventory_state(ds, ds_state, backup_inventory, config, group_r
             priority=5,
             tags=["rotating_light", "package"],
             key=f"{ds.get('id', 'unknown')}:all_backups_gone",
+            datastore_id=ds.get("id") or None,
         ))
 
     learned_group_count = 0
@@ -936,6 +957,7 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
             f"Datastore '{name}' — host server is unreachable. Metrics unavailable.",
             priority=4,
             tags=["warning", "cloud"],
+            datastore_id=ds_id or None,
         ))
         return alerts, "host offline"
 
@@ -1154,6 +1176,7 @@ def run_check(config, state):
             )
             alert.priority = _resolve_alert_priority(alert, prio_cfg)
             if should_alert(config, state, alert.key):
+                _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
                 safe_send_ntfy(config, alert)
                 state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
     except requests.RequestException as e:
@@ -1170,6 +1193,7 @@ def run_check(config, state):
         )
         alert.priority = _resolve_alert_priority(alert, prio_cfg)
         if should_alert(config, state, alert.key):
+            _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
             safe_send_ntfy(config, alert)
             state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
         save_state(state)
@@ -1189,6 +1213,7 @@ def run_check(config, state):
         )
         alert.priority = _resolve_alert_priority(alert, prio_cfg)
         if should_alert(config, state, alert.key):
+            _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
             safe_send_ntfy(config, alert)
             state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
         save_state(state)
@@ -1284,6 +1309,7 @@ def run_check(config, state):
         if not should_alert(config, state, alert.key):
             skipped += 1
             continue
+        _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
         if safe_send_ntfy(config, alert):
             now_iso = datetime.now(UTC).isoformat()
             state.setdefault("last_alerts", {})[alert.key] = now_iso

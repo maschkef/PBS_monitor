@@ -1527,6 +1527,7 @@
         })();
         loadAll();
         initWebuiInfo();
+        startStatusBannerPolling();
 
         // ── Modal helpers ──────────────────────────────────────────────────────
         function openModal(id) {
@@ -1834,6 +1835,21 @@
                 document.getElementById('cfg-sh-interval').value = sh.min_sample_interval_seconds ?? 300;
                 document.getElementById('cfg-sh-rescale-max').value = sh.rescale_history_max_entries ?? 1000;
 
+                const sf = c.status_feed || {};
+                document.getElementById('cfg-sf-enabled').value = sf.enabled === false ? 'false' : 'true';
+                document.getElementById('cfg-sf-url').value = sf.url || '';
+                document.getElementById('cfg-sf-cache-minutes').value = sf.cache_minutes ?? 10;
+                document.getElementById('cfg-sf-lookback-minutes').value = sf.lookback_minutes ?? 120;
+                document.getElementById('cfg-sf-default-host').value = sf.default_host || '';
+                renderHostOverridesTable(c.host_overrides || []);
+
+                window._alertingConfig = {
+                    status_feed: {
+                        default_host: sf.default_host || '',
+                    },
+                    host_overrides: Array.isArray(c.host_overrides) ? c.host_overrides.slice() : [],
+                };
+
                 if (res.read_only) {
                     document.getElementById('saveConfigBtn').disabled = true;
                     document.querySelectorAll('#settingsModal input, #settingsModal select')
@@ -2115,6 +2131,14 @@
                         rescale_history_max_entries: parseInt(document.getElementById('cfg-sh-rescale-max').value),
                     };
                 })(),
+                status_feed: {
+                    enabled: document.getElementById('cfg-sf-enabled').value === 'true',
+                    url: document.getElementById('cfg-sf-url').value.trim(),
+                    cache_minutes: parseInt(document.getElementById('cfg-sf-cache-minutes').value) || 10,
+                    lookback_minutes: parseInt(document.getElementById('cfg-sf-lookback-minutes').value) || 120,
+                    default_host: document.getElementById('cfg-sf-default-host').value.trim(),
+                },
+                host_overrides: collectHostOverridesFromTable(),
             };
 
             try {
@@ -2136,6 +2160,74 @@
             el.textContent = text;
             el.style.display = text ? '' : 'none';
             el.style.color = type === 'error' ? 'var(--red)' : 'var(--green)';
+        }
+
+        // ── Host-override table (status-feed enrichment) ───────────────────
+        function _hostOverrideDatastoreOptions(selectedId) {
+            const items = (currentDatastores || []).map(ds => {
+                const id = String(ds.id ?? ds.datastore_id ?? '');
+                const name = ds.name || ds.display_name || id;
+                const label = name && name !== id ? `${name} (${id})` : id;
+                const sel = id === String(selectedId || '') ? ' selected' : '';
+                return `<option value="${escapeFeedHtml(id)}"${sel}>${escapeFeedHtml(label)}</option>`;
+            }).join('');
+            const placeholderSelected = !selectedId ? ' selected' : '';
+            return `<option value=""${placeholderSelected} disabled>— Select datastore —</option>${items}`;
+        }
+
+        function _hostOverrideRowHtml(entry) {
+            const ds = (entry && entry.datastore_id) || '';
+            const ns = (entry && entry.namespace) || '';
+            const host = (entry && entry.host) || '';
+            return `
+              <tr class="host-override-row">
+                <td><select class="ho-ds">${_hostOverrideDatastoreOptions(ds)}</select></td>
+                <td><input type="text" class="ho-ns" placeholder="(whole datastore)" value="${escapeFeedHtml(ns)}"></td>
+                <td><input type="text" class="ho-host" placeholder="dus1-1.pbs-host.de" value="${escapeFeedHtml(host)}"></td>
+                <td><button class="btn btn-secondary" style="font-size:0.78rem;padding:0.3rem 0.55rem" onclick="removeHostOverrideRow(this)">✕</button></td>
+              </tr>`;
+        }
+
+        function renderHostOverridesTable(entries) {
+            const body = document.getElementById('hostOverridesBody');
+            if (!body) return;
+            const list = Array.isArray(entries) ? entries : [];
+            if (!list.length) {
+                body.innerHTML = '<tr class="host-override-empty"><td colspan="4" style="padding:0.6rem 0.3rem;color:var(--text-dim);font-style:italic">No overrides yet.</td></tr>';
+                return;
+            }
+            body.innerHTML = list.map(_hostOverrideRowHtml).join('');
+        }
+
+        function addHostOverrideRow() {
+            const body = document.getElementById('hostOverridesBody');
+            if (!body) return;
+            const empty = body.querySelector('.host-override-empty');
+            if (empty) empty.remove();
+            body.insertAdjacentHTML('beforeend', _hostOverrideRowHtml({}));
+        }
+
+        function removeHostOverrideRow(btn) {
+            const row = btn.closest('tr');
+            const body = document.getElementById('hostOverridesBody');
+            if (!row || !body) return;
+            row.remove();
+            if (!body.querySelector('tr.host-override-row')) {
+                body.innerHTML = '<tr class="host-override-empty"><td colspan="4" style="padding:0.6rem 0.3rem;color:var(--text-dim);font-style:italic">No overrides yet.</td></tr>';
+            }
+        }
+
+        function collectHostOverridesFromTable() {
+            const rows = document.querySelectorAll('#hostOverridesBody tr.host-override-row');
+            const out = [];
+            rows.forEach(row => {
+                const ds = row.querySelector('.ho-ds')?.value?.trim() || '';
+                const ns = row.querySelector('.ho-ns')?.value?.trim() || '';
+                const host = row.querySelector('.ho-host')?.value?.trim() || '';
+                if (!ds || !host) return;
+                out.push({ datastore_id: ds, namespace: ns, host });
+            });
+            return out;
         }
 
         function priorityLabel(p) {
@@ -2363,6 +2455,8 @@
             });
         }
 
+        let _statusFeedItems = [];
+
         function openStatusFeedModal() {
             openModal('statusFeedModal');
             loadStatusFeed(false);
@@ -2381,42 +2475,145 @@
                     throw new Error(errText);
                 }
                 const data = await resp.json();
-                renderStatusFeed(data.items || []);
+                _statusFeedItems = data.items || [];
+                renderStatusFeedPill(data.aggregate_state);
+                renderStatusFeed();
                 if (meta) {
                     if (data.fetched_at) {
                         const d = new Date(data.fetched_at * 1000);
-                        const tag = data.cached ? 'cached' : 'frisch geladen';
-                        meta.textContent = `${tag} · letzter Abruf ${d.toLocaleTimeString()}`;
+                        const tag = data.cached ? 'cached' : 'fresh';
+                        meta.textContent = `${tag} · last fetch ${d.toLocaleTimeString()}`;
                     } else {
                         meta.textContent = 'cached max. 10 min';
                     }
                 }
             } catch (e) {
                 body.innerHTML = '<div style="color:var(--red);text-align:center;padding:1rem">' +
-                    'Status-Feed konnte nicht geladen werden: ' + escapeFeedHtml(e.message || String(e)) + '</div>';
+                    'Failed to load status feed: ' + escapeFeedHtml(e.message || String(e)) + '</div>';
             }
         }
 
-        function renderStatusFeed(items) {
+        function renderStatusFeedPill(aggregateState) {
+            const pill = document.getElementById('statusFeedPill');
+            const text = document.getElementById('statusFeedPillText');
+            if (!pill || !text) return;
+            const state = (aggregateState || 'unknown').toLowerCase();
+            const map = {
+                operational: { cls: 'state-operational', label: 'Operational' },
+                degraded: { cls: 'state-degraded', label: 'Degraded' },
+                down: { cls: 'state-down', label: 'Down' }
+            };
+            const cfg = map[state] || { cls: '', label: state.charAt(0).toUpperCase() + state.slice(1) };
+            pill.className = 'status-pill ' + cfg.cls;
+            text.textContent = cfg.label;
+            pill.style.display = 'inline-flex';
+        }
+
+        function getConfiguredHostsLower() {
+            try {
+                const cfg = window._alertingConfig || {};
+                const hosts = new Set();
+                const sf = cfg.status_feed || {};
+                if (sf.default_host) hosts.add(String(sf.default_host).trim().toLowerCase());
+                for (const ov of (cfg.host_overrides || [])) {
+                    if (ov && ov.host) hosts.add(String(ov.host).trim().toLowerCase());
+                }
+                return hosts;
+            } catch (_) { return new Set(); }
+        }
+
+        function renderStatusFeed() {
             const body = document.getElementById('statusFeedBody');
-            if (!items.length) {
-                body.innerHTML = '<div style="text-align:center;padding:1rem;color:var(--text-dim)">Keine Einträge.</div>';
+            if (!body) return;
+            const items = _statusFeedItems || [];
+            const filterEl = document.getElementById('statusFeedFilterMine');
+            const filterMine = !!(filterEl && filterEl.checked);
+            const hosts = filterMine ? getConfiguredHostsLower() : null;
+
+            const filtered = filterMine
+                ? items.filter(it => (it.affected_hosts || []).some(h => hosts.has(String(h).toLowerCase())))
+                : items;
+
+            if (!filtered.length) {
+                const msg = filterMine
+                    ? 'No incidents affecting your configured hosts.'
+                    : 'No entries.';
+                body.innerHTML = `<div class="sf-empty">${escapeFeedHtml(msg)}</div>`;
                 return;
             }
-            const rows = items.map(it => {
-                const catColor = it.category === 'Maintenance' ? 'var(--cyan)' : 'var(--red)';
-                const titleHtml = it.link
-                    ? `<a href="${escapeFeedHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--text)">${escapeFeedHtml(it.title)}</a>`
-                    : escapeFeedHtml(it.title);
+
+            const rows = filtered.map(it => {
+                const ongoing = !!it.is_ongoing;
+                const stateCls = ongoing ? 'state-ongoing' : 'state-resolved';
+                const stateLbl = ongoing ? 'ONGOING' : 'RESOLVED';
+                const kind = (it.report_type || '').toLowerCase();
+                const kindCls = kind === 'maintenance' ? 'kind-maintenance' : 'kind-incident';
+                const kindLbl = kind === 'maintenance' ? 'Maintenance' : (kind === 'automatic' ? 'Incident' : (kind || 'Incident'));
+                const starts = formatFeedDate(it.starts_at);
+                const ends = it.ends_at ? formatFeedDate(it.ends_at) : (ongoing ? 'ongoing' : '—');
+                const rawRange = `${it.starts_at || ''} → ${it.ends_at || (ongoing ? 'ongoing' : '')}`;
+                const hostChips = (it.affected_hosts || []).map(h => {
+                    const low = String(h).toLowerCase();
+                    const hl = (hosts && hosts.has(low)) || (!filterMine && getConfiguredHostsLower().has(low));
+                    return `<span class="sf-chip${hl ? ' highlight' : ''}">${escapeFeedHtml(h)}</span>`;
+                }).join('');
                 return `
-                  <div style="padding:0.75rem 0;border-bottom:1px solid var(--border)">
-                    <div style="display:flex;justify-content:space-between;gap:1rem;margin-bottom:0.25rem;align-items:baseline">
-                      <span style="font-size:0.75rem;color:${catColor};font-weight:700;text-transform:uppercase">${escapeFeedHtml(it.category || '—')}</span>
-                      <span style="font-size:0.75rem;color:var(--text-dim)" title="${escapeFeedHtml(it.pubDate)}">${escapeFeedHtml(formatFeedDate(it.pubDate))}</span>
+                  <div class="sf-item">
+                    <div class="sf-item-head">
+                      <span class="sf-badge ${stateCls}">${stateLbl}</span>
+                      <span class="sf-badge ${kindCls}">${escapeFeedHtml(kindLbl)}</span>
+                      <span class="sf-item-title">${escapeFeedHtml(it.title || '(no title)')}</span>
                     </div>
-                    <div style="font-weight:600;margin-bottom:0.25rem">${titleHtml}</div>
-                    <div style="font-size:0.85rem;color:var(--text-dim)">${escapeFeedHtml(it.description)}</div>
+                    <div class="sf-item-meta" title="${escapeFeedHtml(rawRange)}">
+                      ${escapeFeedHtml(starts)} → ${escapeFeedHtml(ends)}
+                    </div>
+                    ${hostChips ? `<div class="sf-chip-row">${hostChips}</div>` : ''}
                   </div>`;
             }).join('');
             body.innerHTML = rows;
+        }
+
+        // ── Dashboard status banner ────────────────────────────────────────
+        async function loadStatusBanner() {
+            const banner = document.getElementById('statusBanner');
+            const text = document.getElementById('statusBannerText');
+            const icon = document.getElementById('statusBannerIcon');
+            if (!banner || !text) return;
+            try {
+                const resp = await fetch('/api/status/summary', { credentials: 'same-origin' });
+                if (!resp.ok) { banner.style.display = 'none'; return; }
+                const data = await resp.json();
+                const state = (data.aggregate_state || 'operational').toLowerCase();
+                const relevant = Array.isArray(data.relevant_incidents) ? data.relevant_incidents : [];
+                const hasRelevant = !!data.has_relevant_incident && relevant.length > 0;
+                const showForState = state && state !== 'operational';
+                if (!hasRelevant && !showForState) {
+                    banner.style.display = 'none';
+                    return;
+                }
+
+                let label;
+                if (hasRelevant) {
+                    const first = relevant[0] || {};
+                    const title = first.title || 'Platform incident';
+                    const hosts = (first.affected_hosts || []).join(', ');
+                    const more = relevant.length > 1 ? ` (+${relevant.length - 1} more)` : '';
+                    label = `Platform incident affecting your host${hosts ? ' ' + hosts : ''}: ${title}${more}`;
+                } else {
+                    label = `remote-backups.com platform status: ${state}`;
+                }
+                text.textContent = label;
+                if (icon) icon.textContent = state === 'down' ? '⛔' : '⚠';
+                banner.classList.toggle('severity-down', state === 'down');
+                banner.style.display = 'flex';
+            } catch (_) {
+                banner.style.display = 'none';
+            }
+        }
+
+        let _statusBannerTimer = null;
+        function startStatusBannerPolling() {
+            if (_statusBannerTimer) clearInterval(_statusBannerTimer);
+            loadStatusBanner();
+            _statusBannerTimer = setInterval(loadStatusBanner, 10 * 60 * 1000);
         }

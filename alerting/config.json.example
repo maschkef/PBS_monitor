@@ -67,5 +67,17 @@
     "daily_retention_days": null,
     "min_sample_interval_seconds": 300,
     "rescale_history_max_entries": 1000
-  }
+  },
+
+  "_comment_status_feed": "Enrich backup-/API-related alerts with context from the remote-backups.com status page. When a backup-related alert fires, the daemon fetches the status feed (cached in-process) and appends any currently-open or recently-overlapping incidents affecting the configured host. 'url' points at the JSON feed. 'cache_minutes' limits how often the feed is re-fetched. 'lookback_minutes' controls how far back from the alert time an incident is still considered 'possibly related'. 'default_host' is the global fallback host used for matching (e.g. 'dus1-1.pbs-host.de'); per-datastore / per-namespace overrides live in 'host_overrides'.",
+  "status_feed": {
+    "enabled": true,
+    "url": "https://status.remote-backups.com/index.json",
+    "cache_minutes": 10,
+    "lookback_minutes": 120,
+    "default_host": ""
+  },
+
+  "_comment_host_overrides": "Per-datastore (and optionally per-namespace) overrides for the host used when matching alerts against the status feed. Each entry: {datastore_id, namespace, host}. An empty namespace applies to the whole datastore. Resolution picks the most specific match: (datastore_id, namespace) > (datastore_id, '') > status_feed.default_host.",
+  "host_overrides": []
 }

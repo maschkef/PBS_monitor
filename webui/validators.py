@@ -178,6 +178,65 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                     "storage_history.rescale_history_max_entries must be a positive integer."
                 )
 
+    if "status_feed" in payload:
+        if not isinstance(payload["status_feed"], dict):
+            raise ValueError("status_feed must be an object.")
+        sf = payload["status_feed"]
+        if "enabled" in sf and not isinstance(sf["enabled"], bool):
+            raise ValueError("status_feed.enabled must be a boolean.")
+        if "url" in sf:
+            if not isinstance(sf["url"], str) or len(sf["url"]) > 2048:
+                raise ValueError("status_feed.url must be a string of at most 2048 characters.")
+            if sf["url"] and not sf["url"].startswith(("http://", "https://")):
+                raise ValueError("status_feed.url must start with http:// or https://.")
+        for int_key, lo, hi in (
+            ("cache_minutes", 1, 1440),
+            ("lookback_minutes", 5, 10080),
+        ):
+            if int_key in sf:
+                v = coerce_int_fn(sf[int_key])
+                if v is None or not (lo <= v <= hi):
+                    raise ValueError(f"status_feed.{int_key} must be between {lo} and {hi}.")
+        if "default_host" in sf:
+            dh = sf["default_host"]
+            if not isinstance(dh, str) or len(dh) > 253:
+                raise ValueError(
+                    "status_feed.default_host must be a string of at most 253 characters.",
+                )
+
+    if "host_overrides" in payload:
+        if not isinstance(payload["host_overrides"], list):
+            raise ValueError("host_overrides must be a list.")
+        seen: set[tuple[str, str]] = set()
+        for idx, entry in enumerate(payload["host_overrides"]):
+            if not isinstance(entry, dict):
+                # ValueError on purpose: the route maps it to a 400 response.
+                raise ValueError(f"host_overrides[{idx}] must be an object.")  # noqa: TRY004
+            ds_id = entry.get("datastore_id")
+            if not isinstance(ds_id, str) or not ds_id.strip() or len(ds_id) > 128:
+                raise ValueError(
+                    f"host_overrides[{idx}].datastore_id must be a non-empty string "
+                    f"of at most 128 characters.",
+                )
+            ns = entry.get("namespace", "")
+            if not isinstance(ns, str) or len(ns) > 128:
+                raise ValueError(
+                    f"host_overrides[{idx}].namespace must be a string of at most 128 characters.",
+                )
+            host = entry.get("host", "")
+            if not isinstance(host, str) or not host.strip() or len(host) > 253:
+                raise ValueError(
+                    f"host_overrides[{idx}].host must be a non-empty hostname "
+                    f"of at most 253 characters.",
+                )
+            dedup_key = (ds_id.strip(), ns.strip())
+            if dedup_key in seen:
+                raise ValueError(
+                    f"host_overrides contains duplicate entry for datastore '{ds_id}' "
+                    f"and namespace '{ns}'.",
+                )
+            seen.add(dedup_key)
+
     if "notification_priorities" in payload:
         if not isinstance(payload["notification_priorities"], dict):
             raise ValueError("notification_priorities must be an object.")
