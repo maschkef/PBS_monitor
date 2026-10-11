@@ -1845,6 +1845,7 @@
                 renderHostOverridesTable(c.host_overrides || []);
 
                 window._alertingConfig = {
+                    __loaded: true,
                     status_feed: {
                         default_host: sf.default_host || '',
                     },
@@ -2151,6 +2152,13 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
                 setSettingsMsg('✓ Saved.', 'ok');
+                window._alertingConfig = {
+                    __loaded: true,
+                    status_feed: {
+                        default_host: payload.status_feed.default_host || '',
+                    },
+                    host_overrides: Array.isArray(payload.host_overrides) ? payload.host_overrides.slice() : [],
+                };
             } catch (e) {
                 setSettingsMsg('Error: ' + e.message, 'error');
             }
@@ -2458,8 +2466,25 @@
 
         let _statusFeedItems = [];
 
-        function openStatusFeedModal() {
+        async function ensureAlertingConfigLoaded() {
+            if (window._alertingConfig && window._alertingConfig.__loaded) return;
+            try {
+                const res = await fetchJson('/api/alerting/config');
+                const c = (res && res.config) || {};
+                const sf = c.status_feed || {};
+                window._alertingConfig = {
+                    __loaded: true,
+                    status_feed: { default_host: sf.default_host || '' },
+                    host_overrides: Array.isArray(c.host_overrides) ? c.host_overrides.slice() : [],
+                };
+            } catch (_) {
+                window._alertingConfig = { __loaded: true, status_feed: {}, host_overrides: [] };
+            }
+        }
+
+        async function openStatusFeedModal() {
             openModal('statusFeedModal');
+            await ensureAlertingConfigLoaded();
             loadStatusFeed(false);
         }
 
@@ -2523,6 +2548,19 @@
             } catch (_) { return new Set(); }
         }
 
+        // Mirrors alerting.status_feed.host_matches_public_name — exact
+        // match OR "<configured> - " prefix (handles multi-instance resources
+        // like "<host> - Instance 1").
+        function statusFeedHostMatches(configuredSetLower, publicName) {
+            const pn = String(publicName || '').trim().toLowerCase();
+            if (!pn || !configuredSetLower) return false;
+            if (configuredSetLower.has(pn)) return true;
+            for (const h of configuredSetLower) {
+                if (h && pn.startsWith(h + ' - ')) return true;
+            }
+            return false;
+        }
+
         function renderStatusFeed() {
             const body = document.getElementById('statusFeedBody');
             if (!body) return;
@@ -2532,7 +2570,7 @@
             const hosts = filterMine ? getConfiguredHostsLower() : null;
 
             const filtered = filterMine
-                ? items.filter(it => (it.affected_hosts || []).some(h => hosts.has(String(h).toLowerCase())))
+                ? items.filter(it => (it.affected_hosts || []).some(h => statusFeedHostMatches(hosts, h)))
                 : items;
 
             if (!filtered.length) {
@@ -2554,8 +2592,7 @@
                 const ends = it.ends_at ? formatFeedDate(it.ends_at) : (ongoing ? 'ongoing' : '—');
                 const rawRange = `${it.starts_at || ''} → ${it.ends_at || (ongoing ? 'ongoing' : '')}`;
                 const hostChips = (it.affected_hosts || []).map(h => {
-                    const low = String(h).toLowerCase();
-                    const hl = (hosts && hosts.has(low)) || (!filterMine && getConfiguredHostsLower().has(low));
+                    const hl = statusFeedHostMatches(hosts || getConfiguredHostsLower(), h);
                     return `<span class="sf-chip${hl ? ' highlight' : ''}">${escapeFeedHtml(h)}</span>`;
                 }).join('');
                 return `

@@ -81,6 +81,48 @@ def test_find_matching_incidents_unknown_host_returns_empty(feed):
     assert hits == []
 
 
+def test_host_matches_public_name_rules():
+    assert status_feed.host_matches_public_name(
+        "ber1-ingress.pbs-host.de", "ber1-ingress.pbs-host.de - Instance 1",
+    )
+    assert status_feed.host_matches_public_name(
+        "ber1-ingress.pbs-host.de", "ber1-ingress.pbs-host.de",
+    )
+    # Case + whitespace tolerant.
+    assert status_feed.host_matches_public_name(
+        "  BER1-INGRESS.pbs-host.de  ", "ber1-ingress.pbs-host.de - Instance 2",
+    )
+    # Must not match a different host that happens to share the prefix.
+    assert not status_feed.host_matches_public_name(
+        "ber1-ingress.pbs-host.de", "ber1-ingress-extra.pbs-host.de",
+    )
+    # Empty values do not match anything.
+    assert not status_feed.host_matches_public_name("", "any.example.com")
+    assert not status_feed.host_matches_public_name("any.example.com", "")
+
+
+def test_find_matching_incidents_matches_multi_instance_resources(feed):
+    at = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+    hits = status_feed.find_matching_incidents(
+        feed, host="ber1-ingress.pbs-host.de", at_time=at, lookback_minutes=180,
+    )
+    # Incident 503 affects "ber1-ingress.pbs-host.de - Instance 2" and must
+    # be surfaced when the user configures the base host.
+    assert len(hits) == 1
+    assert hits[0]["title"] == "ber1-ingress Instance 2 degraded"
+    assert hits[0]["matched_host"] == "ber1-ingress.pbs-host.de - Instance 2"
+
+
+def test_find_matching_incidents_does_not_match_prefix_lookalike(feed):
+    # ber1-ingress-extra.pbs-host.de shares a prefix with ber1-ingress.pbs-host.de
+    # but is a distinct resource; it must not pick up the Instance 2 incident.
+    at = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+    hits = status_feed.find_matching_incidents(
+        feed, host="ber1-ingress-extra.pbs-host.de", at_time=at, lookback_minutes=180,
+    )
+    assert hits == []
+
+
 def test_find_matching_incidents_sort_ongoing_first(feed):
     hits = status_feed.find_matching_incidents(feed, host=None, at_time=datetime.now(UTC))
     assert all(h["is_ongoing"] for h in hits)

@@ -143,6 +143,74 @@ class TestConfigSave:
         assert np_["warning"] == 3
         assert np_["critical"] == 5
 
+    def test_status_feed_saved(self, monkeypatch, client_auth, tmp_path):
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"status_feed": {
+                "enabled": False,
+                "url": "https://status.example.com/index.json",
+                "cache_minutes": 15,
+                "lookback_minutes": 240,
+                "default_host": "pbs.example.com",
+            }},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        sf = read_config(tmp_path)["status_feed"]
+        assert sf["enabled"] is False
+        assert sf["url"] == "https://status.example.com/index.json"
+        assert sf["cache_minutes"] == 15
+        assert sf["lookback_minutes"] == 240
+        assert sf["default_host"] == "pbs.example.com"
+
+    def test_host_overrides_saved(self, monkeypatch, client_auth, tmp_path):
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"host_overrides": [
+                {"datastore_id": "ds-1", "namespace": "", "host": "a.example.com"},
+                {"datastore_id": "ds-1", "namespace": "team-x", "host": "b.example.com"},
+            ]},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        overrides = read_config(tmp_path)["host_overrides"]
+        assert overrides == [
+            {"datastore_id": "ds-1", "namespace": "", "host": "a.example.com"},
+            {"datastore_id": "ds-1", "namespace": "team-x", "host": "b.example.com"},
+        ]
+
+    def test_host_overrides_replaces_existing_list(self, monkeypatch, client_auth, tmp_path):
+        write_config(tmp_path, {"host_overrides": [
+            {"datastore_id": "old", "namespace": "", "host": "old.example.com"},
+        ]})
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"host_overrides": [
+                {"datastore_id": "new", "namespace": "", "host": "new.example.com"},
+            ]},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        assert read_config(tmp_path)["host_overrides"] == [
+            {"datastore_id": "new", "namespace": "", "host": "new.example.com"},
+        ]
+
+    def test_host_overrides_empty_list_clears(self, monkeypatch, client_auth, tmp_path):
+        write_config(tmp_path, {"host_overrides": [
+            {"datastore_id": "ds-1", "namespace": "", "host": "a.example.com"},
+        ]})
+        csrf = self._setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/config",
+            json={"host_overrides": []},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200
+        assert read_config(tmp_path)["host_overrides"] == []
+
     # ── Invalid values are silently ignored ───────────────────────────────────
 
     def test_negative_cooldown_is_rejected(self, monkeypatch, client_auth, tmp_path):

@@ -128,6 +128,30 @@ def parse_iso(value) -> datetime | None:
 
 # ── Matching ─────────────────────────────────────────────────────────────────
 
+def host_matches_public_name(host: str, public_name: str) -> bool:
+    """Return True when a configured host matches a status-page resource name.
+
+    Rule: case-insensitive, trimmed. Match on exact equality OR when the
+    public name begins with ``"<host> - "`` — this handles multi-instance
+    resources published as e.g. ``"fra1-ingress.pbs-host.de - Instance 1"``
+    while a single base hostname is configured.
+    """
+    h = (host or "").strip().lower()
+    pn = (public_name or "").strip().lower()
+    if not h or not pn:
+        return False
+    return pn == h or pn.startswith(h + " - ")
+
+
+def _resolve_target_rids(host: str, name_to_id: dict[str, str]) -> set[str]:
+    """Return every resource ID whose public_name matches ``host``."""
+    h = (host or "").strip().lower()
+    if not h:
+        return set()
+    return {rid for pn_lower, rid in name_to_id.items()
+            if pn_lower == h or pn_lower.startswith(h + " - ")}
+
+
 def find_matching_incidents(
     feed: dict,
     *,
@@ -141,7 +165,8 @@ def find_matching_incidents(
     - If ``host`` is given: incidents where that host (matched via
       ``public_name`` against ``affected_resources``) is present AND the
       incident overlaps the time window ``[at_time - lookback, at_time]``
-      (ongoing incidents are always kept).
+      (ongoing incidents are always kept). The host match handles
+      multi-instance resources like ``"<host> - Instance 1"``.
     - If ``host`` is ``None``: only ongoing incidents (any host) are returned
       — used for API-wide alerts.
 
@@ -151,10 +176,10 @@ def find_matching_incidents(
         return []
 
     name_to_id, id_to_name = index_resources(feed)
-    target_rid: str | None = None
+    target_rids: set[str] | None = None
     if host:
-        target_rid = name_to_id.get(host.strip().lower())
-        if target_rid is None:
+        target_rids = _resolve_target_rids(host, name_to_id)
+        if not target_rids:
             # host configured but unknown to the status page — treat like
             # "no match" (don't silently fall back to all-ongoing, that
             # would be misleading).
@@ -183,9 +208,12 @@ def find_matching_incidents(
         affected_ids = [str(a.get("status_page_resource_id") or "") for a in affected]
         affected_hosts = [id_to_name[rid] for rid in affected_ids if rid in id_to_name]
 
-        if target_rid is not None:
-            if target_rid not in affected_ids:
+        matched_name: str | None = None
+        if target_rids is not None:
+            matched_affected = [rid for rid in affected_ids if rid in target_rids]
+            if not matched_affected:
                 continue
+            matched_name = id_to_name.get(matched_affected[0])
             # Host-scoped matching: ongoing OR overlapping the lookback window.
             if not is_ongoing:
                 if starts_at is None and ends_at is None:
@@ -210,7 +238,7 @@ def find_matching_incidents(
             "ends_at": ends_at,
             "is_ongoing": is_ongoing,
             "affected_hosts": affected_hosts,
-            "matched_host": id_to_name.get(target_rid) if target_rid else None,
+            "matched_host": matched_name,
         })
 
     def _sort_key(item):

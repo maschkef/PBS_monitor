@@ -33,6 +33,30 @@
       }
     },
     {
+      "id": "110",
+      "type": "status_page_resource",
+      "attributes": {
+        "public_name": "ber1-ingress.pbs-host.de - Instance 1",
+        "aggregate_state": "operational"
+      }
+    },
+    {
+      "id": "111",
+      "type": "status_page_resource",
+      "attributes": {
+        "public_name": "ber1-ingress.pbs-host.de - Instance 2",
+        "aggregate_state": "degraded"
+      }
+    },
+    {
+      "id": "112",
+      "type": "status_page_resource",
+      "attributes": {
+        "public_name": "ber1-ingress-extra.pbs-host.de",
+        "aggregate_state": "operational"
+      }
+    },
+    {
       "id": "500",
       "type": "status_report",
       "attributes": {
@@ -70,6 +94,20 @@
         "starts_at": "2026-10-11T11:45:00+00:00",
         "ends_at": null,
         "affected_resources": []
+      }
+    },
+    {
+      "id": "503",
+      "type": "status_report",
+      "attributes": {
+        "title": "ber1-ingress Instance 2 degraded",
+        "report_type": "automatic",
+        "aggregate_state": "degraded",
+        "starts_at": "2026-10-11T10:00:00+00:00",
+        "ends_at": null,
+        "affected_resources": [
+          {"status_page_resource_id": 111}
+        ]
       }
     }
   ]

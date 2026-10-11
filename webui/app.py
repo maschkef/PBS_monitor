@@ -1064,6 +1064,34 @@ def save_alerting_config():
                     if v is not None and 1 <= v <= 5:
                         raw_pa[type_key] = v
 
+    if "status_feed" in payload and isinstance(payload["status_feed"], dict):
+        raw_sf = raw_config.setdefault("status_feed", {})
+        sf = payload["status_feed"]
+        if "enabled" in sf:
+            raw_sf["enabled"] = bool(sf["enabled"])
+        if "url" in sf:
+            raw_sf["url"] = str(sf["url"])
+        for int_key, lo, hi in (
+            ("cache_minutes", 1, 1440),
+            ("lookback_minutes", 5, 10080),
+        ):
+            if int_key in sf:
+                val = alert_monitor.coerce_int(sf[int_key])
+                if val is not None and lo <= val <= hi:
+                    raw_sf[int_key] = val
+        if "default_host" in sf:
+            raw_sf["default_host"] = str(sf["default_host"]).strip()
+
+    if "host_overrides" in payload and isinstance(payload["host_overrides"], list):
+        raw_config["host_overrides"] = [
+            {
+                "datastore_id": str(entry["datastore_id"]).strip(),
+                "namespace": str(entry.get("namespace", "")).strip(),
+                "host": str(entry["host"]).strip(),
+            }
+            for entry in payload["host_overrides"]
+        ]
+
     _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 
     changed_keys = [k for k in payload if k != "ntfy_token"]
