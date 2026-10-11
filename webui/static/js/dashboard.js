@@ -24,6 +24,8 @@
         const usageHistoryCache = new Map();          // dsId → { range, data }
         const loadingUsageHistory = new Set();
         const usageHistoryRanges = new Map();         // dsId → "30d" (default)
+        const usageHistoryHiddenSeries = new Map();   // dsId → Set<"percent"|"used-bytes"|"total-bytes"|"points"|"warn"|"crit">
+        const USAGE_HISTORY_DEFAULT_HIDDEN_SERIES = ['points'];
 
         // ── Cache helpers ──────────────────────────────────────────────────────
         function saveStateToCache(datastores, stats) {
@@ -1159,6 +1161,22 @@
             loadUsageHistory(dsId, range);
         }
 
+        function toggleChartSeries(el, series) {
+            const section = el.closest('.section');
+            const wrap = section && section.querySelector('.chart-wrap');
+            if (!wrap) return;
+            let dsId;
+            try { dsId = JSON.parse(wrap.dataset.dsId); } catch (_) { return; }
+            let hidden = usageHistoryHiddenSeries.get(dsId);
+            if (!hidden) { hidden = new Set(USAGE_HISTORY_DEFAULT_HIDDEN_SERIES); usageHistoryHiddenSeries.set(dsId, hidden); }
+            if (hidden.has(series)) hidden.delete(series); else hidden.add(series);
+            const willBeHidden = hidden.has(series);
+            wrap.querySelectorAll(`.chart-series-${series}`).forEach(n => {
+                n.style.display = willBeHidden ? 'none' : '';
+            });
+            el.classList.toggle('off', willBeHidden);
+        }
+
         function renderUsageHistoryPanel(dsId) {
             const range = usageHistoryRangeFor(dsId);
             const key = `${dsId}:${range}`;
@@ -1206,7 +1224,7 @@
                 latestText ? `<span class="chart-meta-latest">${escHtml(latestText)}</span>` : null,
                 `<span class="tooltip-icon">i<span class="tooltip-text">${escHtml(sampleCountText)} · ${escHtml(tiersText)}</span></span>`,
             ].filter(Boolean).join('');
-            const legend = renderUsageHistoryLegend(warn, crit);
+            const legend = renderUsageHistoryLegend(warn, crit, dsId);
             return `
                 <div class="chart-meta">${metaParts}</div>
                 ${legend}
@@ -1214,19 +1232,24 @@
             `;
         }
 
-        function renderUsageHistoryLegend(warnPct, critPct) {
+        function renderUsageHistoryLegend(warnPct, critPct, dsId) {
+            const hidden = usageHistoryHiddenSeries.get(dsId) || new Set(USAGE_HISTORY_DEFAULT_HIDDEN_SERIES);
+            const mk = (series, swatch, label) =>
+                `<span class="chart-legend-item${hidden.has(series) ? ' off' : ''}" data-series="${series}" title="Click to show/hide" onclick="toggleChartSeries(this, '${series}')">${swatch}${label}</span>`;
             const items = [
-                `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--cyan);"></span>Used %</span>`,
-                `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--purple);"></span>Used (bytes)</span>`,
-                `<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--text-dim);"></span>Total (bytes)</span>`,
+                mk('percent', `<span class="chart-legend-swatch" style="background:var(--cyan);"></span>`, 'Used %'),
+                mk('points', `<span class="chart-legend-swatch dot" style="background:var(--cyan);"></span>`, 'Points'),
+                mk('used-bytes', `<span class="chart-legend-swatch" style="background:var(--purple);"></span>`, 'Used (bytes)'),
+                mk('total-bytes', `<span class="chart-legend-swatch dashed" style="color:var(--text-dim);"></span>`, 'Total (bytes)'),
             ];
             if (typeof warnPct === 'number' && warnPct > 0) {
-                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>Warn ${warnPct}%</span>`);
+                items.push(mk('warn', `<span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>`, `Warn ${warnPct}%`));
             }
             if (typeof critPct === 'number' && critPct > 0) {
-                items.push(`<span class="chart-legend-item"><span class="chart-legend-swatch dashed" style="color:var(--red);"></span>Crit ${critPct}%</span>`);
+                items.push(mk('crit', `<span class="chart-legend-swatch dashed" style="color:var(--red);"></span>`, `Crit ${critPct}%`));
             }
-            return `<div class="chart-legend">${items.join('')}</div>`;
+            const hint = `<span class="tooltip-icon">i<span class="tooltip-text">Click any legend entry to show or hide that series. Toggles are kept per datastore and reset when you reload the page.</span></span>`;
+            return `<div class="chart-legend">${items.join('')}${hint}</div>`;
         }
 
         function renderUsageHistoryChart(points, warnPct, critPct, dsId) {
@@ -1294,22 +1317,26 @@
                 .map(p => `${xFor(p.ts).toFixed(2)},${yForBytes(totalBytesFor(p)).toFixed(2)}`)
                 .join(' ');
 
+            const hidden = usageHistoryHiddenSeries.get(dsId) || new Set(USAGE_HISTORY_DEFAULT_HIDDEN_SERIES);
+            const hideStyle = s => hidden.has(s) ? ' style="display:none;"' : '';
+
             const thresholdLines = [];
             if (typeof warnPct === 'number' && warnPct > 0 && warnPct <= yMax) {
                 const y = yFor(warnPct);
-                thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--yellow)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
+                thresholdLines.push(`<line class="chart-series-warn" x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--yellow)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"${hideStyle('warn')}/>`);
             }
             if (typeof critPct === 'number' && critPct > 0 && critPct <= yMax) {
                 const y = yFor(critPct);
-                thresholdLines.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--red)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"/>`);
+                thresholdLines.push(`<line class="chart-series-crit" x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--red)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"${hideStyle('crit')}/>`);
             }
 
+            const dotHide = hideStyle('points');
             // Hover-targets live on the used-% line; the interactive HTML tooltip reads the full point from the cache.
             const dots = points.map(p => {
                 if (typeof p.used_percent !== 'number') return '';
                 const cx = xFor(p.ts).toFixed(2);
                 const cy = yFor(p.used_percent).toFixed(2);
-                return `<circle cx="${cx}" cy="${cy}" r="2.5" fill="var(--cyan)"/>`;
+                return `<circle class="chart-series-points" cx="${cx}" cy="${cy}" r="2.5" fill="var(--cyan)"${dotHide}/>`;
             }).join('');
 
             const dsIdAttr = escHtml(JSON.stringify(dsId));
@@ -1320,9 +1347,9 @@
                     ${gridlines.join('')}
                     ${xTicks.join('')}
                     ${thresholdLines.join('')}
-                    <polyline fill="none" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="2 4" opacity="0.5" points="${totalBytesPolyline}"/>
-                    <polyline fill="none" stroke="var(--purple)" stroke-width="1.5" points="${usedBytesPolyline}"/>
-                    <polyline fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"/>
+                    <polyline class="chart-series-total-bytes" fill="none" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="2 4" opacity="0.5" points="${totalBytesPolyline}"${hideStyle('total-bytes')}/>
+                    <polyline class="chart-series-used-bytes" fill="none" stroke="var(--purple)" stroke-width="1.5" points="${usedBytesPolyline}"${hideStyle('used-bytes')}/>
+                    <polyline class="chart-series-percent" fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"${hideStyle('percent')}/>
                     ${dots}
                     <line class="chart-crosshair" x1="0" y1="${padT}" x2="0" y2="${padT + plotH}" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="2 3" style="display:none;pointer-events:none;"/>
                 </svg>
