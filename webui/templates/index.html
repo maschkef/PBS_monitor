@@ -608,6 +608,13 @@
 
         /* Usage-history chart */
         .chart-wrap { position: relative; width: 100%; }
+        .chart-wrap svg {
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1000 / 220;
+            max-height: 320px;
+            min-height: 180px;
+        }
         .chart-tooltip {
             position: fixed;
             display: none;

@@ -1342,7 +1342,7 @@
             const dsIdAttr = escHtml(JSON.stringify(dsId));
             return `
             <div class="chart-wrap" data-ds-id='${dsIdAttr}' data-vb-w="${vbW}" data-t-min="${tMin}" data-t-max="${tMax}" data-pad-l="${padL}" data-plot-w="${plotW}" data-bytes-scale="${bytesScale}" data-bytes-unit="${bytesUnit}">
-                <svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" width="100%" height="200" role="img" aria-label="Storage usage history chart">
+                <svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" width="100%" role="img" aria-label="Storage usage history chart">
                     <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)"/>
                     ${gridlines.join('')}
                     ${xTicks.join('')}
