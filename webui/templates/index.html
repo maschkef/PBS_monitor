@@ -177,11 +177,41 @@
         }
 
         /* Platform Stats Bar */
+        .platform-overview {
+            margin-bottom: 1.5rem;
+        }
+        .platform-overview-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            padding: 0.35rem 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .platform-overview-toggle:hover {
+            background: var(--card-hover);
+            color: var(--text);
+        }
+        .platform-overview-chevron {
+            display: inline-block;
+            transition: transform 0.15s ease;
+        }
+        .platform-overview[data-open="true"] .platform-overview-chevron {
+            transform: rotate(90deg);
+        }
         .platform-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
-            margin-bottom: 1.5rem;
+            margin-top: 0.75rem;
+        }
+        .platform-overview:not([data-open="true"]) .platform-stats {
+            display: none;
         }
 
         .stat-card {
@@ -1659,7 +1689,13 @@
                 <button class="btn btn-secondary" onclick="hideRefreshErrorBanner()">✕</button>
             </div>
         </div>
-        <div class="platform-stats" id="platformStats"></div>
+        <div class="platform-overview" id="platformOverview" data-open="false">
+            <button type="button" class="platform-overview-toggle" id="platformOverviewToggle" onclick="togglePlatformOverview()" aria-expanded="false">
+                <span class="platform-overview-chevron">▸</span>
+                <span>Platform Overview</span>
+            </button>
+            <div class="platform-stats" id="platformStats"></div>
+        </div>
         <div id="content">
             <div class="loading">
                 <div class="spinner"></div>

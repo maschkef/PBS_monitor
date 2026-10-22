@@ -1,5 +1,6 @@
         // ── Persistent state cache ─────────────────────────────────────────────
         const STATE_CACHE_KEY = 'pbs_monitor_cache_v1';
+        const PLATFORM_OVERVIEW_KEY = 'pbs_monitor_platform_overview_open';
 
         const ERROR_DESCRIPTIONS = {
             401: 'Unauthenticated – No valid API token was provided.',
@@ -21,6 +22,7 @@
         const openBackupBrowsers = new Set();
         const openAlertingPanels = new Set();
         const openUsageHistoryPanels = new Set();
+        const openRescalePanels = new Set();
         const usageHistoryCache = new Map();          // dsId → { range, data }
         const loadingUsageHistory = new Set();
         const usageHistoryRanges = new Map();         // dsId → "30d" (default)
@@ -541,6 +543,25 @@
             return `<div class="backup-browser-panel">${renderBackupBrowser(payload)}</div>`;
         }
 
+        function togglePlatformOverview() {
+            const wrap = document.getElementById('platformOverview');
+            const toggle = document.getElementById('platformOverviewToggle');
+            const open = wrap.dataset.open !== 'true';
+            wrap.dataset.open = open ? 'true' : 'false';
+            if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            try { localStorage.setItem(PLATFORM_OVERVIEW_KEY, open ? '1' : '0'); } catch (_) { /* ignore */ }
+        }
+
+        function initPlatformOverview() {
+            const wrap = document.getElementById('platformOverview');
+            if (!wrap) return;
+            let open = false;
+            try { open = localStorage.getItem(PLATFORM_OVERVIEW_KEY) === '1'; } catch (_) { /* ignore */ }
+            wrap.dataset.open = open ? 'true' : 'false';
+            const toggle = document.getElementById('platformOverviewToggle');
+            if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
         function renderPlatformStats(data) {
             const el = document.getElementById('platformStats');
             if (!data) { el.innerHTML = ''; return; }
@@ -922,6 +943,7 @@
             const browserLabel = openBackupBrowsers.has(ds.id) ? 'Hide Backups' : 'Browse Backups';
             const alertingLabel = openAlertingPanels.has(ds.id) ? 'Hide Alerting' : 'Show Alerting';
             const usageHistoryLabel = openUsageHistoryPanels.has(ds.id) ? 'Hide Usage History' : 'Show Usage History';
+            const rescaleLabel = openRescalePanels.has(ds.id) ? 'Hide Rescale History' : 'Show Rescale History';
             const alerting = ds.alerting || { alerts: [], schedule_learning: {} };
 
             const issuesHtml = ds.issues.map(i => {
@@ -943,6 +965,7 @@
                         <div class="ds-issues">${issuesHtml}</div>
                         <button class="btn btn-secondary" onclick="toggleAlertingPanel(${escHtml(JSON.stringify(ds.id))})">${alertingLabel}</button>
                         <button class="btn btn-secondary" onclick="toggleUsageHistoryPanel(${escHtml(JSON.stringify(ds.id))})">${usageHistoryLabel}</button>
+                        <button class="btn btn-secondary" onclick="toggleRescalePanel(${escHtml(JSON.stringify(ds.id))})">${rescaleLabel}</button>
                         <button class="btn btn-secondary" onclick="toggleBackupBrowser(${escHtml(JSON.stringify(ds.id))})">${browserLabel}</button>
                     </div>
                 </div>
@@ -1046,10 +1069,11 @@
                         </div>
 
                         <!-- Rescale Log -->
+                        ${openRescalePanels.has(ds.id) ? `
                         <div class="section" style="grid-column: 1 / -1;">
                             <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
                             ${renderRescaleLog(ds.rescale_log)}
-                        </div>
+                        </div>` : ''}
 
                         ${openUsageHistoryPanels.has(ds.id) ? renderUsageHistoryPanel(ds.id) : ''}
 
@@ -1105,6 +1129,15 @@
                 openAlertingPanels.delete(dsId);
             } else {
                 openAlertingPanels.add(dsId);
+            }
+            renderDatastoreGrid();
+        }
+
+        function toggleRescalePanel(dsId) {
+            if (openRescalePanels.has(dsId)) {
+                openRescalePanels.delete(dsId);
+            } else {
+                openRescalePanels.add(dsId);
             }
             renderDatastoreGrid();
         }
@@ -1514,6 +1547,8 @@
                 refreshTimer = null;
             }
         });
+
+        initPlatformOverview();
 
         // Initial load – show cached state immediately, then attempt live refresh
         (function() {
