@@ -820,11 +820,151 @@
             await loadAll();
         }
 
+        // Open a small modal asking how long to ignore the given group.
+        // Resolves with { expiresAt: string|null } on confirm, or null on cancel.
+        // expiresAt === null means "ignore forever" (no expiry).
+        function pickIgnoreDuration(displayName) {
+            return new Promise(resolve => {
+                const backdrop = document.createElement('div');
+                backdrop.className = 'ignore-duration-modal__backdrop';
+                const modal = document.createElement('div');
+                modal.className = 'ignore-duration-modal';
+
+                const presets = [
+                    { label: '1h', hours: 1 },
+                    { label: '6h', hours: 6 },
+                    { label: '24h', hours: 24 },
+                    { label: '3d', hours: 72 },
+                    { label: '7d', hours: 168 },
+                    { label: '30d', hours: 720 },
+                ];
+
+                let selectedHours = 24;   // default preset
+                let selectionMode = 'preset'; // 'preset' | 'custom' | 'forever'
+
+                modal.innerHTML = `
+                    <div class="ignore-duration-modal__title">Ignore &ldquo;${escHtml(displayName || 'this group')}&rdquo;</div>
+                    <div class="ignore-duration-modal__hint">Pick a duration. Alerting will resume automatically after it expires.</div>
+                    <div class="ignore-duration-modal__presets">
+                        ${presets.map(p => `<button type="button" class="btn btn-secondary ignore-duration-modal__preset" data-hours="${p.hours}">${p.label}</button>`).join('')}
+                    </div>
+                    <div class="ignore-duration-modal__custom">
+                        <label class="ignore-duration-modal__custom-label">
+                            <input type="radio" name="ignore-duration-mode" value="custom"> Custom:
+                        </label>
+                        <input type="number" min="1" step="1" value="2" class="ignore-duration-modal__custom-value">
+                        <select class="ignore-duration-modal__custom-unit">
+                            <option value="hours">hours</option>
+                            <option value="days" selected>days</option>
+                        </select>
+                    </div>
+                    <div class="ignore-duration-modal__forever">
+                        <label><input type="radio" name="ignore-duration-mode" value="forever"> Ignore permanently (no expiry)</label>
+                    </div>
+                    <div class="ignore-duration-modal__actions">
+                        <button type="button" class="btn btn-secondary ignore-duration-modal__cancel">Cancel</button>
+                        <button type="button" class="btn btn-primary ignore-duration-modal__confirm">Ignore</button>
+                    </div>
+                `;
+
+                backdrop.appendChild(modal);
+                document.body.appendChild(backdrop);
+
+                const presetBtns = modal.querySelectorAll('.ignore-duration-modal__preset');
+                const customValue = modal.querySelector('.ignore-duration-modal__custom-value');
+                const customUnit = modal.querySelector('.ignore-duration-modal__custom-unit');
+                const modeRadios = modal.querySelectorAll('input[name="ignore-duration-mode"]');
+                const confirmBtn = modal.querySelector('.ignore-duration-modal__confirm');
+                const cancelBtn = modal.querySelector('.ignore-duration-modal__cancel');
+
+                function markPresetActive() {
+                    presetBtns.forEach(btn => {
+                        const h = parseInt(btn.dataset.hours, 10);
+                        btn.classList.toggle('is-selected', selectionMode === 'preset' && h === selectedHours);
+                    });
+                }
+                markPresetActive();
+
+                presetBtns.forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        selectedHours = parseInt(btn.dataset.hours, 10);
+                        selectionMode = 'preset';
+                        modeRadios.forEach(r => { r.checked = false; });
+                        markPresetActive();
+                    });
+                });
+
+                function activateCustom() {
+                    selectionMode = 'custom';
+                    const radio = modal.querySelector('input[name="ignore-duration-mode"][value="custom"]');
+                    if (radio) radio.checked = true;
+                    markPresetActive();
+                }
+                customValue.addEventListener('focus', activateCustom);
+                customValue.addEventListener('input', activateCustom);
+                customUnit.addEventListener('change', activateCustom);
+
+                modeRadios.forEach(radio => {
+                    radio.addEventListener('change', () => {
+                        if (radio.checked) {
+                            selectionMode = radio.value;
+                            markPresetActive();
+                        }
+                    });
+                });
+
+                function cleanup() {
+                    document.removeEventListener('keydown', onKey);
+                    backdrop.remove();
+                }
+                function finishCancel() {
+                    cleanup();
+                    resolve(null);
+                }
+                function finishConfirm() {
+                    let hours;
+                    if (selectionMode === 'forever') {
+                        cleanup();
+                        resolve({ expiresAt: null });
+                        return;
+                    }
+                    if (selectionMode === 'custom') {
+                        const n = parseInt(customValue.value, 10);
+                        if (!Number.isFinite(n) || n < 1) {
+                            customValue.focus();
+                            return;
+                        }
+                        hours = customUnit.value === 'days' ? n * 24 : n;
+                    } else {
+                        hours = selectedHours;
+                    }
+                    const iso = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+                    cleanup();
+                    resolve({ expiresAt: iso });
+                }
+
+                function onKey(e) {
+                    if (e.key === 'Escape') { e.preventDefault(); finishCancel(); }
+                    else if (e.key === 'Enter') {
+                        if (document.activeElement === customValue) {
+                            // let number input swallow Enter — treat as confirm anyway
+                        }
+                        e.preventDefault();
+                        finishConfirm();
+                    }
+                }
+                document.addEventListener('keydown', onKey);
+                backdrop.addEventListener('click', e => {
+                    if (e.target === backdrop) finishCancel();
+                });
+                cancelBtn.addEventListener('click', finishCancel);
+                confirmBtn.addEventListener('click', finishConfirm);
+            });
+        }
+
         async function ignoreGroup(meta) {
-            const confirmed = window.confirm(`Ignore backup group "${meta.display_name}" for alerting and visual schedule checks?`);
-            if (!confirmed) {
-                return;
-            }
+            const choice = await pickIgnoreDuration(meta.display_name);
+            if (!choice) return;
 
             const response = await fetchWrite('/api/alerting/ignore-group', {
                 method: 'POST',
@@ -835,6 +975,7 @@
                     backup_type: meta.backup_type,
                     backup_id: meta.backup_id,
                     display_name: meta.display_name,
+                    expires_at: choice.expiresAt,
                 }),
             });
             const data = await response.json();
@@ -867,6 +1008,28 @@
             await loadAll();
         }
 
+        function formatExpiry(iso) {
+            if (!iso) return null;
+            const target = new Date(iso);
+            if (Number.isNaN(target.getTime())) return null;
+            const diffMs = target.getTime() - Date.now();
+            if (diffMs <= 0) return { remaining: 'expired', absolute: target.toLocaleString() };
+            const totalMinutes = Math.floor(diffMs / 60000);
+            let remaining;
+            if (totalMinutes < 60) {
+                remaining = `expires in ${totalMinutes}m`;
+            } else if (totalMinutes < 60 * 24) {
+                const h = Math.floor(totalMinutes / 60);
+                const m = totalMinutes % 60;
+                remaining = `expires in ${h}h ${m}m`;
+            } else {
+                const d = Math.floor(totalMinutes / (60 * 24));
+                const h = Math.floor((totalMinutes % (60 * 24)) / 60);
+                remaining = `expires in ${d}d ${h}h`;
+            }
+            return { remaining, absolute: target.toLocaleString() };
+        }
+
         function renderIgnoredGroups(dsId, ignoredGroups) {
             if (!ignoredGroups || !ignoredGroups.length) return '';
             const items = ignoredGroups.map(ig => {
@@ -874,11 +1037,16 @@
                 const niceName = ig.display_name || techId;
                 const ns = ig.namespace || 'root';
                 const subtitle = ig.display_name ? techId : null;
+                const expiry = formatExpiry(ig.expires_at);
+                const expiryLine = expiry
+                    ? `<div class="learned-group-subtitle">${escHtml(expiry.remaining)} <span style="opacity:0.7;">(${escHtml(expiry.absolute)})</span></div>`
+                    : '';
                 return `<div class="learned-group" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
                     <div>
                         <div class="learned-group-title">${escHtml(niceName)}</div>
                         ${subtitle ? `<div class="learned-group-subtitle">${escHtml(subtitle)}</div>` : ''}
                         <div class="learned-group-subtitle">namespace ${escHtml(ns)}</div>
+                        ${expiryLine}
                     </div>
                     <button class="btn btn-secondary" onclick='unignoreGroup(${jsonAttr({
                         datastore_id: ig.datastore_id,

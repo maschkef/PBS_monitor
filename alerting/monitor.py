@@ -32,6 +32,8 @@ from dotenv import load_dotenv
 
 from alerting.normalization import (
     _MAX_RESCALE_HISTORY_ENTRIES,
+    _is_expired,  # noqa: F401 — re-export for webui.app
+    _parse_expires_at,  # noqa: F401 — re-export for webui.app
     append_storage_sample,
     coerce_int,
     default_datastore_state,

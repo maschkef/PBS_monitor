@@ -3,6 +3,7 @@
 All write routes must return 400 with a descriptive ``error`` key for any
 malformed or out-of-range input before touching any on-disk state.
 """
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 import pytest
@@ -452,3 +453,104 @@ class TestCorruptedConfigHandling:
         )
         assert rv.status_code == 500
         assert "corrupted" in rv.get_json().get("error", "").lower()
+
+
+class TestIgnoreGroupExpiresAt:
+    """Time-limited ignore via the ``expires_at`` field."""
+
+    @staticmethod
+    def _future_iso(hours_ahead: int = 24) -> str:
+        return (datetime.now(UTC) + timedelta(hours=hours_ahead)).isoformat()
+
+    @staticmethod
+    def _past_iso(hours_ago: int = 1) -> str:
+        return (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat()
+
+    def _payload(self, **overrides):
+        base = {
+            "datastore_id": "ds1",
+            "namespace": "",
+            "backup_type": "vm",
+            "backup_id": "100",
+            "display_name": "test-vm",
+        }
+        base.update(overrides)
+        return base
+
+    def test_accepts_future_expires_at(self, monkeypatch, client_auth, tmp_path):
+        from tests.conftest import read_config
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        expires_at = self._future_iso(24)
+        rv = client_auth.post(
+            "/api/alerting/ignore-group",
+            json=self._payload(expires_at=expires_at),
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200, rv.get_json()
+        persisted = read_config(tmp_path)
+        ignored = persisted.get("ignored_groups") or []
+        assert len(ignored) == 1
+        assert ignored[0].get("expires_at")  # non-null ISO string
+
+    def test_rejects_past_expires_at(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/ignore-group",
+            json=self._payload(expires_at=self._past_iso(1)),
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 400
+        assert "expires_at" in rv.get_json().get("error", "").lower()
+
+    def test_rejects_malformed_expires_at(self, monkeypatch, client_auth, tmp_path):
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/ignore-group",
+            json=self._payload(expires_at="not-a-date"),
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 400
+        assert "expires_at" in rv.get_json().get("error", "").lower()
+
+    def test_null_expires_at_is_permanent(self, monkeypatch, client_auth, tmp_path):
+        from tests.conftest import read_config
+        csrf = _setup(client_auth, tmp_path, monkeypatch)
+        rv = client_auth.post(
+            "/api/alerting/ignore-group",
+            json=self._payload(expires_at=None),
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert rv.status_code == 200, rv.get_json()
+        persisted = read_config(tmp_path)
+        ignored = persisted.get("ignored_groups") or []
+        assert len(ignored) == 1
+        assert ignored[0].get("expires_at") is None
+
+
+class TestPurgeExpiredIgnoredGroups:
+    """``purge_expired_ignored_groups`` filters out past entries, keeps the rest."""
+
+    def test_filters_past_entries_keeps_future_and_permanent(self):
+        from alerting.normalization import (
+            normalize_ignored_groups,
+            purge_expired_ignored_groups,
+        )
+        now = datetime.now(UTC)
+        raw = [
+            {  # expired an hour ago
+                "datastore_id": "ds1", "namespace": "", "backup_type": "vm", "backup_id": "100",
+                "expires_at": (now - timedelta(hours=1)).isoformat(),
+            },
+            {  # still valid
+                "datastore_id": "ds1", "namespace": "", "backup_type": "vm", "backup_id": "101",
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+            },
+            {  # permanent
+                "datastore_id": "ds1", "namespace": "", "backup_type": "ct", "backup_id": "200",
+                "expires_at": None,
+            },
+        ]
+        normalized = normalize_ignored_groups(raw)
+        kept = purge_expired_ignored_groups(normalized)
+        kept_ids = {entry["backup_id"] for entry in kept}
+        assert kept_ids == {"101", "200"}
