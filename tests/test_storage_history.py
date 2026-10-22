@@ -341,14 +341,45 @@ def test_storage_history_endpoint_from_to_narrows_window(client_logged_in, tmp_p
     assert body["to"] == 2500
 
 
-def test_storage_history_endpoint_from_to_selects_tier_by_span(client_logged_in, tmp_path):
+def test_storage_history_endpoint_from_to_always_queries_all_tiers(client_logged_in, tmp_path):
+    """Custom from/to windows must not pre-filter tiers by span length — a short
+    window far in the past still has to see hourly/sixhour/daily data."""
     client, _csrf = client_logged_in
     _write_state(tmp_path, {"ds-1": {"name": "ds-1", "storage_history": {}}})
-    long_span = 200 * _SECONDS_PER_DAY
-    resp = client.get(f"/api/datastores/ds-1/storage-history?from=1000&to={1000 + long_span}")
+    short_span = 2 * _SECONDS_PER_DAY
+    resp = client.get(f"/api/datastores/ds-1/storage-history?from=1000&to={1000 + short_span}")
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["tiers"] == ["raw", "hourly", "sixhour", "daily"]
+
+
+def test_storage_history_endpoint_from_to_returns_daily_points_in_old_window(client_logged_in, tmp_path):
+    """Regression: zooming to a narrow window ~200 days in the past must return
+    the daily-tier points that live there, not an empty response."""
+    client, _csrf = client_logged_in
+    import time
+    now_ts = int(time.time())
+    daily_ts = now_ts - 200 * _SECONDS_PER_DAY
+    daily_ts -= daily_ts % _SECONDS_PER_DAY
+    _write_state(tmp_path, {
+        "ds-1": {
+            "name": "ds-1",
+            "storage_history": {
+                "raw": [],
+                "hourly": [],
+                "sixhour": [],
+                "daily": [_sample(daily_ts, used_percent=42.0)],
+            },
+        },
+    })
+    window_from = daily_ts - _SECONDS_PER_DAY
+    window_to = daily_ts + _SECONDS_PER_DAY
+    resp = client.get(f"/api/datastores/ds-1/storage-history?from={window_from}&to={window_to}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["sample_count"] == 1
+    assert body["points"][0]["ts"] == daily_ts
+    assert body["points"][0]["used_percent"] == 42.0
 
 
 def test_storage_history_endpoint_rejects_only_from(client_logged_in, tmp_path):

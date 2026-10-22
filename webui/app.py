@@ -257,22 +257,7 @@ STORAGE_HISTORY_RANGE_TIERS = {
     "all": ("raw", "hourly", "sixhour", "daily"),
 }
 
-# Tier selection for a custom from/to window.  Each entry: (max_span_seconds, tiers).
-# The first entry whose max is >= the requested span wins; spans longer than the
-# last entry fall through to STORAGE_HISTORY_SPAN_TIERS_FALLBACK.
-STORAGE_HISTORY_SPAN_TIERS = (
-    (7 * 86400, ("raw",)),
-    (30 * 86400, ("raw", "hourly")),
-    (90 * 86400, ("raw", "hourly", "sixhour")),
-)
-STORAGE_HISTORY_SPAN_TIERS_FALLBACK = ("raw", "hourly", "sixhour", "daily")
-
-
-def _tiers_for_span(span_seconds):
-    for threshold, tiers in STORAGE_HISTORY_SPAN_TIERS:
-        if span_seconds <= threshold:
-            return tiers
-    return STORAGE_HISTORY_SPAN_TIERS_FALLBACK
+STORAGE_HISTORY_ALL_TIERS = ("raw", "hourly", "sixhour", "daily")
 
 
 def _rescale_range_cutoff(range_str):
@@ -1442,7 +1427,7 @@ def get_storage_history(datastore_id):
     history = ds_state.get("storage_history") or {}
 
     if use_window:
-        tiers = _tiers_for_span(window_to - window_from)
+        tiers = STORAGE_HISTORY_ALL_TIERS
         cutoff_ts = None
     else:
         tiers = STORAGE_HISTORY_RANGE_TIERS.get(range_str, ("raw", "hourly"))
