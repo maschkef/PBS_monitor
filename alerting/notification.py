@@ -122,6 +122,25 @@ def should_alert(config, state, alert_key):
     from alerting.schedule import parse_iso  # avoid top-level circular import
     now_utc = datetime.now(UTC)
 
+    ack_map = state.get("acknowledged_alerts") or {}
+    ack_entry = ack_map.get(alert_key)
+    if isinstance(ack_entry, dict):
+        if ack_entry.get("until_resolved"):
+            return False
+        ack_expires_raw = ack_entry.get("expires_at")
+        if ack_expires_raw:
+            try:
+                ack_expires_dt = parse_iso(ack_expires_raw)
+            except (TypeError, ValueError):
+                ack_expires_dt = None
+            if ack_expires_dt is not None:
+                if ack_expires_dt.tzinfo is None:
+                    ack_expires_dt = ack_expires_dt.replace(tzinfo=UTC)
+                if now_utc < ack_expires_dt.astimezone(UTC):
+                    return False
+        # Stale ack (no until_resolved, expired or unparseable) — drop it.
+        ack_map.pop(alert_key, None)
+
     suppress_map = state.get("alert_suppress_until") or {}
     suppress_until = suppress_map.get(alert_key)
     if suppress_until:

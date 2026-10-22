@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 
 from alerting.normalization import (
     _MAX_RESCALE_HISTORY_ENTRIES,
-    _is_expired,  # noqa: F401 — re-export for webui.app
+    _is_expired,
     _parse_expires_at,  # noqa: F401 — re-export for webui.app
     append_storage_sample,
     coerce_int,
@@ -48,6 +48,7 @@ from alerting.normalization import (
     migrate_group_rules,
     migrate_inventory_summary,
     migrate_state,
+    normalize_acknowledged_alerts,  # noqa: F401 — re-export for webui.app
     normalize_daily_slots,
     normalize_group_rule,
     normalize_ignored_group,  # noqa: F401 — re-export for callers using alert_monitor.*
@@ -1295,6 +1296,20 @@ def run_check(config, state):
             all_alerts.extend(alerts)
         else:
             print("    ✓ All checks passed")
+
+    # Auto-clear user acknowledgements that have resolved (alert_key no longer
+    # appears in this cycle's alerts) or whose expires_at has passed.
+    acks = state.setdefault("acknowledged_alerts", {})
+    if acks:
+        active_keys = {a.key for a in all_alerts}
+        for key in list(acks.keys()):
+            entry = acks.get(key) or {}
+            expires_at_raw = entry.get("expires_at")
+            if expires_at_raw and _is_expired(expires_at_raw):
+                del acks[key]
+                continue
+            if entry.get("until_resolved") and key not in active_keys:
+                del acks[key]
 
     # Send alerts
     sent = 0

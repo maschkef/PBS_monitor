@@ -177,14 +177,17 @@ def build_visual_alerting(
     ds_state = alerting_state["datastores"].get(detail.get("id", ""), {})
     schedule_summary = ds_state.get("schedule_summary") or {}
 
+    ack_map = alerting_state.get("acknowledged_alerts") or {}
     serialized_alerts = [
         {
+            "key": alert.key,
             "title": alert.title,
             "message": alert.message,
             "priority": alert.priority,
             "tags": alert.tags,
             "scope": getattr(alert, "scope", "datastore"),
             "group_rule_key": getattr(alert, "group_rule_key", None),
+            "acknowledgement": ack_map.get(alert.key),
         }
         for alert in alerts
     ]

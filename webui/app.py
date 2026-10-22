@@ -332,6 +332,23 @@ def _load_alerting_config() -> "tuple[dict, tuple | None]":
         return None, (jsonify({"error": "config.json is corrupted and cannot be parsed. Please fix it manually."}), 500)
 
 
+def _load_alerting_state_for_write() -> dict:
+    """Load and migrate state.json from the webui-managed path.
+
+    Unlike ``alert_monitor.load_state()`` this always reads from
+    ``ALERTING_STATE_PATH`` (which test fixtures can patch).  Returns a
+    default state document when the file does not exist or cannot be parsed —
+    callers are expected to write back via ``_write_json_atomic``.
+    """
+    if not ALERTING_STATE_PATH.exists():
+        return alert_monitor.default_state()
+    try:
+        with open(ALERTING_STATE_PATH) as f:
+            return alert_monitor.migrate_state(json.load(f))
+    except (OSError, json.JSONDecodeError):
+        return alert_monitor.default_state()
+
+
 def api_get(path, params=None):
     """Make authenticated GET request to the monitoring API."""
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -879,6 +896,84 @@ def unignore_group():
     rule_key_un = alert_monitor.make_rule_key(datastore_id, namespace, backup_type, backup_id)
     _audit("unignore_group", rule_key=rule_key_un, removed_count=removed_count)
     return jsonify({"ok": True, "removed": removed_count})
+
+
+@app.route("/api/alerting/acknowledge-alarm", methods=["POST"])
+@require_auth
+@require_csrf
+@limiter.limit("30 per minute")
+def acknowledge_alarm():
+    """Record a user acknowledgement for an active alarm.
+
+    The acknowledgement either expires at a given ISO 8601 timestamp or stays
+    in force until the alarm resolves (``until_resolved=true``), which is
+    detected automatically in the next monitoring cycle.
+    """
+    guard = read_only_guard()
+    if guard:
+        return guard
+    payload = request.get_json(silent=True) or {}
+    try:
+        _validators._validate_acknowledge_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    alert_key = payload["alert_key"].strip()
+    until_resolved = bool(payload.get("until_resolved"))
+    expires_at_raw = payload.get("expires_at") or None
+    expires_at_normalized = None
+    if expires_at_raw:
+        expires_at_normalized = alert_monitor._parse_expires_at(expires_at_raw)
+        if not expires_at_normalized:
+            return jsonify({"error": "Invalid expires_at timestamp."}), 400
+        if alert_monitor._is_expired(expires_at_normalized):
+            return jsonify({"error": "expires_at must be in the future."}), 400
+
+    state = _load_alerting_state_for_write()
+    acks = state.setdefault("acknowledged_alerts", {})
+    entry = {
+        "expires_at": expires_at_normalized,
+        "until_resolved": until_resolved,
+        "acknowledged_at": datetime.now(UTC).isoformat(),
+        "note": (payload.get("note") or None),
+        "title": (payload.get("title") or None),
+    }
+    acks[alert_key] = entry
+    _write_json_atomic(ALERTING_STATE_PATH, state)
+
+    _audit(
+        "acknowledge_alarm",
+        alert_key=alert_key,
+        until_resolved=until_resolved,
+        expires_at=expires_at_normalized,
+    )
+    return jsonify({"ok": True, "acknowledgement": entry})
+
+
+@app.route("/api/alerting/unacknowledge-alarm", methods=["POST"])
+@require_auth
+@require_csrf
+@limiter.limit("30 per minute")
+def unacknowledge_alarm():
+    """Remove a user acknowledgement for a specific alarm."""
+    guard = read_only_guard()
+    if guard:
+        return guard
+    payload = request.get_json(silent=True) or {}
+    alert_key = payload.get("alert_key") if isinstance(payload, dict) else None
+    if not isinstance(alert_key, str) or not alert_key.strip():
+        return jsonify({"error": "alert_key must be a non-empty string."}), 400
+    alert_key = alert_key.strip()
+
+    state = _load_alerting_state_for_write()
+    acks = state.get("acknowledged_alerts") or {}
+    removed = acks.pop(alert_key, None) is not None
+    if removed:
+        state["acknowledged_alerts"] = acks
+        _write_json_atomic(ALERTING_STATE_PATH, state)
+
+    _audit("unacknowledge_alarm", alert_key=alert_key, removed=removed)
+    return jsonify({"ok": True, "removed": removed})
 
 
 @app.route("/api/webui/info")

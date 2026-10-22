@@ -220,6 +220,41 @@ def purge_expired_ignored_groups(ignored_groups, now_utc=None):
     ]
 
 
+def normalize_acknowledged_alerts(raw_map, now_utc=None):
+    """Normalize the user-controlled acknowledged-alert map.
+
+    Expected input shape: ``{alert_key: {expires_at, until_resolved,
+    acknowledged_at, note, title}}``.  Returns a dict with the same shape,
+    dropping malformed entries and time-bound entries whose ``expires_at`` has
+    already passed (unless ``until_resolved`` is true, in which case the entry
+    stays regardless of ``expires_at``).
+    """
+    if not isinstance(raw_map, dict):
+        return {}
+    normalized = {}
+    for raw_key, raw_entry in raw_map.items():
+        if not isinstance(raw_key, str) or not raw_key:
+            continue
+        if not isinstance(raw_entry, dict):
+            continue
+        until_resolved = bool(raw_entry.get("until_resolved"))
+        expires_at_iso = _parse_expires_at(raw_entry.get("expires_at"))
+        if not until_resolved:
+            if not expires_at_iso:
+                continue
+            if _is_expired(expires_at_iso, now_utc=now_utc):
+                continue
+        entry = {
+            "expires_at": expires_at_iso,
+            "until_resolved": until_resolved,
+            "acknowledged_at": raw_entry.get("acknowledged_at") or None,
+            "note": raw_entry.get("note") or None,
+            "title": raw_entry.get("title") or None,
+        }
+        normalized[raw_key] = entry
+    return normalized
+
+
 def is_group_ignored(config, datastore_id, namespace, backup_type, backup_id):
     """Return True when a backup group matches an ignore selector."""
     datastore_id = str(datastore_id or "")
@@ -282,6 +317,7 @@ def default_state():
         "datastores": {},
         "last_alerts": {},
         "alert_suppress_until": {},
+        "acknowledged_alerts": {},
     }
 
 
@@ -671,6 +707,7 @@ def migrate_state(raw_state):
         "datastores": {},
         "last_alerts": {},
         "alert_suppress_until": {},
+        "acknowledged_alerts": {},
     }
     if not isinstance(raw_state, dict):
         return state
@@ -684,6 +721,10 @@ def migrate_state(raw_state):
         state["alert_suppress_until"] = {
             str(k): str(v) for k, v in suppress_until.items() if v
         }
+
+    state["acknowledged_alerts"] = normalize_acknowledged_alerts(
+        raw_state.get("acknowledged_alerts"),
+    )
 
     raw_datastores = raw_state.get("datastores")
     if not isinstance(raw_datastores, dict):

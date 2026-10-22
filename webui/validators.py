@@ -301,3 +301,60 @@ def _validate_ignore_group_payload(payload: dict) -> None:
             datetime.fromisoformat(expires_at)
         except ValueError:
             raise ValueError("expires_at must be a valid ISO 8601 timestamp.")
+
+
+# Max lengths for free-text string fields in the acknowledge-alarm payload.
+_ACK_STR_MAX: dict[str, int] = {
+    "alert_key": 512,
+    "note": 512,
+    "title": 256,
+}
+
+
+def _validate_acknowledge_payload(payload: dict) -> None:
+    """Validate a user-supplied acknowledge-alarm payload.
+
+    Payload shape:
+      - ``alert_key`` (required, non-empty string).
+      - exactly one of ``expires_at`` (ISO 8601, future) or ``until_resolved`` (true).
+      - optional ``note``, ``title`` (strings, length-capped).
+
+    Raises ``ValueError`` with a human-readable message on any invalid field.
+    """
+    from datetime import datetime
+
+    alert_key = payload.get("alert_key")
+    if not isinstance(alert_key, str) or not alert_key.strip():
+        raise ValueError("alert_key must be a non-empty string.")
+    if len(alert_key) > _ACK_STR_MAX["alert_key"]:
+        raise ValueError(
+            f"alert_key must not exceed {_ACK_STR_MAX['alert_key']} characters.",
+        )
+
+    for key in ("note", "title"):
+        val = payload.get(key)
+        if val is None:
+            continue
+        if not isinstance(val, str):
+            raise ValueError(f"{key} must be a string.")  # noqa: TRY004
+        if len(val) > _ACK_STR_MAX[key]:
+            raise ValueError(f"{key} must not exceed {_ACK_STR_MAX[key]} characters.")
+
+    until_resolved = bool(payload.get("until_resolved"))
+    expires_at = payload.get("expires_at")
+    has_expires_at = expires_at is not None and expires_at != ""
+
+    if until_resolved and has_expires_at:
+        raise ValueError("Set either expires_at or until_resolved, not both.")
+    if not until_resolved and not has_expires_at:
+        raise ValueError("Either expires_at or until_resolved=true is required.")
+
+    if has_expires_at:
+        if not isinstance(expires_at, str):
+            raise ValueError("expires_at must be a string.")
+        if len(expires_at) > 40:
+            raise ValueError("expires_at must not exceed 40 characters.")
+        try:
+            datetime.fromisoformat(expires_at)
+        except ValueError:
+            raise ValueError("expires_at must be a valid ISO 8601 timestamp.")

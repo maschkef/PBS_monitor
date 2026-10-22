@@ -606,13 +606,83 @@
         }
 
         function renderAlertItem(alert) {
-            return `<div class="alert-item priority-${alert.priority}">
+            const ack = alert.acknowledgement;
+            const alertKey = alert.key || '';
+            const alertTitle = alert.title || '';
+            let badge = '';
+            if (ack) {
+                if (ack.until_resolved) {
+                    badge = '<span class="alert-ack-badge" title="Acknowledged until the alarm resolves itself.">Acknowledged (until resolved)</span>';
+                } else if (ack.expires_at) {
+                    const whenText = formatExpiry(ack.expires_at);
+                    const absolute = formatDate(ack.expires_at);
+                    const label = whenText && whenText.remaining ? `Acknowledged (${whenText.remaining})` : `Acknowledged until ${absolute}`;
+                    badge = `<span class="alert-ack-badge" title="${escHtml(absolute)}">${escHtml(label)}</span>`;
+                }
+            }
+            const ackBtn = alertKey
+                ? (ack
+                    ? `<button type="button" class="btn btn-secondary alert-action-btn" onclick='unacknowledgeAlarm(${jsonAttr(alertKey)})'>Unacknowledge</button>`
+                    : `<button type="button" class="btn btn-secondary alert-action-btn" onclick='acknowledgeAlarm(${jsonAttr(alertKey)}, ${jsonAttr(alertTitle)})'>Acknowledge</button>`)
+                : '';
+            return `<div class="alert-item priority-${alert.priority}${ack ? ' is-acknowledged' : ''}">
                 <div class="alert-head">
-                    <span class="alert-title">${escHtml(alert.title)}</span>
-                    <span class="alert-priority">${alertPriorityLabel(alert.priority)}</span>
+                    <span class="alert-title">${escHtml(alert.title)}${badge ? ' ' + badge : ''}</span>
+                    <span class="alert-head-right">
+                        <span class="alert-priority">${alertPriorityLabel(alert.priority)}</span>
+                        ${ackBtn}
+                    </span>
                 </div>
                 <div class="alert-message">${escHtml(alert.message)}</div>
             </div>`;
+        }
+
+        async function acknowledgeAlarm(alertKey, alertTitle) {
+            if (!alertKey) return;
+            const headingName = alertTitle || 'this alarm';
+            const choice = await pickDuration({
+                title: `Acknowledge &ldquo;${escHtml(headingName)}&rdquo;`,
+                hint: 'Suppress notifications for this alarm. It stays visible in the dashboard.',
+                confirmLabel: 'Acknowledge',
+                allowForever: false,
+                allowUntilResolved: true,
+            });
+            if (!choice) return;
+            if (choice.expiresAt === null && !choice.untilResolved) {
+                // "forever" is not offered here; ignore for safety.
+                return;
+            }
+            const response = await fetchWrite('/api/alerting/acknowledge-alarm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    alert_key: alertKey,
+                    expires_at: choice.untilResolved ? null : choice.expiresAt,
+                    until_resolved: !!choice.untilResolved,
+                    title: alertTitle || null,
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                window.alert(data.error || 'Failed to acknowledge alarm');
+                return;
+            }
+            await loadAll();
+        }
+
+        async function unacknowledgeAlarm(alertKey) {
+            if (!alertKey) return;
+            const response = await fetchWrite('/api/alerting/unacknowledge-alarm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ alert_key: alertKey }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                window.alert(data.error || 'Failed to unacknowledge alarm');
+                return;
+            }
+            await loadAll();
         }
 
         function renderLearnedGroup(group) {
@@ -820,10 +890,27 @@
             await loadAll();
         }
 
-        // Open a small modal asking how long to ignore the given group.
-        // Resolves with { expiresAt: string|null } on confirm, or null on cancel.
-        // expiresAt === null means "ignore forever" (no expiry).
-        function pickIgnoreDuration(displayName) {
+        // Open a small modal asking the user to pick a duration.
+        // Resolves on confirm with:
+        //   { expiresAt: ISO|null, untilResolved: bool }
+        // where expiresAt === null + untilResolved === false → "forever" mode,
+        // untilResolved === true → ack until the alarm resolves itself.
+        // Resolves with null on cancel.
+        //
+        // Options:
+        //   title             — modal heading (string, pre-escaped if HTML needed)
+        //   hint              — one-line explanation shown under the title
+        //   confirmLabel      — primary button label (default: 'Confirm')
+        //   allowForever      — show "permanent / no expiry" option (default: true)
+        //   allowUntilResolved — show "until the alarm resolves" option (default: false)
+        function pickDuration(options) {
+            const {
+                title = 'Pick a duration',
+                hint = 'Pick a duration.',
+                confirmLabel = 'Confirm',
+                allowForever = true,
+                allowUntilResolved = false,
+            } = options || {};
             return new Promise(resolve => {
                 const backdrop = document.createElement('div');
                 backdrop.className = 'ignore-duration-modal__backdrop';
@@ -840,11 +927,20 @@
                 ];
 
                 let selectedHours = 24;   // default preset
-                let selectionMode = 'preset'; // 'preset' | 'custom' | 'forever'
+                let selectionMode = 'preset'; // 'preset' | 'custom' | 'forever' | 'until_resolved'
+
+                const untilResolvedRow = allowUntilResolved ? `
+                    <div class="ignore-duration-modal__forever">
+                        <label><input type="radio" name="ignore-duration-mode" value="until_resolved"> Until the alarm resolves itself</label>
+                    </div>` : '';
+                const foreverRow = allowForever ? `
+                    <div class="ignore-duration-modal__forever">
+                        <label><input type="radio" name="ignore-duration-mode" value="forever"> No expiry (permanent)</label>
+                    </div>` : '';
 
                 modal.innerHTML = `
-                    <div class="ignore-duration-modal__title">Ignore &ldquo;${escHtml(displayName || 'this group')}&rdquo;</div>
-                    <div class="ignore-duration-modal__hint">Pick a duration. Alerting will resume automatically after it expires.</div>
+                    <div class="ignore-duration-modal__title">${title}</div>
+                    <div class="ignore-duration-modal__hint">${hint}</div>
                     <div class="ignore-duration-modal__presets">
                         ${presets.map(p => `<button type="button" class="btn btn-secondary ignore-duration-modal__preset" data-hours="${p.hours}">${p.label}</button>`).join('')}
                     </div>
@@ -858,12 +954,11 @@
                             <option value="days" selected>days</option>
                         </select>
                     </div>
-                    <div class="ignore-duration-modal__forever">
-                        <label><input type="radio" name="ignore-duration-mode" value="forever"> Ignore permanently (no expiry)</label>
-                    </div>
+                    ${untilResolvedRow}
+                    ${foreverRow}
                     <div class="ignore-duration-modal__actions">
                         <button type="button" class="btn btn-secondary ignore-duration-modal__cancel">Cancel</button>
-                        <button type="button" class="btn btn-primary ignore-duration-modal__confirm">Ignore</button>
+                        <button type="button" class="btn btn-primary ignore-duration-modal__confirm">${escHtml(confirmLabel)}</button>
                     </div>
                 `;
 
@@ -925,7 +1020,12 @@
                     let hours;
                     if (selectionMode === 'forever') {
                         cleanup();
-                        resolve({ expiresAt: null });
+                        resolve({ expiresAt: null, untilResolved: false });
+                        return;
+                    }
+                    if (selectionMode === 'until_resolved') {
+                        cleanup();
+                        resolve({ expiresAt: null, untilResolved: true });
                         return;
                     }
                     if (selectionMode === 'custom') {
@@ -940,7 +1040,7 @@
                     }
                     const iso = new Date(Date.now() + hours * 3600 * 1000).toISOString();
                     cleanup();
-                    resolve({ expiresAt: iso });
+                    resolve({ expiresAt: iso, untilResolved: false });
                 }
 
                 function onKey(e) {
@@ -963,7 +1063,13 @@
         }
 
         async function ignoreGroup(meta) {
-            const choice = await pickIgnoreDuration(meta.display_name);
+            const choice = await pickDuration({
+                title: `Ignore &ldquo;${escHtml(meta.display_name || 'this group')}&rdquo;`,
+                hint: 'Pick a duration. Alerting will resume automatically after it expires.',
+                confirmLabel: 'Ignore',
+                allowForever: true,
+                allowUntilResolved: false,
+            });
             if (!choice) return;
 
             const response = await fetchWrite('/api/alerting/ignore-group', {
