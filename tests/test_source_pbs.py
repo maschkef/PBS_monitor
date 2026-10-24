@@ -332,10 +332,203 @@ class TestApiGet:
 
 
 class TestFetchBackupInventory:
-    def test_raises_not_implemented(self, monkeypatch):
+    def test_root_only_namespace_single_group(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([{"ns": ""}]),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "ct",
+                "backup-id": 110,
+                "last-backup": 1700000000,
+                "backup-count": 1,
+                "comment": "home-ct",
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp([{
+                "backup-type": "ct",
+                "backup-id": 110,
+                "backup-time": 1700000000,
+                "size": 4096,
+                "protected": True,
+                "comment": "snap1",
+            }]),
+        })
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=50,
+        )
+        assert inv["summary"] == {
+            "namespace_count": 1,
+            "group_count": 1,
+            "snapshot_count": 1,
+        }
+        [grp] = inv["groups"]
+        assert grp["group_key"] == '["","ct","110"]'
+        assert grp["namespace"] == ""
+        assert grp["backup_type"] == "ct"
+        assert grp["backup_id"] == "110"
+        assert grp["backup_count"] == 1
+        assert grp["protected_snapshot_count"] == 1
+        assert grp["display_name"] == "snap1"
+        assert grp["last_backup_at"] is not None
+        [snap] = grp["current_snapshots"]
+        assert snap["backup_time"] == 1700000000
+        assert snap["size"] == 4096
+        assert snap["protected"] is True
+        assert snap["comment"] == "snap1"
+
+    def test_multiple_namespaces_sorted_root_first(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        session = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp(
+                [{"ns": "prod"}, {"ns": ""}],
+            ),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 100,
+                "last-backup": 1700000000,
+                "backup-count": 1,
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 100,
+                "backup-time": 1700000000,
+                "size": 1024,
+                "protected": False,
+            }]),
+        })
+        adapter._session_cache = session
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=50,
+        )
+        assert inv["summary"]["namespace_count"] == 2
+        # Record the order of ns-params on groups fetches.
+        ns_params = [
+            (c.get("params") or {}).get("ns")
+            for c in session.calls
+            if c["url"].endswith("/admin/datastore/ssd/groups")
+        ]
+        # Root (None, no param) must come first, then "prod".
+        assert ns_params == [None, "prod"]
+
+    def test_empty_namespace_response_falls_back_to_root(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        session = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([]),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "host",
+                "backup-id": "pve",
+                "last-backup": 1700000000,
+                "backup-count": 1,
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp([{
+                "backup-type": "host",
+                "backup-id": "pve",
+                "backup-time": 1700000000,
+                "size": 2048,
+                "protected": False,
+            }]),
+        })
+        adapter._session_cache = session
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=50,
+        )
+        assert inv["summary"]["namespace_count"] == 1
+        assert inv["summary"]["group_count"] == 1
+        # Root namespace fetched with no ns-param (= PBS default).
+        group_calls = [
+            c for c in session.calls
+            if c["url"].endswith("/admin/datastore/ssd/groups")
+        ]
+        assert group_calls[0]["params"] is None
+
+    def test_snapshot_cap_limits_current_snapshots(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        snapshots = [
+            {
+                "backup-type": "vm",
+                "backup-id": 200,
+                "backup-time": 1700000000 + i * 3600,
+                "size": 1024,
+                "protected": False,
+            }
+            for i in range(5)
+        ]
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([{"ns": ""}]),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 200,
+                "last-backup": 1700000000 + 4 * 3600,
+                "backup-count": 5,
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp(snapshots),
+        })
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=2,
+        )
+        [grp] = inv["groups"]
+        assert grp["backup_count"] == 5
+        assert len(grp["current_snapshots"]) == 2
+        # Newest two snapshots retained (sorted desc by backup_time).
+        assert [s["backup_time"] for s in grp["current_snapshots"]] == [
+            1700000000 + 4 * 3600,
+            1700000000 + 3 * 3600,
+        ]
+
+    def test_protected_snapshot_count_aggregates(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([{"ns": ""}]),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 300,
+                "last-backup": 1700000000,
+                "backup-count": 3,
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp([
+                {
+                    "backup-type": "vm", "backup-id": 300,
+                    "backup-time": 1700000000, "size": 1024,
+                    "protected": True,
+                },
+                {
+                    "backup-type": "vm", "backup-id": 300,
+                    "backup-time": 1700001000, "size": 1024,
+                    "protected": True,
+                },
+                {
+                    "backup-type": "vm", "backup-id": 300,
+                    "backup-time": 1700002000, "size": 1024,
+                    "protected": False,
+                },
+            ]),
+        })
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=50,
+        )
+        [grp] = inv["groups"]
+        assert grp["protected_snapshot_count"] == 2
+        assert grp["backup_count"] == 3
+
+    def test_malformed_datastore_id_raises_value_error(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
-        with pytest.raises(NotImplementedError, match="Phase 5"):
-            adapter.fetch_backup_inventory("pbs:home-lab:ssd", snapshot_cap=50)
+        with pytest.raises(ValueError, match="pbs:<source>:<store>"):
+            adapter.fetch_backup_inventory(
+                "wrong:format", snapshot_cap=50,
+            )
+
+    def test_http_error_on_groups_propagates(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        http_err = requests.HTTPError("500 Internal Server Error")
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([{"ns": ""}]),
+            "/admin/datastore/ssd/groups": _FakeResp(
+                raise_for_status_exc=http_err,
+            ),
+        })
+        with pytest.raises(requests.HTTPError):
+            adapter.fetch_backup_inventory(
+                "pbs:home-lab:ssd", snapshot_cap=50,
+            )
 
 
 class TestFetchRescaleLog:

@@ -1,13 +1,15 @@
 """Adapter for a local Proxmox Backup Server (PBS) instance.
 
 Implements the SourceAdapter protocol against the native PBS HTTP API
-(`/api2/json/...`). Phase 4 scope — see
+(`/api2/json/...`). Phase 4–5 scope — see
 temp/pbs-integration-multi-phase-plan.md:
 
 - `check_health()` via GET /version
 - `fetch_datastores()` via GET /admin/datastore (auto-discovery or explicit
    list) + GET /admin/datastore/{store}/status (metrics)
-- `fetch_backup_inventory()` — Phase 5 placeholder (raises NotImplementedError)
+- `fetch_backup_inventory()` via GET /admin/datastore/{store}/namespace +
+   .../groups?ns=… + .../snapshots?ns=…, normalised through the shared
+   cloud-shape helpers in alerting.monitor
 - `fetch_rescale_log()` — always returns [] (PBS has no plan-rescale concept)
 
 Auth header: `Authorization: PBSAPIToken=<USER@REALM!TOKENID:SECRET>`.
@@ -217,9 +219,81 @@ class PbsAdapter:
     def fetch_backup_inventory(
         self, datastore_id: str, *, snapshot_cap: int
     ) -> dict:
-        raise NotImplementedError(
-            "PBS backup inventory arrives in Phase 5 of the multi-source plan"
+        """Fetch namespaces/groups/snapshots and normalise to cloud shape.
+
+        PBS returns dash-separated field names (`backup-type`, `backup-id`,
+        `backup-time`, `last-backup`, `backup-count`); we translate them to
+        the underscore-based cloud shape so the shared helpers
+        `extract_namespace_backup_groups`/`build_backup_group_record` in
+        alerting.monitor can produce byte-identical records regardless of
+        source.
+        """
+        from alerting.monitor import extract_namespace_backup_groups
+
+        store = _parse_pbs_datastore_id(datastore_id)
+
+        namespaces = self._api_get(
+            f"/api2/json/admin/datastore/{store}/namespace"
+        ) or []
+        namespace_values = [
+            ns.get("ns", "") for ns in namespaces if isinstance(ns, dict)
+        ]
+        if not namespace_values:
+            namespace_values = [""]
+        namespace_values = sorted(
+            namespace_values, key=lambda v: (v != "", v)
         )
+
+        groups: list[dict] = []
+        for ns in namespace_values:
+            params = {"ns": ns} if ns else None
+            pbs_groups = self._api_get(
+                f"/api2/json/admin/datastore/{store}/groups", params=params
+            ) or []
+            pbs_snapshots = self._api_get(
+                f"/api2/json/admin/datastore/{store}/snapshots", params=params
+            ) or []
+            namespace_data = {
+                "groups": [
+                    _pbs_to_cloud_keys(g)
+                    for g in pbs_groups if isinstance(g, dict)
+                ],
+                "snapshots": [
+                    _pbs_to_cloud_keys(s)
+                    for s in pbs_snapshots if isinstance(s, dict)
+                ],
+            }
+            groups.extend(
+                extract_namespace_backup_groups(
+                    ns, namespace_data, snapshot_cap
+                )
+            )
+
+        snapshot_count = sum(g["backup_count"] for g in groups)
+        return {
+            "summary": {
+                "namespace_count": len(namespace_values),
+                "group_count": len(groups),
+                "snapshot_count": snapshot_count,
+            },
+            "groups": groups,
+        }
 
     def fetch_rescale_log(self, datastore_id: str) -> list[dict]:
         return []
+
+
+def _pbs_to_cloud_keys(item: dict) -> dict:
+    """Translate dash-separated PBS field names to underscore cloud shape."""
+    return {k.replace("-", "_"): v for k, v in item.items()}
+
+
+def _parse_pbs_datastore_id(datastore_id: str) -> str:
+    """Extract the PBS store name from a `pbs:<source>:<store>` id."""
+    parts = datastore_id.split(":", 2)
+    if len(parts) < 3 or parts[0] != "pbs" or not parts[2]:
+        raise ValueError(
+            f"PbsAdapter: expected 'pbs:<source>:<store>' datastore_id, "
+            f"got {datastore_id!r}"
+        )
+    return parts[2]
