@@ -21,11 +21,9 @@ import json
 import os
 import shutil
 import signal
-import socket
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -93,6 +91,7 @@ from alerting.schedule import (
     snapshot_to_local_occurrence,  # noqa: F401 — re-export
     weekday_name,  # noqa: F401 — re-export
 )
+from alerting.sources import build_source
 from alerting.status_feed import enrich_alert as _enrich_alert_with_status_feed
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -371,34 +370,30 @@ def save_state(state):
 
 
 # ─── API Client ──────────────────────────────────────────────────────────────
+#
+# HTTP calls to the Monitoring API are owned by the SourceAdapter interface
+# (alerting/sources/). The module-level functions below are thin shims kept
+# for the webui callers in webui/alerting_ui.py and webui/app.py — they
+# construct an on-the-fly default adapter and delegate. Phase 8 of the
+# multi-source plan refactors those callers to hold their own adapters.
+
+def _default_adapter(config):
+    """Build the implicit single remote-backups adapter from a legacy config."""
+    return build_source({
+        "id": "default",
+        "type": "remote_backups",
+        "api_base": config["api_base"],
+    })
+
 
 def api_get(config, path, params=None):
-    """Authenticated GET request to monitoring API."""
-    api_key = os.environ.get("API_KEY", "")
-    if not api_key:
-        raise RuntimeError("API_KEY not set in environment or .env")
-    headers = {"Authorization": f"Bearer {api_key}"}
-    resp = requests.get(
-        f"{config['api_base']}{path}",
-        headers=headers,
-        params=params,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    """Authenticated GET request to monitoring API (backwards-compat shim)."""
+    return _default_adapter(config)._api_get(path, params=params)
 
 
 def fetch_datastores(config):
-    """Fetch all datastores with details."""
-    datastores = api_get(config, "/monitoring/v1/datastores")
-    result = []
-    for ds in datastores:
-        try:
-            detail = api_get(config, f"/monitoring/v1/datastores/{ds['id']}")
-            result.append(detail)
-        except requests.RequestException:
-            result.append(ds)
-    return result
+    """Fetch all datastores with details (backwards-compat shim)."""
+    return _default_adapter(config).fetch_datastores()
 
 
 # ─── Inventory helpers ───────────────────────────────────────────────────────
@@ -496,43 +491,18 @@ def extract_namespace_backup_groups(namespace, namespace_data, snapshot_cap=MAX_
 
 
 def fetch_rescale_log(config, datastore_id):
-    """Fetch the recent rescale-log entries (upstream default window: 30d)."""
-    entries = api_get(
-        config,
-        f"/monitoring/v1/datastores/{datastore_id}/rescale-log",
-        params={"range": "30d"},
-    )
-    return entries if isinstance(entries, list) else []
+    """Fetch recent rescale-log entries (backwards-compat shim)."""
+    return _default_adapter(config).fetch_rescale_log(datastore_id)
 
 
 def fetch_backup_inventory(config, datastore_id):
-    """Fetch full PBS backup inventory for a datastore, grouped by namespace."""
+    """Fetch full PBS backup inventory, grouped by namespace (backwards-compat shim)."""
     snapshot_cap = max(1, coerce_int(
         (config.get("schedule_learning") or {}).get("snapshot_retention_count")
     ) or MAX_CURRENT_SNAPSHOT_DETAILS)
-    base_path = f"/monitoring/v1/datastores/{datastore_id}/backups"
-    overview = api_get(config, base_path)
-    namespace_entries = overview.get("namespaces") or [{"ns": "", "comment": None}]
-    namespace_entries = sorted(
-        namespace_entries,
-        key=lambda item: (item.get("ns", "") != "", item.get("ns", "")),
+    return _default_adapter(config).fetch_backup_inventory(
+        datastore_id, snapshot_cap=snapshot_cap,
     )
-
-    groups = []
-    for namespace_meta in namespace_entries:
-        namespace_value = namespace_meta.get("ns", "")
-        namespace_data = api_get(config, base_path, params={"ns": namespace_value})
-        groups.extend(extract_namespace_backup_groups(namespace_value, namespace_data, snapshot_cap))
-
-    snapshot_count = sum(group["backup_count"] for group in groups)
-    return {
-        "summary": {
-            "namespace_count": len(namespace_entries),
-            "group_count": len(groups),
-            "snapshot_count": snapshot_count,
-        },
-        "groups": groups,
-    }
 
 
 # ─── Group rules ─────────────────────────────────────────────────────────────
@@ -1123,22 +1093,6 @@ def _resolve_alert_priority(alert, prio_cfg: dict):
 
 # ─── Main check loop ─────────────────────────────────────────────────────────
 
-def _diagnose_network(api_base: str) -> str | None:
-    """Return a human-readable network issue string, or None if the network looks fine."""
-    parsed = urlparse(api_base)
-    host = parsed.hostname or api_base
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        socket.getaddrinfo(host, port)
-    except socket.gaierror as e:
-        return f"DNS resolution failed for '{host}': {e}"
-    try:
-        with socket.create_connection((host, port), timeout=5):
-            pass
-    except OSError as e:
-        return f"TCP connection to {host}:{port} failed: {e}"
-    return None
-
 
 def run_check(config, state):
     """Run a single monitoring check cycle."""
@@ -1148,6 +1102,10 @@ def run_check(config, state):
     # atomically if changes were made; refreshes the in-memory config too so
     # subsequent checks see the pruned list.
     config["ignored_groups"] = purge_expired_ignored_groups_from_disk()
+
+    # Phase 1: single implicit source adapter. Phase 7 iterates over
+    # config["sources"] here instead.
+    adapter = _default_adapter(config)
 
     def safe_send_ntfy(cfg, alrt):
         nonlocal ntfy_delivery_failed
@@ -1165,32 +1123,32 @@ def run_check(config, state):
     print(f"{'='*60}")
 
     # Check API health first
-    try:
-        health = requests.get(f"{config['api_base']}/health", timeout=10).json()
-        api_status = health.get("status", "unknown")
+    health = adapter.check_health()
+    if health.status == "ok":
+        print(f"API Health: {health.message or 'ok'}")
+    elif health.status == "degraded":
+        api_status = health.message or "unknown"
         print(f"API Health: {api_status}")
-        if api_status != "ok":
-            alert = Alert(
-                "platform",
-                "API Unhealthy",
-                f"remote-backups.com API health check returned: {api_status}",
-                priority=4,
-                tags=["warning", "cloud"],
-            )
-            alert.priority = _resolve_alert_priority(alert, prio_cfg)
-            if should_alert(config, state, alert.key):
-                _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
-                safe_send_ntfy(config, alert)
-                state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
-    except requests.RequestException as e:
-        net_issue = _diagnose_network(config["api_base"])
-        if net_issue:
-            print(f"WARNING: {net_issue} — local network problem, not the API itself")
-        print(f"API Health: UNREACHABLE ({e})")
+        alert = Alert(
+            "platform",
+            "API Unhealthy",
+            f"remote-backups.com API health check returned: {api_status}",
+            priority=4,
+            tags=["warning", "cloud"],
+        )
+        alert.priority = _resolve_alert_priority(alert, prio_cfg)
+        if should_alert(config, state, alert.key):
+            _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
+            safe_send_ntfy(config, alert)
+            state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
+    else:  # "down"
+        if health.net_issue:
+            print(f"WARNING: {health.net_issue} — local network problem, not the API itself")
+        print(f"API Health: UNREACHABLE ({health.error})")
         alert = Alert(
             "platform",
             "API Unreachable",
-            f"remote-backups.com API is not reachable: {e}",
+            f"remote-backups.com API is not reachable: {health.error}",
             priority=5,
             tags=["rotating_light", "cloud"],
         )
@@ -1204,7 +1162,7 @@ def run_check(config, state):
 
     # Fetch datastores
     try:
-        datastores = fetch_datastores(config)
+        datastores = adapter.fetch_datastores()
     except (requests.RequestException, RuntimeError) as e:
         print(f"Failed to fetch datastores: {e}")
         alert = Alert(
@@ -1230,6 +1188,9 @@ def run_check(config, state):
 
     group_rules = load_group_rules()
     all_alerts = []
+    snapshot_cap = max(1, coerce_int(
+        (config.get("schedule_learning") or {}).get("snapshot_retention_count")
+    ) or MAX_CURRENT_SNAPSHOT_DETAILS)
     for ds in datastores:
         name = ds.get("name", ds.get("id", "?"))
         metrics = ds.get("metrics") or {}
@@ -1237,7 +1198,9 @@ def run_check(config, state):
         backup_inventory_error = None
         if metrics:
             try:
-                backup_inventory = fetch_backup_inventory(config, ds.get("id", ""))
+                backup_inventory = adapter.fetch_backup_inventory(
+                    ds.get("id", ""), snapshot_cap=snapshot_cap,
+                )
             except (requests.RequestException, RuntimeError) as e:
                 backup_inventory_error = str(e)
 
@@ -1253,7 +1216,7 @@ def run_check(config, state):
         ds_id = ds.get("id", "")
         if ds_id and metrics:
             try:
-                new_rescale = fetch_rescale_log(config, ds_id)
+                new_rescale = adapter.fetch_rescale_log(ds_id)
             except (requests.RequestException, RuntimeError) as e:
                 print(f"    • Rescale log unavailable: {e}")
             else:
