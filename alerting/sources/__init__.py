@@ -13,12 +13,14 @@ from .base import (
     SourceError,
     diagnose_network,
 )
+from .pbs import PbsAdapter
 from .registry import build_source, validate_source_entries
 from .remote_backups import RemoteBackupsAdapter
 
 __all__ = [
     "HealthResult",
     "HealthStatus",
+    "PbsAdapter",
     "RemoteBackupsAdapter",
     "SourceAdapter",
     "SourceAuthError",

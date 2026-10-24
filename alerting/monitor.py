@@ -990,60 +990,66 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
         ))
 
     # ── GC status ──
-    if gc.get("status") == "error":
-        alerts.append(Alert(
-            name,
-            "GC Failed",
-            f"Garbage collection failed on '{name}'. Last run: {gc.get('last_run', 'N/A')}",
-            priority=4,
-            tags=["x", "broom"],
-        ))
-    elif gc.get("status") == "never":
-        alerts.append(Alert(
-            name,
-            "GC Never Ran",
-            f"Garbage collection has never run on '{name}'.",
-            priority=3,
-            tags=["warning", "broom"],
-        ))
-    elif hours_since(gc.get("last_run")) > thresholds["gc_max_age_hours"]:
-        h = hours_since(gc.get("last_run"))
-        alerts.append(Alert(
-            name,
-            "GC Overdue",
-            f"GC on '{name}' last ran {h:.0f}h ago (threshold: {thresholds['gc_max_age_hours']}h).",
-            priority=3,
-            tags=["warning", "broom"],
-        ))
+    # Skipped entirely when the source doesn't provide any GC data (e.g.
+    # a PBS source before Phase 6). An empty dict means "unknown", not
+    # "overdue" — otherwise hours_since(None) would always exceed the
+    # threshold and raise a false "GC Overdue inf hours" alert.
+    if gc:
+        if gc.get("status") == "error":
+            alerts.append(Alert(
+                name,
+                "GC Failed",
+                f"Garbage collection failed on '{name}'. Last run: {gc.get('last_run', 'N/A')}",
+                priority=4,
+                tags=["x", "broom"],
+            ))
+        elif gc.get("status") == "never":
+            alerts.append(Alert(
+                name,
+                "GC Never Ran",
+                f"Garbage collection has never run on '{name}'.",
+                priority=3,
+                tags=["warning", "broom"],
+            ))
+        elif gc.get("last_run") and hours_since(gc.get("last_run")) > thresholds["gc_max_age_hours"]:
+            h = hours_since(gc.get("last_run"))
+            alerts.append(Alert(
+                name,
+                "GC Overdue",
+                f"GC on '{name}' last ran {h:.0f}h ago (threshold: {thresholds['gc_max_age_hours']}h).",
+                priority=3,
+                tags=["warning", "broom"],
+            ))
 
-    # ── Verification status ──
-    if verification.get("status") == "error":
-        alerts.append(Alert(
-            name,
-            "Verification Failed",
-            f"Data verification failed on '{name}'! Backup integrity may be compromised. "
-            f"Last run: {verification.get('last_run', 'N/A')}",
-            priority=5,
-            tags=["rotating_light", "shield"],
-        ))
-    elif verification.get("status") == "never":
-        alerts.append(Alert(
-            name,
-            "Verification Never Ran",
-            f"Data verification has never run on '{name}'.",
-            priority=3,
-            tags=["warning", "shield"],
-        ))
-    elif hours_since(verification.get("last_run")) > thresholds["verification_max_age_days"] * 24:
-        d = hours_since(verification.get("last_run")) / 24
-        alerts.append(Alert(
-            name,
-            "Verification Overdue",
-            f"Verification on '{name}' last ran {d:.0f} days ago "
-            f"(threshold: {thresholds['verification_max_age_days']}d).",
-            priority=3,
-            tags=["warning", "shield"],
-        ))
+    # ── Verification status ── (same no-data semantics as GC above).
+    if verification:
+        if verification.get("status") == "error":
+            alerts.append(Alert(
+                name,
+                "Verification Failed",
+                f"Data verification failed on '{name}'! Backup integrity may be compromised. "
+                f"Last run: {verification.get('last_run', 'N/A')}",
+                priority=5,
+                tags=["rotating_light", "shield"],
+            ))
+        elif verification.get("status") == "never":
+            alerts.append(Alert(
+                name,
+                "Verification Never Ran",
+                f"Data verification has never run on '{name}'.",
+                priority=3,
+                tags=["warning", "shield"],
+            ))
+        elif verification.get("last_run") and hours_since(verification.get("last_run")) > thresholds["verification_max_age_days"] * 24:
+            d = hours_since(verification.get("last_run")) / 24
+            alerts.append(Alert(
+                name,
+                "Verification Overdue",
+                f"Verification on '{name}' last ran {d:.0f} days ago "
+                f"(threshold: {thresholds['verification_max_age_days']}d).",
+                priority=3,
+                tags=["warning", "shield"],
+            ))
 
     backup_status = "inventory unavailable"
     if backup_inventory is not None:

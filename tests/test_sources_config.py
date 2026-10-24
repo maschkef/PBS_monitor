@@ -1,17 +1,17 @@
-"""Tests for the Phase 3 source-config validator and factory.
+"""Tests for the source-config validator and factory.
 
 Covers:
 - `validate_source_entries` input shapes (empty, invalid, duplicate ids,
-  unknown type, remote_backups required fields, pbs placeholder, api_key_env
-  defaulting).
-- `build_source` wiring of `api_key_env` into `RemoteBackupsAdapter` and the
-  explicit Phase-4 refusal for `type="pbs"`.
+  unknown type, remote_backups/pbs required fields, api_key_env defaulting).
+- `build_source` wiring: `api_key_env` into `RemoteBackupsAdapter`, and
+  construction of `PbsAdapter` for `type="pbs"` entries.
 """
 
 import pytest
 import requests
 
 from alerting.sources import (
+    PbsAdapter,
     RemoteBackupsAdapter,
     build_source,
     validate_source_entries,
@@ -76,13 +76,152 @@ class TestValidateSourceEntries:
                 legacy_api_base="x",
             )
 
-    def test_pbs_type_passes_validator_without_further_fields(self):
-        # Phase 3 accepts pbs entries as-is; Phase 4 adds field validation.
+    def test_pbs_valid_minimal_entry_passes(self):
         result = validate_source_entries(
-            [{"id": "home", "type": "pbs"}],
+            [{
+                "id": "home", "type": "pbs",
+                "base_url": "https://pbs.home.lan:8007",
+                "node": "localhost",
+                "token_env": "PBS_HOMELAB_TOKEN",
+            }],
             legacy_api_base="x",
         )
-        assert result == [{"id": "home", "type": "pbs"}]
+        assert result[0]["id"] == "home"
+        assert result[0]["type"] == "pbs"
+        # Validator fills defaults for optional fields.
+        assert result[0]["verify_tls"] is True
+        assert result[0]["datastores"] == []
+
+    def test_pbs_full_entry_round_trips(self):
+        entry = {
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": "pbs-01",
+            "token_env": "PBS_HOMELAB_TOKEN",
+            "label": "Home PBS",
+            "fingerprint": "ab" * 32,
+            "verify_tls": True,
+            "datastores": ["ssd"],
+        }
+        [result] = validate_source_entries([entry], legacy_api_base="x")
+        for k, v in entry.items():
+            assert result[k] == v
+
+    @pytest.mark.parametrize("missing", ["base_url", "node", "token_env"])
+    def test_pbs_missing_required_field_raises(self, missing):
+        entry = {
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": "localhost",
+            "token_env": "PBS_HOMELAB_TOKEN",
+        }
+        del entry[missing]
+        with pytest.raises(ValueError, match=missing):
+            validate_source_entries([entry], legacy_api_base="x")
+
+    def test_pbs_base_url_without_scheme_raises(self):
+        with pytest.raises(ValueError, match="must start with http"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_verify_tls_false_without_fingerprint_raises(self):
+        with pytest.raises(ValueError, match="verify_tls=false requires"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "verify_tls": False,
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_verify_tls_false_with_fingerprint_passes(self):
+        [result] = validate_source_entries(
+            [{
+                "id": "home", "type": "pbs",
+                "base_url": "https://pbs.home.lan:8007",
+                "node": "localhost",
+                "token_env": "PBS_HOMELAB_TOKEN",
+                "verify_tls": False,
+                "fingerprint": "ab" * 32,
+            }],
+            legacy_api_base="x",
+        )
+        assert result["verify_tls"] is False
+
+    def test_pbs_verify_tls_non_bool_raises(self):
+        with pytest.raises(ValueError, match="verify_tls must be a boolean"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "verify_tls": "yes",
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_datastores_not_list_raises(self):
+        with pytest.raises(ValueError, match="datastores must be a list"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "datastores": "ssd",
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_datastores_with_empty_string_raises(self):
+        with pytest.raises(ValueError, match="datastores must be a list"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "datastores": ["ssd", ""],
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_fingerprint_empty_string_raises(self):
+        with pytest.raises(ValueError, match="fingerprint must be"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "fingerprint": "",
+                }],
+                legacy_api_base="x",
+            )
+
+    def test_pbs_label_non_string_raises(self):
+        with pytest.raises(ValueError, match="label must be a string"):
+            validate_source_entries(
+                [{
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.home.lan:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_HOMELAB_TOKEN",
+                    "label": 42,
+                }],
+                legacy_api_base="x",
+            )
 
     def test_remote_backups_missing_api_base_raises(self):
         with pytest.raises(ValueError, match="api_base must be a non-empty string"):
@@ -168,9 +307,32 @@ class TestBuildSource:
         with pytest.raises(RuntimeError, match="API_KEY not set"):
             adapter._api_get("/dummy")
 
-    def test_build_pbs_raises_in_phase3(self):
-        with pytest.raises(ValueError, match="Phase 4"):
-            build_source({"id": "home", "type": "pbs"})
+    def test_build_pbs_returns_adapter(self, monkeypatch):
+        monkeypatch.setenv("PBS_HOMELAB_TOKEN", "root@pam!mon:abc")
+        adapter = build_source({
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": "localhost",
+            "token_env": "PBS_HOMELAB_TOKEN",
+        })
+        assert isinstance(adapter, PbsAdapter)
+        assert adapter.source_id == "home"
+        assert adapter.base_url == "https://pbs.home.lan:8007"
+
+    def test_build_pbs_forwards_optional_fields(self, monkeypatch):
+        adapter = build_source({
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": "pbs-01",
+            "token_env": "PBS_HOMELAB_TOKEN",
+            "label": "Home PBS",
+            "verify_tls": True,
+            "datastores": ["ssd"],
+        })
+        assert isinstance(adapter, PbsAdapter)
+        assert adapter._label == "Home PBS"
+        assert adapter._datastores == ["ssd"]
+        assert adapter._node == "pbs-01"
 
     def test_build_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown source type"):

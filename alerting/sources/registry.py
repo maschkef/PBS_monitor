@@ -4,9 +4,9 @@ Phase 3 introduces `validate_source_entries` so `load_config()` can normalise a
 `sources: []` config list (synthesising a default remote-backups entry when
 empty) and validate every entry's identity/type before any adapter is built.
 
-Phase 4 will extend `build_source` with a real PBS adapter; today the "pbs"
-type is only accepted by the validator so a user can author forward-looking
-config entries, but `build_source` still refuses to construct one.
+Phase 4 wires in a real PBS adapter: the validator now enforces the PBS
+schema (base_url, node, token_env, optional fingerprint/verify_tls/
+datastores/label) and `build_source` constructs a `PbsAdapter`.
 """
 
 from __future__ import annotations
@@ -77,9 +77,49 @@ def validate_source_entries(
                     f"for type 'remote_backups'"
                 )
             normalised.setdefault("api_key_env", "API_KEY")
-        # Phase 4 will add validation for pbs-specific fields (base_url,
-        # node, token_env, …). For now any pbs entry is accepted so users
-        # can author forward-looking configs; build_source still refuses.
+        elif stype == "pbs":
+            for field in ("base_url", "node", "token_env"):
+                value = entry.get(field)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"sources[{i}].{field} must be a non-empty string "
+                        f"for type 'pbs'"
+                    )
+            if not entry["base_url"].startswith(("http://", "https://")):
+                raise ValueError(
+                    f"sources[{i}].base_url must start with http:// or https://"
+                )
+            fp = entry.get("fingerprint")
+            if fp is not None and (not isinstance(fp, str) or not fp):
+                raise ValueError(
+                    f"sources[{i}].fingerprint must be a non-empty string "
+                    f"if set"
+                )
+            verify_tls = entry.get("verify_tls", True)
+            if not isinstance(verify_tls, bool):
+                raise ValueError(
+                    f"sources[{i}].verify_tls must be a boolean"
+                )
+            if not verify_tls and not fp:
+                raise ValueError(
+                    f"sources[{i}]: verify_tls=false requires "
+                    f"fingerprint pinning"
+                )
+            datastores = entry.get("datastores", [])
+            if not isinstance(datastores, list) or any(
+                not isinstance(x, str) or not x for x in datastores
+            ):
+                raise ValueError(
+                    f"sources[{i}].datastores must be a list of "
+                    f"non-empty strings"
+                )
+            label = entry.get("label")
+            if label is not None and not isinstance(label, str):
+                raise ValueError(
+                    f"sources[{i}].label must be a string if set"
+                )
+            normalised.setdefault("verify_tls", True)
+            normalised.setdefault("datastores", [])
 
         validated.append(normalised)
     return validated
@@ -88,10 +128,13 @@ def validate_source_entries(
 def build_source(cfg_entry: dict) -> SourceAdapter:
     """Build a SourceAdapter from a `sources: []` config entry.
 
-    Phase 3 accepts the following shapes:
+    Accepted shapes:
         {"id": "<slug>", "type": "remote_backups",
          "api_base": "<url>", "api_key_env": "API_KEY"}
-        {"id": "<slug>", "type": "pbs", …}  # raises until phase 4
+        {"id": "<slug>", "type": "pbs",
+         "base_url": "<url>", "node": "<name>", "token_env": "<ENV>",
+         "label": "<optional>", "fingerprint": "<optional>",
+         "verify_tls": True, "datastores": []}
     """
     source_id = cfg_entry.get("id") or "default"
     stype = cfg_entry.get("type", "remote_backups")
@@ -102,5 +145,15 @@ def build_source(cfg_entry: dict) -> SourceAdapter:
             api_key_env=cfg_entry.get("api_key_env", "API_KEY"),
         )
     if stype == "pbs":
-        raise ValueError("PBS source adapter not yet implemented (Phase 4)")
+        from .pbs import PbsAdapter
+        return PbsAdapter(
+            source_id=source_id,
+            base_url=cfg_entry["base_url"],
+            node=cfg_entry["node"],
+            token_env=cfg_entry["token_env"],
+            label=cfg_entry.get("label"),
+            fingerprint=cfg_entry.get("fingerprint"),
+            verify_tls=cfg_entry.get("verify_tls", True),
+            datastores=cfg_entry.get("datastores") or None,
+        )
     raise ValueError(f"Unknown source type: {stype!r}")
