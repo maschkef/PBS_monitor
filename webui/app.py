@@ -570,13 +570,12 @@ def get_datastores():
         except requests.RequestException:
             detail = ds
 
+        local_ds_state = alerting_state.get("datastores", {}).get(ds_id, {})
+
         # Prefer the locally-persisted rescale history (merged by the alerting
         # daemon on every poll). Upstream API only serves ~30 days; local state
         # grows beyond that from the moment the daemon starts recording.
-        local_history = (
-            alerting_state.get("datastores", {}).get(ds_id, {}).get("rescale_history")
-            or []
-        )
+        local_history = local_ds_state.get("rescale_history") or []
         if local_history:
             rescale_log = _filter_rescale_history(local_history, rescale_cutoff)
             rescale_history_source = "local"
@@ -643,6 +642,8 @@ def get_datastores():
         enriched.append({
             "id": ds_id,
             "name": detail.get("name", "Unknown"),
+            "source_type": local_ds_state.get("source_type") or "remote_backups",
+            "source_id": local_ds_state.get("source_id") or "default",
             "size_gb": detail.get("size_gb", 0),
             "created_at": detail.get("created_at", ""),
             "health": health,

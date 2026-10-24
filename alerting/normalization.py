@@ -298,6 +298,8 @@ def default_datastore_state(name="unknown"):
     """Return default persistent state for one datastore."""
     return {
         "name": name,
+        "source_type": "remote_backups",
+        "source_id": "default",
         "last_inventory_at": None,
         "inventory_summary": empty_inventory_summary(),
         "schedule_summary": {
@@ -737,6 +739,12 @@ def migrate_state(raw_state):
 
         migrated_ds_state = default_datastore_state(ds_name)
         if isinstance(raw_ds_state, dict):
+            raw_source_type = raw_ds_state.get("source_type")
+            if isinstance(raw_source_type, str) and raw_source_type:
+                migrated_ds_state["source_type"] = raw_source_type
+            raw_source_id = raw_ds_state.get("source_id")
+            if isinstance(raw_source_id, str) and raw_source_id:
+                migrated_ds_state["source_id"] = raw_source_id
             migrated_ds_state["last_inventory_at"] = raw_ds_state.get("last_inventory_at")
             migrated_ds_state["inventory_summary"] = migrate_inventory_summary(
                 raw_ds_state.get("inventory_summary")
