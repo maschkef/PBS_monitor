@@ -18,6 +18,7 @@ from .remote_backups import RemoteBackupsAdapter
 
 _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _VALID_TYPES = frozenset({"remote_backups", "pbs"})
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def validate_source_entries(
@@ -76,19 +77,52 @@ def validate_source_entries(
                     f"sources[{i}].api_base must be a non-empty string "
                     f"for type 'remote_backups'"
                 )
-            normalised.setdefault("api_key_env", "API_KEY")
+            api_key_env = normalised.setdefault("api_key_env", "API_KEY")
+            if not _ENV_VAR_NAME_RE.match(api_key_env):
+                raise ValueError(
+                    f"sources[{i}].api_key_env must be a valid environment "
+                    f"variable name (got {api_key_env!r})"
+                )
         elif stype == "pbs":
-            for field in ("base_url", "node", "token_env"):
-                value = entry.get(field)
-                if not isinstance(value, str) or not value:
-                    raise ValueError(
-                        f"sources[{i}].{field} must be a non-empty string "
-                        f"for type 'pbs'"
-                    )
-            if not entry["base_url"].startswith(("http://", "https://")):
+            base_url = entry.get("base_url")
+            if not isinstance(base_url, str) or not base_url:
+                raise ValueError(
+                    f"sources[{i}].base_url must be a non-empty string "
+                    f"for type 'pbs'"
+                )
+            if not base_url.startswith(("http://", "https://")):
                 raise ValueError(
                     f"sources[{i}].base_url must start with http:// or https://"
                 )
+
+            raw_node = entry.get("node")
+            if raw_node is None:
+                node = "localhost"
+            elif not isinstance(raw_node, str):
+                raise ValueError(
+                    f"sources[{i}].node must be a non-empty string "
+                    f"for type 'pbs'"
+                )
+            else:
+                node = raw_node.strip() or "localhost"
+            if "." in node or "://" in node or "/" in node:
+                raise ValueError(
+                    f"sources[{i}].node must be a short hostname, not an "
+                    f"FQDN or URL (got {node!r})"
+                )
+
+            token_env = entry.get("token_env")
+            if not isinstance(token_env, str) or not token_env:
+                raise ValueError(
+                    f"sources[{i}].token_env must be a non-empty string "
+                    f"for type 'pbs'"
+                )
+            if not _ENV_VAR_NAME_RE.match(token_env):
+                raise ValueError(
+                    f"sources[{i}].token_env must be a valid environment "
+                    f"variable name (got {token_env!r})"
+                )
+
             fp = entry.get("fingerprint")
             if fp is not None and (not isinstance(fp, str) or not fp):
                 raise ValueError(
@@ -120,6 +154,8 @@ def validate_source_entries(
                 )
             normalised.setdefault("verify_tls", True)
             normalised.setdefault("datastores", [])
+            normalised["node"] = node
+            normalised["token_env"] = token_env
 
         validated.append(normalised)
     return validated

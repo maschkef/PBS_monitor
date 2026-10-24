@@ -32,7 +32,8 @@ class Alert:
     # Priority levels: 1=min, 2=low, 3=default, 4=high, 5=urgent
     def __init__(self, datastore_name, title, message, priority=3, tags=None,
                  key=None, scope="datastore", group_rule_key=None,
-                 suppress_until=None, datastore_id=None, namespace=None):
+                 suppress_until=None, datastore_id=None, namespace=None,
+                 source_id=None):
         self.datastore_name = datastore_name
         self.title = title
         self.message = message
@@ -44,6 +45,16 @@ class Alert:
         self.suppress_until = suppress_until
         self.datastore_id = datastore_id
         self.namespace = namespace
+        self.source_id = source_id
+
+    @property
+    def display_title(self):
+        # Human-readable title for push notifications. The raw `title` stays
+        # source-neutral so ALERT_TITLE_TO_TYPE_KEY lookups and per-alert
+        # override config keys keep matching for every source.
+        if self.source_id:
+            return f"{self.title} [{self.source_id}]"
+        return self.title
 
 
 # ── Timezone helpers ──────────────────────────────────────────────────────────

@@ -1310,7 +1310,8 @@
                             </div>
                         </div>
 
-                        <!-- Features -->
+                        <!-- Features (cloud-only) -->
+                        ${ds.source_type !== 'pbs' ? `
                         <div class="section">
                             <div class="section-title">Features</div>
                             <div class="status-row">
@@ -1340,7 +1341,7 @@
                                 <span class="status-label">Factor</span>
                                 <span class="status-value">${ds.replication.factor}x</span>
                             </div>` : ''}
-                        </div>
+                        </div>` : ''}
 
                         <!-- Rescale Log -->
                         ${openRescalePanels.has(ds.id) ? `
@@ -1976,6 +1977,10 @@
 
         // ── Notification Log ───────────────────────────────────────────────────
         let _logEntries = [];
+        let _sources = [];
+        let _sourceEnvStatus = {};
+        let _sourcesDirty = false;
+        let _sourcesReadOnly = false;
 
         async function openLogModal() {
             openModal('logModal');
@@ -2167,6 +2172,9 @@
                         .forEach(el => el.disabled = true);
                 }
 
+                renderSources(c.sources || [], res.source_env_status || {}, res.read_only);
+                _sourcesDirty = false;
+
                 updatePerAlertDefaultLabels();
                 setSettingsMsg('');
             } catch (e) {
@@ -2174,7 +2182,201 @@
             }
         }
 
-        // Tooltip auto-positioning: use position:fixed so tooltips escape overflow:auto scroll containers.
+        // ── Sources editor ─────────────────────────────────────────────────────
+        function _sourceTypeLabel(type) {
+            return type === 'remote_backups' ? 'Cloud' : 'PBS';
+        }
+
+        function renderSources(sources, envStatus, readOnly) {
+            _sources = Array.isArray(sources) ? sources : [];
+            _sourceEnvStatus = envStatus || {};
+            _sourcesReadOnly = !!readOnly;
+            const list = document.getElementById('sourcesList');
+            if (!list) return;
+            list.innerHTML = '';
+            const empty = document.getElementById('sourcesEmpty');
+            if (empty) empty.style.display = _sources.length ? 'none' : 'block';
+            _sources.forEach(source => list.appendChild(createSourceEditor(source, false)));
+            const addCloud = document.getElementById('addCloudSourceBtn');
+            const addPbs = document.getElementById('addPbsSourceBtn');
+            if (addCloud) addCloud.disabled = _sourcesReadOnly;
+            if (addPbs) addPbs.disabled = _sourcesReadOnly;
+        }
+
+        function createSourceEditor(source, isNew) {
+            const tpl = document.getElementById('sourceEditorTemplate');
+            const clone = tpl.content.cloneNode(true);
+            const root = clone.querySelector('.source-editor');
+            const persistedId = (source && source.id) || '';
+            root.dataset.sourceId = persistedId || 'new';
+
+            const idInput = root.querySelector('.src-id');
+            idInput.value = persistedId;
+            if (!isNew) {
+                idInput.readOnly = true;
+                idInput.title = 'Source ID cannot be changed after saving.';
+            }
+
+            const typeSelect = root.querySelector('.src-type');
+            typeSelect.value = (source && source.type) || 'pbs';
+            typeSelect.addEventListener('change', () => {
+                _toggleSourceFields(root);
+                _sourcesDirty = true;
+            });
+            _toggleSourceFields(root);
+
+            if (isNew && typeSelect.value === 'pbs') {
+                root.querySelector('.src-node').value = 'localhost';
+            }
+
+            if (source) {
+                if (source.type === 'remote_backups') {
+                    root.querySelector('.src-api_base').value = source.api_base || '';
+                    root.querySelector('.src-api_key_env').value = source.api_key_env || 'API_KEY';
+                } else if (source.type === 'pbs') {
+                    root.querySelector('.src-label').value = source.label || '';
+                    root.querySelector('.src-base_url').value = source.base_url || '';
+                    root.querySelector('.src-node').value = source.node || '';
+                    root.querySelector('.src-token_env').value = source.token_env || '';
+                    root.querySelector('.src-verify_tls').checked = source.verify_tls !== false;
+                    root.querySelector('.src-fingerprint').value = source.fingerprint || '';
+                    root.querySelector('.src-datastores').value = (source.datastores || []).join(', ');
+                }
+            } else {
+                root.querySelector('.src-api_key_env').value = 'API_KEY';
+                root.querySelector('.src-verify_tls').checked = true;
+            }
+
+            const statusSpan = root.querySelector('.source-env-status');
+            if (persistedId && _sourceEnvStatus[persistedId]) {
+                const s = _sourceEnvStatus[persistedId];
+                statusSpan.textContent = s.is_set ? `✓ ${s.env_name} set` : `✗ ${s.env_name} not set`;
+                statusSpan.classList.add(s.is_set ? 'set' : 'unset');
+            } else if (isNew) {
+                statusSpan.textContent = 'unsaved';
+            } else {
+                statusSpan.textContent = '';
+            }
+
+            const idSpan = root.querySelector('.source-id');
+            idSpan.textContent = persistedId || '(new source)';
+            root.querySelector('.source-type-badge').textContent = _sourceTypeLabel(typeSelect.value);
+
+            const delBtn = root.querySelector('.source-delete-btn');
+            delBtn.addEventListener('click', () => removeSourceCard(delBtn));
+
+            root.querySelectorAll('input, select').forEach(el => {
+                el.addEventListener('input', () => { _sourcesDirty = true; });
+                el.addEventListener('change', () => { _sourcesDirty = true; });
+            });
+
+            if (_sourcesReadOnly) {
+                root.querySelector('.source-fieldset').disabled = true;
+                delBtn.disabled = true;
+            }
+
+            return root;
+        }
+
+        function _toggleSourceFields(root) {
+            const type = root.querySelector('.src-type').value;
+            const isCloud = type === 'remote_backups';
+            root.querySelector('.src-cloud-fields').style.display = isCloud ? '' : 'none';
+            root.querySelector('.src-pbs-fields').style.display = isCloud ? 'none' : '';
+            root.querySelector('.source-type-badge').textContent = _sourceTypeLabel(type);
+        }
+
+        function addSource(type) {
+            if (_sourcesReadOnly) return;
+            const list = document.getElementById('sourcesList');
+            const empty = document.getElementById('sourcesEmpty');
+            if (empty) empty.style.display = 'none';
+            list.appendChild(createSourceEditor({ type }, true));
+            _sourcesDirty = true;
+        }
+
+        function removeSourceCard(btn) {
+            if (_sourcesReadOnly) return;
+            const root = btn.closest('.source-editor');
+            const id = root.querySelector('.src-id').value.trim() || 'this source';
+            if (!confirm(`Remove source '${id}'?`)) return;
+            root.remove();
+            _sourcesDirty = true;
+            const list = document.getElementById('sourcesList');
+            const empty = document.getElementById('sourcesEmpty');
+            if (empty && !list.children.length) empty.style.display = 'block';
+        }
+
+        function collectSources() {
+            const rows = document.querySelectorAll('#sourcesList .source-editor');
+            const out = [];
+            const ids = new Set();
+            let idx = 0;
+            rows.forEach(row => {
+                const id = row.querySelector('.src-id').value.trim();
+                const type = row.querySelector('.src-type').value;
+                if (!id) throw new Error(`Source ${idx + 1}: ID is required.`);
+                if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+                    throw new Error(`Source '${id}': ID may only contain lower-case letters, numbers and dashes.`);
+                }
+                if (ids.has(id)) throw new Error(`Duplicate source ID '${id}'.`);
+                ids.add(id);
+
+                if (type === 'remote_backups') {
+                    const api_base = row.querySelector('.src-api_base').value.trim();
+                    const api_key_env = row.querySelector('.src-api_key_env').value.trim();
+                    if (!api_base) throw new Error(`Source '${id}': API Base URL is required.`);
+                    if (!api_key_env) throw new Error(`Source '${id}': API Key environment variable is required.`);
+                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(api_key_env)) {
+                        throw new Error(`Source '${id}': API Key environment variable must be a valid env-var name.`);
+                    }
+                    _validateSourceUrl(api_base, `Source '${id}' API Base URL`);
+                    out.push({ id, type, api_base, api_key_env });
+                } else if (type === 'pbs') {
+                    const base_url = row.querySelector('.src-base_url').value.trim();
+                    const node = row.querySelector('.src-node').value.trim();
+                    const token_env = row.querySelector('.src-token_env').value.trim();
+                    const verify_tls = row.querySelector('.src-verify_tls').checked;
+                    const fingerprint = row.querySelector('.src-fingerprint').value.trim();
+                    const datastoresRaw = row.querySelector('.src-datastores').value;
+                    const label = row.querySelector('.src-label').value.trim();
+                    if (!base_url) throw new Error(`Source '${id}': Base URL is required.`);
+                    if (!node) throw new Error(`Source '${id}': Node name is required.`);
+                    if (node.includes('.') || node.includes('://') || node.includes('/')) {
+                        throw new Error(`Source '${id}': Node name must be a short hostname, not an FQDN or URL.`);
+                    }
+                    if (!token_env) throw new Error(`Source '${id}': Token environment variable is required.`);
+                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(token_env)) {
+                        throw new Error(`Source '${id}': Token environment variable must be a valid env-var name.`);
+                    }
+                    _validateSourceUrl(base_url, `Source '${id}' Base URL`);
+                    if (!verify_tls && !fingerprint) {
+                        throw new Error(`Source '${id}': TLS verification disabled requires a fingerprint.`);
+                    }
+                    const datastores = datastoresRaw.split(',').map(s => s.trim()).filter(Boolean);
+                    const obj = { id, type, base_url, node, token_env, verify_tls, datastores };
+                    if (label) obj.label = label;
+                    if (fingerprint) obj.fingerprint = fingerprint;
+                    out.push(obj);
+                } else {
+                    throw new Error(`Source '${id}': unsupported type '${type}'.`);
+                }
+                idx++;
+            });
+            return out;
+        }
+
+        function _validateSourceUrl(url, label) {
+            try {
+                const u = new URL(url);
+                if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
+                if (!u.hostname) throw new Error();
+                if (u.username || u.password) throw new Error();
+            } catch (_) {
+                throw new Error(`${label} must be a valid http(s) URL without credentials.`);
+            }
+        }
+
         // On mouseenter, measure the tooltip, pick above/below based on available space, pin with fixed coords.
         document.addEventListener('mouseenter', function(e) {
             const icon = e.target.closest('.tooltip-icon');
@@ -2376,6 +2578,16 @@
 
         async function saveConfig() {
             const tokenFieldValue = document.getElementById('cfg-ntfy_token').value;
+            let sourcesPayload = null;
+            const hadSourcesDirty = _sourcesDirty;
+            if (_sourcesDirty) {
+                try {
+                    sourcesPayload = collectSources();
+                } catch (e) {
+                    setSettingsMsg('Error: ' + e.message, 'error');
+                    return;
+                }
+            }
             const payload = {
                 ntfy_url: document.getElementById('cfg-ntfy_url').value.trim(),
                 ntfy_topic: document.getElementById('cfg-ntfy_topic').value.trim(),
@@ -2450,6 +2662,7 @@
                     default_host: document.getElementById('cfg-sf-default-host').value.trim(),
                 },
                 host_overrides: collectHostOverridesFromTable(),
+                ...(sourcesPayload ? { sources: sourcesPayload } : {}),
             };
 
             try {
@@ -2460,6 +2673,9 @@
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                if (hadSourcesDirty) {
+                    await loadConfig();
+                }
                 setSettingsMsg('✓ Saved.', 'ok');
                 window._alertingConfig = {
                     __loaded: true,

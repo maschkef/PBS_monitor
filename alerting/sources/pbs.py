@@ -77,6 +77,11 @@ class PbsAdapter:
         self._source_id = source_id
         self._base_url = base_url.rstrip("/")
         self._node = node
+        if "." in self._node or "://" in self._node or "/" in self._node:
+            raise ValueError(
+                f"PBS node name must be a short hostname, not an FQDN or URL: "
+                f"{self._node!r}"
+            )
         self._token_env = token_env
         self._label = label
         self._fingerprint = fingerprint
@@ -224,19 +229,25 @@ class PbsAdapter:
         if not isinstance(datastore_config, dict):
             datastore_config = {}
 
-        gc = self._fetch_section_safe(
-            lambda: self._fetch_gc(store, datastore_config),
-            store, "GC status",
-        )
-        if gc:
-            ds_dict["gc"] = gc
+        try:
+            ds_dict["gc"] = self._fetch_gc(store, datastore_config)
+        except (requests.RequestException, SourceConnectionError) as e:
+            print(
+                f"PBS source {self._source_id!r}: failed to fetch GC status "
+                f"for datastore {store!r}: {e}"
+            )
+            ds_dict["gc"] = {"status": "error", "error": str(e)}
 
-        verification = self._fetch_section_safe(
-            lambda: self._fetch_verification(store, datastore_config),
-            store, "verification status",
-        )
-        if verification:
-            ds_dict["verification"] = verification
+        try:
+            ds_dict["verification"] = self._fetch_verification(
+                store, datastore_config,
+            )
+        except (requests.RequestException, SourceConnectionError) as e:
+            print(
+                f"PBS source {self._source_id!r}: failed to fetch verification "
+                f"status for datastore {store!r}: {e}"
+            )
+            ds_dict["verification"] = {"status": "error", "error": str(e)}
 
         prune = self._fetch_section_safe(
             lambda: self._fetch_prune(store),

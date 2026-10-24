@@ -17,7 +17,7 @@ import pytest
 
 from alerting import monitor as alert_monitor
 from alerting.notification import NtfyDeliveryError
-from alerting.sources import HealthResult, SourceAdapter
+from alerting.sources import HealthResult, SourceAdapter, SourceConnectionError
 
 
 class FakeAdapter:
@@ -79,7 +79,12 @@ def monitor_env(tmp_path, monkeypatch):
     ntfy_calls: list[dict] = []
 
     def _fake_send_ntfy(config, alert):
-        ntfy_calls.append({"key": alert.key, "title": alert.title})
+        ntfy_calls.append({
+            "key": alert.key,
+            "title": alert.title,
+            "source_id": getattr(alert, "source_id", None),
+            "display_title": getattr(alert, "display_title", alert.title),
+        })
         return True
 
     monkeypatch.setattr(alert_monitor, "send_ntfy", _fake_send_ntfy)
@@ -272,3 +277,147 @@ class TestRunCheckSources:
         assert "platform:Ntfy Delivery Failed" in keys
         # Must NOT be source-prefixed — the ntfy-delivery concern is global.
         assert "platform:cloud-a:Ntfy Delivery Failed" not in keys
+
+
+class _RaisingAdapter(FakeAdapter):
+    """FakeAdapter variant that lets the test choose where to raise.
+
+    ``fetch_error`` is raised from ``fetch_datastores`` on the first call;
+    ``health_error`` is raised from ``check_health``. Both are optional.
+    """
+
+    def __init__(self, source_id: str, *, fetch_error=None, health_error=None):
+        super().__init__(source_id)
+        self._fetch_error = fetch_error
+        self._health_error = health_error
+
+    def check_health(self) -> HealthResult:
+        if self._health_error is not None:
+            raise self._health_error
+        return super().check_health()
+
+    def fetch_datastores(self) -> list[dict]:
+        self.fetch_datastores_calls += 1
+        if self._fetch_error is not None:
+            raise self._fetch_error
+        return []
+
+
+class TestPhase7MultiSourceHardening:
+    def test_source_connection_error_during_fetch_datastores_emits_alert_and_continues(
+        self, monitor_env,
+    ):
+        """TLS/connection failure in one adapter must not stop the next source."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "pbs-a", "type": "pbs",
+             "base_url": "https://pbs-a", "node": "pbs", "token_env": "T"},
+            {"id": "cloud-b", "type": "remote_backups",
+             "api_base": "https://b", "api_key_env": "API_KEY"},
+        ]
+        adapter_a = _RaisingAdapter(
+            "pbs-a",
+            fetch_error=SourceConnectionError("TLS fingerprint mismatch"),
+        )
+        adapter_b = FakeAdapter(
+            "cloud-b",
+            datastores=[{"id": "ds-b", "name": "B", "metrics": {}}],
+        )
+        env["register_adapters"]({"pbs-a": adapter_a, "cloud-b": adapter_b})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        assert adapter_a.fetch_datastores_calls == 1
+        assert adapter_b.fetch_datastores_calls == 1
+        assert "ds-b" in env["state"]["datastores"]
+        assert "platform:pbs-a:Monitoring API Error" in env["state"]["last_alerts"]
+
+    def test_unexpected_exception_in_source_body_isolates_failure(self, monitor_env):
+        """Unexpected (non-whitelisted) exception in one source is contained."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+            {"id": "cloud-b", "type": "remote_backups",
+             "api_base": "https://b", "api_key_env": "API_KEY"},
+        ]
+        # KeyError is not in the inner except tuple → must be caught by the
+        # outer per-source try/except.
+        adapter_a = _RaisingAdapter(
+            "cloud-a",
+            health_error=KeyError("missing-field"),
+        )
+        adapter_b = FakeAdapter(
+            "cloud-b",
+            datastores=[{"id": "ds-b", "name": "B", "metrics": {}}],
+        )
+        env["register_adapters"]({"cloud-a": adapter_a, "cloud-b": adapter_b})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        assert adapter_b.fetch_datastores_calls == 1
+        assert "ds-b" in env["state"]["datastores"]
+        assert "platform:cloud-a:Monitoring API Error" in env["state"]["last_alerts"]
+
+    def test_platform_alert_carries_source_id_and_display_title_shows_suffix(
+        self, monitor_env,
+    ):
+        """A platform alert from a non-default source gets a labelled ntfy title.
+
+        Raw ``alert.title`` must stay generic ("API Unhealthy") so the
+        ``ALERT_TITLE_TO_TYPE_KEY`` lookup keeps matching for all sources.
+        """
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "lab-pbs", "type": "pbs",
+             "base_url": "https://pbs", "node": "pbs", "token_env": "T"},
+        ]
+        adapter = FakeAdapter(
+            "lab-pbs",
+            health=HealthResult(status="degraded", message="partial outage"),
+        )
+        env["register_adapters"]({"lab-pbs": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        unhealthy_calls = [c for c in env["ntfy_calls"]
+                           if c["key"] == "platform:lab-pbs:API Unhealthy"]
+        assert len(unhealthy_calls) == 1
+        call = unhealthy_calls[0]
+        assert call["title"] == "API Unhealthy"
+        assert call["source_id"] == "lab-pbs"
+        assert call["display_title"] == "API Unhealthy [lab-pbs]"
+
+    def test_per_alert_override_still_applies_for_source_tagged_alert(
+        self, monitor_env,
+    ):
+        """A per-alert ``ignore`` override must silence source-tagged alerts.
+
+        Proves that ``alert.title`` stays source-neutral so the type-key
+        lookup in ``_resolve_alert_priority`` keeps matching when a non-
+        default source emits one of the standard platform alerts.
+        """
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "pbs-1", "type": "pbs",
+             "base_url": "https://pbs", "node": "pbs", "token_env": "T"},
+        ]
+        env["config"]["notification_priorities"] = {
+            "warning": 4,
+            "critical": 5,
+            "per_alert": {"api_unhealthy": "ignore"},
+        }
+        adapter = FakeAdapter(
+            "pbs-1",
+            health=HealthResult(status="degraded", message="partial outage"),
+        )
+        env["register_adapters"]({"pbs-1": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        unhealthy_calls = [c for c in env["ntfy_calls"]
+                           if c["key"] == "platform:pbs-1:API Unhealthy"]
+        assert unhealthy_calls == []
+        # Also no last_alerts cooldown entry — the alert is suppressed before
+        # should_alert() is reached.
+        assert "platform:pbs-1:API Unhealthy" not in env["state"]["last_alerts"]

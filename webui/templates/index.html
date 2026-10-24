@@ -1745,6 +1745,79 @@
             color: var(--text-dim);
             font-size: 0.82rem;
         }
+
+        /* ── Source editor in Settings ─────────────────────────────────────────── */
+        .source-editor {
+            border: 1px solid var(--border);
+            border-radius: 0.45rem;
+            padding: 0.85rem 1rem;
+            margin-bottom: 0.9rem;
+            background: var(--surface1);
+        }
+        .source-editor-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.65rem;
+        }
+        .source-editor-header .source-id {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        .source-editor-header .source-type-badge {
+            font-size: 0.72rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 3px;
+            background: var(--surface2);
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .source-editor-header .source-env-status {
+            margin-left: auto;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+        .source-editor-header .source-env-status.set {
+            color: var(--green,#98c379);
+        }
+        .source-editor-header .source-env-status.unset {
+            color: var(--yellow,#e5c07b);
+        }
+        .source-editor fieldset:disabled .source-editor-body,
+        .source-editor fieldset:disabled .source-editor-header {
+            opacity: 0.7;
+        }
+        .source-editor-body {
+            display: grid;
+            gap: 0.65rem;
+        }
+        .source-editor-body .form-group {
+            margin-bottom: 0;
+        }
+        .source-editor-body .form-group label {
+            font-size: 0.82rem;
+        }
+        .source-editor-body input[type="text"],
+        .source-editor-body input[type="password"],
+        .source-editor-body select {
+            font-size: 0.84rem;
+        }
+        #sourcesList:empty + #sourcesEmpty {
+            display: block;
+        }
+        #sourcesEmpty {
+            display: none;
+            padding: 1rem;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            border: 1px dashed var(--border);
+            border-radius: 0.45rem;
+        }
     </style>
 </head>
 <body>
@@ -1841,6 +1914,7 @@
           <button class="tab-btn" onclick="switchTab('tab-learning',this)">Schedule Learning</button>
           <button class="tab-btn" onclick="switchTab('tab-history',this)">Usage History</button>
           <button class="tab-btn" onclick="switchTab('tab-status-feed',this)">Status Feed</button>
+          <button class="tab-btn" onclick="switchTab('tab-sources',this)">Sources</button>
           <button class="tab-btn" onclick="switchTab('tab-cron',this)">Cron Setup</button>
           <button class="tab-btn" onclick="switchTab('tab-about',this);renderAboutTab()">About</button>
         </div>
@@ -2429,6 +2503,22 @@
           <button class="btn btn-secondary" style="margin-top:0.6rem;font-size:0.82rem" onclick="addHostOverrideRow()">+ Add override</button>
         </div>
 
+        <!-- Sources -->
+        <div id="tab-sources" class="tab-panel">
+          <p class="soft-note" style="margin-top:0;margin-bottom:0.75rem;">
+            Credentials are never stored here. Configure only the name of the environment variable
+            that holds the token (e.g. <code>PBS_HOMELAB_TOKEN</code> or <code>API_KEY</code>).
+            The actual value must be provided in the process environment / <code>.env</code> file.
+            After changing an environment variable, restart the WebUI and the alerting daemon.
+          </p>
+          <div id="sourcesList"></div>
+          <div id="sourcesEmpty">No sources configured. Add a cloud or PBS source to get started.</div>
+          <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.9rem;">
+            <button class="btn btn-secondary" id="addCloudSourceBtn" style="font-size:0.82rem" onclick="addSource('remote_backups')">+ Add Cloud Source</button>
+            <button class="btn btn-secondary" id="addPbsSourceBtn" style="font-size:0.82rem" onclick="addSource('pbs')">+ Add PBS Source</button>
+          </div>
+        </div>
+
         <!-- Cron Setup -->
         <div id="tab-cron" class="tab-panel">
           <div id="docker-notice" style="display:none;">
@@ -2612,6 +2702,78 @@
             </div>
         </div>
     </div>
+
+    <template id="sourceEditorTemplate">
+      <div class="source-editor" data-source-id="">
+        <fieldset class="source-fieldset">
+          <div class="source-editor-header">
+            <span class="source-type-badge"></span>
+            <span class="source-id"></span>
+            <span class="source-env-status"></span>
+            <button type="button" class="btn btn-secondary source-delete-btn" style="font-size:0.78rem;padding:0.25rem 0.5rem;margin-left:auto;">✕</button>
+          </div>
+          <div class="source-editor-body">
+            <div class="form-group source-id-group">
+              <label>Source ID <span class="tooltip-icon">i<span class="tooltip-text">Lower-case letters, numbers and dashes only. Cannot be changed after saving.</span></span></label>
+              <input type="text" class="src-id" placeholder="home-lab">
+            </div>
+            <div class="form-group">
+              <label>Type</label>
+              <select class="src-type">
+                <option value="remote_backups">Cloud (remote-backups.com)</option>
+                <option value="pbs">Proxmox Backup Server</option>
+              </select>
+            </div>
+
+            <!-- Cloud fields -->
+            <div class="src-cloud-fields">
+              <div class="form-group">
+                <label>API Base URL</label>
+                <input type="text" class="src-api_base" placeholder="https://api.remote-backups.com">
+              </div>
+              <div class="form-group">
+                <label>API Key Env Var <span class="tooltip-icon">i<span class="tooltip-text">Name of the environment variable that contains the Bearer token (default: API_KEY).</span></span></label>
+                <input type="text" class="src-api_key_env" placeholder="API_KEY">
+              </div>
+            </div>
+
+            <!-- PBS fields -->
+            <div class="src-pbs-fields" style="display:none;">
+              <div class="form-group">
+                <label>Display Label <span class="tooltip-icon">i<span class="tooltip-text">Optional human-readable name shown in the source badge.</span></span></label>
+                <input type="text" class="src-label" placeholder="Home PBS">
+              </div>
+              <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" class="src-base_url" placeholder="https://pbs.home.lan:8007">
+              </div>
+              <div class="form-group">
+                <label>Node Name <span class="tooltip-icon">i<span class="tooltip-text">PBS node name must be a short hostname (no dots or slashes). Use "localhost" if the server hostname is uncertain; PBS accepts it for most endpoints.</span></span></label>
+                <input type="text" class="src-node" placeholder="localhost">
+              </div>
+              <div class="form-group">
+                <label>Token Env Var <span class="tooltip-icon">i<span class="tooltip-text">Name of the environment variable holding the PBS API token (USER@REALM!TOKENID:SECRET).</span></span></label>
+                <input type="text" class="src-token_env" placeholder="PBS_HOMELAB_TOKEN">
+              </div>
+              <div class="form-group">
+                <label style="display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                  <input type="checkbox" class="src-verify_tls" checked>
+                  Verify TLS <span class="tooltip-icon">i<span class="tooltip-text">Uncheck only for self-signed certificates and always provide the SHA-256 fingerprint below.</span></span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>TLS Fingerprint <span class="tooltip-icon">i<span class="tooltip-text">Optional SHA-256 fingerprint for self-signed certificates. Leave empty when using a public CA.</span></span></label>
+                <input type="text" class="src-fingerprint" placeholder="ab:cd:...">
+              </div>
+              <div class="form-group">
+                <label>Datastores <span class="tooltip-icon">i<span class="tooltip-text">Comma-separated list of store names to monitor. Leave empty to auto-discover all datastores.</span></span></label>
+                <input type="text" class="src-datastores" placeholder="ssd, hdd">
+              </div>
+            </div>
+          </div>
+        </fieldset>
+      </div>
+    </template>
 
     <script>
         function toggleTheme() {

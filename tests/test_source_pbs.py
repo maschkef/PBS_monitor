@@ -977,7 +977,7 @@ class TestFetchDatastoresIntegratesGcVerifyPrune:
         assert ds["prune"]["keep_last"] == 4
         assert ds["prune"]["schedule"] == "hourly"
 
-    def test_task_endpoint_error_drops_gc_and_verification_only(
+    def test_task_endpoint_error_surfaces_in_gc_and_verification(
         self, monkeypatch, capsys,
     ):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
@@ -994,8 +994,10 @@ class TestFetchDatastoresIntegratesGcVerifyPrune:
             }]),
         })
         [ds] = adapter.fetch_datastores()
-        assert "gc" not in ds
-        assert "verification" not in ds
+        assert ds["gc"]["status"] == "error"
+        assert "tasks endpoint down" in ds["gc"]["error"]
+        assert ds["verification"]["status"] == "error"
+        assert "tasks endpoint down" in ds["verification"]["error"]
         assert ds["prune"]["keep_last"] == 4
         captured = capsys.readouterr()
         assert "GC status" in captured.out
@@ -1024,3 +1026,21 @@ class TestFingerprintAdapter:
     def test_rejects_non_hex(self):
         with pytest.raises(ValueError, match="64-character"):
             _FingerprintAdapter("g" * 64)
+
+
+class TestNodeValidation:
+    @pytest.mark.parametrize("bad_node", [
+        "pbs.fmaschke.de",
+        "https://pbs",
+        "pbs/node",
+    ])
+    def test_rejects_fqdn_or_url_node(self, monkeypatch, bad_node):
+        monkeypatch.setenv("PBS_TOKEN", "tok")
+        with pytest.raises(ValueError, match="short hostname"):
+            PbsAdapter(
+                source_id="bad",
+                base_url="https://pbs.example.com:8007",
+                node=bad_node,
+                token_env="PBS_TOKEN",
+            )
+

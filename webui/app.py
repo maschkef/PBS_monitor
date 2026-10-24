@@ -25,9 +25,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from alerting import monitor as alert_monitor
 from alerting import status_feed as _status_feed
+from alerting.sources import (
+    PbsAdapter,
+    RemoteBackupsAdapter,
+    SourceConnectionError,
+    build_source,
+)
 from webui import alerting_ui as _alerting_ui
 from webui import normalizers as _normalizers
 from webui import validators as _validators
+from webui.normalizers import normalize_backup_snapshot
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -45,8 +52,6 @@ limiter = Limiter(
 def ratelimit_handler(e):
     return jsonify({"error": "Rate limit exceeded. Please slow down."}), 429
 
-API_BASE = "https://api.remote-backups.com"
-API_KEY = os.environ.get("API_KEY", "")
 # Support a configurable data directory so Docker containers can mount a
 # persistent volume separate from the application code.
 _alerting_data_env = os.environ.get("ALERTING_DATA_DIR", "").strip()
@@ -109,6 +114,23 @@ _validate_group_rule_payload = _validators._validate_group_rule_payload
 def _redact_config(cfg: dict) -> dict:
     """Return a copy of cfg safe for browser consumption (secrets replaced with sentinel)."""
     return _validators._redact_config(cfg, ntfy_token_override=NTFY_TOKEN)
+
+
+def _source_env_status(cfg: dict) -> dict:
+    """Return non-secret credential presence info for each configured source."""
+    status = {}
+    for entry in cfg.get("sources") or []:
+        env_name = None
+        if entry.get("type") == "remote_backups":
+            env_name = entry.get("api_key_env", "API_KEY")
+        elif entry.get("type") == "pbs":
+            env_name = entry.get("token_env")
+        if env_name:
+            status[entry.get("id", "")] = {
+                "env_name": env_name,
+                "is_set": bool(os.environ.get(env_name, "")),
+            }
+    return status
 
 
 def _validate_config_payload(payload: dict) -> None:
@@ -228,10 +250,10 @@ def load_visual_group_rules() -> tuple:
     return _alerting_ui.load_visual_group_rules()
 
 
-def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, rules_source, *, fetch_inventory=True):
+def build_visual_alerting(detail, alerting_config, alerting_state, group_rules, rules_source, *, adapter=None, fetch_inventory=True):
     return _alerting_ui.build_visual_alerting(
         detail, alerting_config, alerting_state, group_rules, rules_source,
-        ALERTING_STATE_PATH, fetch_inventory=fetch_inventory,
+        ALERTING_STATE_PATH, adapter=adapter, fetch_inventory=fetch_inventory,
     )
 
 
@@ -349,19 +371,138 @@ def _load_alerting_state_for_write() -> dict:
         return alert_monitor.default_state()
 
 
-def api_get(path, params=None):
-    """Make authenticated GET request to the monitoring API."""
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-    resp = requests.get(f"{API_BASE}{path}", headers=headers, params=params, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+def _build_adapters(alerting_config):
+    """Build SourceAdapter instances keyed by source_id for all configured sources.
+
+    Returns ``(adapters, errors)`` where *adapters* is a dict mapping
+    source_id → adapter and *errors* is a dict of source_id → error message
+    for entries whose construction raised ValueError/RuntimeError.
+    """
+    adapters: dict = {}
+    errors: dict = {}
+    for entry in alerting_config.get("sources") or []:
+        sid = entry.get("id") or "default"
+        try:
+            adapter = build_source(entry)
+        except (ValueError, RuntimeError) as e:
+            errors[sid] = str(e)
+            continue
+        adapters[adapter.source_id] = adapter
+    return adapters, errors
 
 
-def api_get_public(path):
-    """Make unauthenticated GET request to public endpoints."""
-    resp = requests.get(f"{API_BASE}{path}", timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+def _adapter_for_datastore(adapters, datastore_id):
+    """Resolve the SourceAdapter responsible for *datastore_id*.
+
+    PBS datastore ids are prefixed ``pbs:<source_id>:<store>`` (phase 4);
+    everything else is treated as a remote-backups MongoDB ObjectId and
+    routed to the first available RemoteBackupsAdapter.
+    """
+    if isinstance(datastore_id, str) and datastore_id.startswith("pbs:"):
+        parts = datastore_id.split(":", 2)
+        if len(parts) >= 2:
+            return adapters.get(parts[1])
+        return None
+    for adapter in adapters.values():
+        if isinstance(adapter, RemoteBackupsAdapter):
+            return adapter
+    return None
+
+
+def _first_remote_backups_adapter(adapters):
+    """Return the first RemoteBackupsAdapter in *adapters*, or None."""
+    for adapter in adapters.values():
+        if isinstance(adapter, RemoteBackupsAdapter):
+            return adapter
+    return None
+
+
+def _source_meta(alerting_config, source_id):
+    """Look up (source_type, source_id) from the config entry for *source_id*."""
+    for entry in alerting_config.get("sources") or []:
+        if (entry.get("id") or "default") == source_id:
+            return entry.get("type", "remote_backups"), source_id
+    return None, source_id
+
+
+def _load_visual_alerting_config_or_500() -> "tuple[dict | None, tuple | None]":
+    """Load the alerting config and translate validation errors into JSON 500.
+
+    Returns ``(config, None)`` on success or ``(None, (response, status))`` when
+    the ``sources`` list is invalid.
+    """
+    try:
+        return load_visual_alerting_config(), None
+    except ValueError as e:
+        return None, (jsonify({"error": str(e)}), 500)
+
+
+def _normalise_pbs_browser_namespaces(inventory: dict) -> list[dict]:
+    """Translate PBS inventory groups into the frontend browser shape.
+
+    The adapter returns groups with ``current_snapshots`` and an ISO
+    ``last_backup_at``; the dashboard expects ``snapshots``, ``snapshot_count``,
+    ``last_backup_iso`` and size-/file-display helpers.  Existing normalizers
+    from [webui/normalizers.py](webui/normalizers.py) are reused for snapshots.
+    """
+    by_ns: dict = {}
+    for group in inventory.get("groups") or []:
+        ns = group.get("namespace") or ""
+        by_ns.setdefault(ns, []).append(group)
+
+    namespaces = []
+    for ns in sorted(by_ns.keys(), key=lambda v: (v != "", v)):
+        groups_in_ns = by_ns[ns]
+        browser_groups = []
+        for group in groups_in_ns:
+            snapshots = []
+            for raw_snap in group.get("current_snapshots") or []:
+                enriched = {
+                    **raw_snap,
+                    "backup_type": group.get("backup_type"),
+                    "backup_id": group.get("backup_id"),
+                    "files": raw_snap.get("files") or [],
+                }
+                snapshots.append(normalize_backup_snapshot(enriched))
+
+            comments = [s.get("comment") for s in snapshots if s.get("comment")]
+            distinct_comments = []
+            for comment in comments:
+                if comment not in distinct_comments:
+                    distinct_comments.append(comment)
+            latest_comment = distinct_comments[0] if distinct_comments else None
+
+            backup_type = group.get("backup_type")
+            backup_id = str(group.get("backup_id", ""))
+            display_name = group.get("display_name") or latest_comment or f"{backup_type}/{backup_id}"
+            browser_groups.append({
+                "backup_type": backup_type,
+                "backup_id": backup_id,
+                "group_key": f"{backup_type or 'other'}/{backup_id or 'unknown'}",
+                "display_name": display_name,
+                "last_backup": max(
+                    (s["backup_time"] for s in snapshots if s.get("backup_time") is not None),
+                    default=None,
+                ),
+                "last_backup_iso": group.get("last_backup_at"),
+                "backup_count": group.get("backup_count", len(snapshots)),
+                "comment": group.get("comment"),
+                "latest_comment": latest_comment,
+                "distinct_comments": distinct_comments,
+                "snapshot_count": len(snapshots),
+                "snapshots": snapshots,
+            })
+
+        namespaces.append({
+            "ns": ns,
+            "label": ns or "root",
+            "comment": None,
+            "group_count": len(browser_groups),
+            "snapshot_count": sum(g["snapshot_count"] for g in browser_groups),
+            "groups": browser_groups,
+        })
+
+    return namespaces
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -432,22 +573,33 @@ def get_datastores_metrics():
     and replication sync times are current.  Alerting is evaluated against the
     persisted local state rather than a fresh inventory.
     """
-    alerting_config = load_visual_alerting_config()
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
-    try:
-        datastores = api_get("/monitoring/v1/datastores")
-    except requests.RequestException as e:
-        return jsonify({"error": f"API unreachable: {e}"}), 502
+    adapters, _adapter_errors = _build_adapters(alerting_config)
+    if not adapters:
+        return jsonify({"error": "No sources configured."}), 502
+
+    datastores_with_source: list = []
+    last_error: str | None = None
+    for source_id, adapter in adapters.items():
+        try:
+            source_datastores = adapter.fetch_datastores()
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+            last_error = str(e)
+            continue
+        src_type, _ = _source_meta(alerting_config, source_id)
+        for ds in source_datastores:
+            datastores_with_source.append((ds, adapter, source_id, src_type))
+
+    if not datastores_with_source and last_error is not None:
+        return jsonify({"error": f"API unreachable: {last_error}"}), 502
 
     enriched = []
-    for ds in datastores:
-        ds_id = ds["id"]
-
-        try:
-            detail = api_get(f"/monitoring/v1/datastores/{ds_id}")
-        except requests.RequestException:
-            detail = ds
+    for detail, _adapter, src_id, src_type in datastores_with_source:
+        ds_id = detail.get("id", "")
 
         metrics = detail.get("metrics") or {}
         gc = detail.get("gc") or {}
@@ -498,6 +650,8 @@ def get_datastores_metrics():
 
         enriched.append({
             "id": ds_id,
+            "source_type": src_type or "remote_backups",
+            "source_id": src_id,
             "health": health,
             "issues": issues,
             "metrics": {
@@ -551,24 +705,34 @@ def get_datastores():
     if rescale_range not in RESCALE_RANGE_ALLOWED:
         allowed = ", ".join(RESCALE_RANGE_ALLOWED)
         return jsonify({"error": f"Invalid rescale_range. Allowed: {allowed}."}), 400
-    alerting_config = load_visual_alerting_config()
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
     rescale_cutoff = _rescale_range_cutoff(rescale_range)
-    try:
-        datastores = api_get("/monitoring/v1/datastores")
-    except requests.RequestException as e:
-        return jsonify({"error": f"API unreachable: {e}"}), 502
+    adapters, _adapter_errors = _build_adapters(alerting_config)
+    if not adapters:
+        return jsonify({"error": "No sources configured."}), 502
+
+    datastores_with_source: list = []
+    last_error: str | None = None
+    for source_id, adapter in adapters.items():
+        try:
+            source_datastores = adapter.fetch_datastores()
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+            last_error = str(e)
+            continue
+        src_type, _ = _source_meta(alerting_config, source_id)
+        for ds in source_datastores:
+            datastores_with_source.append((ds, adapter, source_id, src_type))
+
+    if not datastores_with_source and last_error is not None:
+        return jsonify({"error": f"API unreachable: {last_error}"}), 502
 
     enriched = []
-    for ds in datastores:
-        ds_id = ds["id"]
-
-        # Fetch detail for prune, replication, immutable info
-        try:
-            detail = api_get(f"/monitoring/v1/datastores/{ds_id}")
-        except requests.RequestException:
-            detail = ds
+    for detail, adapter, src_id, src_type in datastores_with_source:
+        ds_id = detail.get("id", "")
 
         local_ds_state = alerting_state.get("datastores", {}).get(ds_id, {})
 
@@ -581,11 +745,8 @@ def get_datastores():
             rescale_history_source = "local"
         else:
             try:
-                rescale_log = api_get(
-                    f"/monitoring/v1/datastores/{ds_id}/rescale-log",
-                    params={"range": "30d" if rescale_range == "all" else rescale_range},
-                )
-            except requests.RequestException:
+                rescale_log = adapter.fetch_rescale_log(ds_id)
+            except (requests.RequestException, RuntimeError, SourceConnectionError):
                 rescale_log = []
             rescale_history_source = "api"
 
@@ -630,6 +791,7 @@ def get_datastores():
             alerting_state,
             group_rules,
             rules_source,
+            adapter=adapter,
         )
         if visual_alerting["health"] == "critical":
             health = "critical"
@@ -642,8 +804,8 @@ def get_datastores():
         enriched.append({
             "id": ds_id,
             "name": detail.get("name", "Unknown"),
-            "source_type": local_ds_state.get("source_type") or "remote_backups",
-            "source_id": local_ds_state.get("source_id") or "default",
+            "source_type": src_type or local_ds_state.get("source_type") or "remote_backups",
+            "source_id": src_id or local_ds_state.get("source_id") or "default",
             "size_gb": detail.get("size_gb", 0),
             "created_at": detail.get("created_at", ""),
             "health": health,
@@ -1006,7 +1168,11 @@ def webui_info():
 def get_alerting_config():
     """Return the current alerting configuration with secrets redacted."""
     cfg = load_visual_alerting_config()
-    return jsonify({"config": _redact_config(cfg), "read_only": WEBUI_READ_ONLY})
+    return jsonify({
+        "config": _redact_config(cfg),
+        "source_env_status": _source_env_status(cfg),
+        "read_only": WEBUI_READ_ONLY,
+    })
 
 
 @app.route("/api/alerting/config", methods=["POST"])
@@ -1029,6 +1195,16 @@ def save_alerting_config():
     raw_config, err = _load_alerting_config()
     if err:
         return err
+
+    validated_sources = None
+    if "sources" in payload:
+        try:
+            validated_sources = _validators._validate_sources_payload(
+                payload["sources"],
+                legacy_api_base=raw_config.get("api_base") or alert_monitor.DEFAULT_CONFIG.get("api_base"),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
     for key in ("ntfy_url", "ntfy_topic", "heartbeat_url", "heartbeat_fail_url"):
         if key in payload:
@@ -1173,6 +1349,9 @@ def save_alerting_config():
             for entry in payload["host_overrides"]
         ]
 
+    if validated_sources is not None:
+        raw_config["sources"] = validated_sources
+
     _write_json_atomic(ALERTING_CONFIG_PATH, raw_config)
 
     changed_keys = [k for k in payload if k != "ntfy_token"]
@@ -1186,30 +1365,46 @@ def save_alerting_config():
 @limiter.limit("10 per minute")
 def alerting_test_dry_run():
     """Simulate a full alerting run and return what would be sent — without sending."""
-    alerting_config = load_visual_alerting_config()
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
     alerting_state, _ = load_visual_alerting_state()
     group_rules, _ = load_visual_group_rules()
+    adapters, _ = _build_adapters(alerting_config)
+    if not adapters:
+        return jsonify({"error": "No sources configured."}), 502
 
-    try:
-        datastores = api_get("/monitoring/v1/datastores")
-    except requests.RequestException as e:
-        return jsonify({"error": f"API unreachable: {e}"}), 502
+    datastores_with_source: list = []
+    last_error: str | None = None
+    for adapter in adapters.values():
+        try:
+            source_datastores = adapter.fetch_datastores()
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+            last_error = str(e)
+            continue
+        for ds in source_datastores:
+            datastores_with_source.append((ds, adapter))
+
+    if not datastores_with_source and last_error is not None:
+        return jsonify({"error": f"API unreachable: {last_error}"}), 502
+
+    snapshot_cap = max(1, alert_monitor.coerce_int(
+        (alerting_config.get("schedule_learning") or {}).get("snapshot_retention_count")
+    ) or alert_monitor.MAX_CURRENT_SNAPSHOT_DETAILS)
 
     quiet = alert_monitor.is_quiet_hours(alerting_config)
     results = []
-    for ds in datastores:
-        ds_id = ds["id"]
-        try:
-            detail = api_get(f"/monitoring/v1/datastores/{ds_id}")
-        except requests.RequestException:
-            detail = ds
+    for detail, adapter in datastores_with_source:
+        ds_id = detail.get("id", "")
 
         backup_inventory = None
         inventory_error = None
         if detail.get("metrics"):
             try:
-                backup_inventory = alert_monitor.fetch_backup_inventory(alerting_config, ds_id)
-            except (requests.RequestException, RuntimeError) as inv_err:
+                backup_inventory = adapter.fetch_backup_inventory(
+                    ds_id, snapshot_cap=snapshot_cap,
+                )
+            except (requests.RequestException, RuntimeError, SourceConnectionError) as inv_err:
                 inventory_error = str(inv_err)
 
         alerts, backup_status = alert_monitor.check_datastore(
@@ -1410,23 +1605,100 @@ def delete_notification_log_entry():
 @app.route("/api/health")
 @require_auth
 def get_health():
-    """Proxy the platform health check."""
-    try:
-        data = api_get_public("/health")
-        return jsonify(data)
-    except requests.RequestException as e:
-        return jsonify({"status": "error", "message": str(e)}), 502
+    """Aggregate per-source health checks.
+
+    Keeps the pre-phase-8 top-level ``{status, message}`` shape (populated from
+    the first remote_backups source, if any) and adds a ``sources`` list with
+    one entry per configured adapter so the dashboard can render multi-source
+    status without breaking older clients.
+    """
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
+    adapters, _ = _build_adapters(alerting_config)
+
+    sources_health: list = []
+    overall = "ok"
+    first_rb: dict | None = None
+    for source_id, adapter in adapters.items():
+        src_type, _ = _source_meta(alerting_config, source_id)
+        try:
+            health = adapter.check_health()
+        except Exception as e:  # noqa: BLE001 — adapter-level fallback
+            entry = {
+                "source_id": source_id,
+                "source_type": src_type or "remote_backups",
+                "status": "down",
+                "message": str(e),
+            }
+        else:
+            entry = {
+                "source_id": source_id,
+                "source_type": src_type or "remote_backups",
+                "status": health.status,
+                "message": health.message or "",
+            }
+        sources_health.append(entry)
+        if entry["status"] == "down":
+            overall = "down"
+        elif entry["status"] == "degraded" and overall != "down":
+            overall = "degraded"
+        if first_rb is None and isinstance(adapter, RemoteBackupsAdapter):
+            first_rb = entry
+
+    top = first_rb or (sources_health[0] if sources_health else None)
+    if top is None:
+        return jsonify({"status": "unknown", "message": "No sources configured.", "sources": [], "overall": "unknown"})
+    return jsonify({
+        "status": top["status"],
+        "message": top["message"],
+        "sources": sources_health,
+        "overall": overall,
+    })
 
 
 @app.route("/api/datastores/<datastore_id>/backups")
 @require_auth
 def get_datastore_backups(datastore_id):
     """Fetch namespace-aware backup browsing data for a single datastore."""
-    base_path = f"/monitoring/v1/datastores/{datastore_id}/backups"
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
+    adapters, _ = _build_adapters(alerting_config)
+    adapter = _adapter_for_datastore(adapters, datastore_id)
+    if adapter is None:
+        return jsonify({"error": "No matching source for this datastore."}), 404
 
+    if isinstance(adapter, PbsAdapter):
+        snapshot_cap = max(1, alert_monitor.coerce_int(
+            (alerting_config.get("schedule_learning") or {}).get("snapshot_retention_count")
+        ) or alert_monitor.MAX_CURRENT_SNAPSHOT_DETAILS)
+        try:
+            inventory = adapter.fetch_backup_inventory(
+                datastore_id, snapshot_cap=snapshot_cap,
+            )
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+            return jsonify({"error": f"Backup browsing unavailable: {e}"}), 502
+
+        # PBS has no backup-protocol concept, so `protocols` stays empty.
+        namespaces = _normalise_pbs_browser_namespaces(inventory)
+        return jsonify({
+            "datastore_id": datastore_id,
+            "summary": inventory.get("summary") or {
+                "namespace_count": len(namespaces),
+                "group_count": sum(ns.get("group_count", 0) for ns in namespaces),
+                "snapshot_count": sum(ns.get("snapshot_count", 0) for ns in namespaces),
+            },
+            "namespaces": namespaces,
+            "protocols": {},
+        })
+
+    # RemoteBackupsAdapter branch — preserve the pre-phase-8 response shape
+    # (overview + per-namespace + per-protocol detail requests).
+    base_path = f"/monitoring/v1/datastores/{datastore_id}/backups"
     try:
-        overview = api_get(base_path)
-    except requests.RequestException as e:
+        overview = adapter._api_get(base_path)
+    except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
         return jsonify({"error": f"Backup browsing unavailable: {e}"}), 502
 
     namespace_entries = overview.get("namespaces") or [{"ns": "", "comment": None}]
@@ -1439,8 +1711,8 @@ def get_datastore_backups(datastore_id):
     for namespace_meta in namespace_entries:
         namespace_value = namespace_meta.get("ns", "")
         try:
-            namespace_data = api_get(base_path, params={"ns": namespace_value})
-        except requests.RequestException as e:
+            namespace_data = adapter._api_get(base_path, params={"ns": namespace_value})
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
             namespaces.append({
                 "ns": namespace_value,
                 "label": namespace_value or "root",
@@ -1462,8 +1734,8 @@ def get_datastore_backups(datastore_id):
     }
     for protocol_name, protocol_path in protocol_paths.items():
         try:
-            payload = api_get(protocol_path)
-        except requests.RequestException:
+            payload = adapter._api_get(protocol_path)
+        except (requests.RequestException, RuntimeError, SourceConnectionError):
             continue
 
         if protocol_name == "zfs_recv" and should_hide_zfs_recv(payload):
@@ -1747,18 +2019,32 @@ def get_status_summary():
 @app.route("/api/platform-stats")
 @require_auth
 def get_platform_stats():
-    """Fetch public platform statistics."""
-    stats = {}
+    """Fetch public platform statistics.
+
+    These stats come from the remote-backups.com /public/* endpoints and are
+    only meaningful for the Cloud source.  When no remote_backups source is
+    configured, each field is null (dashboard renders empty cards).
+    """
+    alerting_config, error_response = _load_visual_alerting_config_or_500()
+    if error_response is not None:
+        return error_response
+    adapters, _ = _build_adapters(alerting_config)
+    rb_adapter = _first_remote_backups_adapter(adapters)
+
+    stats = {"storage": None, "backups_30d": None, "traffic_30d": None}
+    if rb_adapter is None:
+        return jsonify(stats)
+
     try:
-        stats["storage"] = api_get_public("/public/total-storage")
+        stats["storage"] = rb_adapter.get_public("/public/total-storage")
     except requests.RequestException:
         stats["storage"] = None
     try:
-        stats["backups_30d"] = api_get_public("/public/backups-30-days")
+        stats["backups_30d"] = rb_adapter.get_public("/public/backups-30-days")
     except requests.RequestException:
         stats["backups_30d"] = None
     try:
-        stats["traffic_30d"] = api_get_public("/public/traffic-30-days")
+        stats["traffic_30d"] = rb_adapter.get_public("/public/traffic-30-days")
     except requests.RequestException:
         stats["traffic_30d"] = None
     return jsonify(stats)

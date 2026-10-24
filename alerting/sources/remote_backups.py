@@ -136,3 +136,14 @@ class RemoteBackupsAdapter:
             params={"range": "30d"},
         )
         return entries if isinstance(entries, list) else []
+
+    def get_public(self, path):
+        """Unauthenticated GET against a public Monitoring API endpoint.
+
+        Used by the WebUI platform-stats route for the /public/* endpoints
+        (total-storage, backups-30-days, traffic-30-days). Mirrors the 10s
+        timeout the pre-phase-8 webui helper used.
+        """
+        resp = requests.get(f"{self._api_base}{path}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()

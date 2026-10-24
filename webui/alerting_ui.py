@@ -13,12 +13,27 @@ from pathlib import Path
 import requests
 
 from alerting import monitor as alert_monitor
+from alerting.sources import (
+    SourceAdapter,
+    SourceConnectionError,
+    validate_source_entries,
+)
 
 
 def load_visual_alerting_config(config_path: Path) -> dict:
-    """Load alerting configuration without creating files as a side effect."""
+    """Load alerting configuration without creating files as a side effect.
+
+    Raises ``ValueError`` when the configured ``sources`` list is invalid, so
+    callers can translate it into an HTTP error response instead of silently
+    presenting an empty source list.
+    """
     config = copy.deepcopy(alert_monitor.DEFAULT_CONFIG)
     if not config_path.exists():
+        # Even for the first-run case we want a usable `sources` list so the
+        # WebUI's adapter wiring finds the implicit remote_backups source.
+        config["sources"] = validate_source_entries(
+            None, legacy_api_base=config.get("api_base"),
+        )
         return config
 
     # Auto-migrate missing keys from config.json.example if the user only runs the Web UI
@@ -36,6 +51,9 @@ def load_visual_alerting_config(config_path: Path) -> dict:
         **raw_config.get("schedule_learning", {}),
     }
     merged["ignored_groups"] = alert_monitor.normalize_ignored_groups(raw_config.get("ignored_groups"))
+    merged["sources"] = validate_source_entries(
+        raw_config.get("sources"), legacy_api_base=merged.get("api_base"),
+    )
     return merged
 
 
@@ -151,19 +169,32 @@ def build_visual_alerting(
     rules_source: str,
     state_path: Path,
     *,
+    adapter: SourceAdapter | None = None,
     fetch_inventory: bool = True,
 ) -> dict:
     """Evaluate alerting status for one datastore without sending notifications.
 
     Set *fetch_inventory* to False to skip live backup-inventory API calls and
     rely on persisted alerting state only (used for lightweight auto-refresh).
+
+    When *adapter* is provided and *fetch_inventory* is True, the inventory is
+    fetched via the given SourceAdapter — this is how the multi-source WebUI
+    routes bind each datastore to the right source.  When *adapter* is None,
+    the inventory fetch is skipped (callers that still want the legacy
+    single-source path can call ``alert_monitor.fetch_backup_inventory``
+    themselves).
     """
     backup_inventory = None
     inventory_error = None
-    if fetch_inventory and detail.get("metrics"):
+    if fetch_inventory and adapter is not None and detail.get("metrics"):
+        snapshot_cap = max(1, alert_monitor.coerce_int(
+            (alerting_config.get("schedule_learning") or {}).get("snapshot_retention_count")
+        ) or alert_monitor.MAX_CURRENT_SNAPSHOT_DETAILS)
         try:
-            backup_inventory = alert_monitor.fetch_backup_inventory(alerting_config, detail.get("id", ""))
-        except (requests.RequestException, RuntimeError) as e:
+            backup_inventory = adapter.fetch_backup_inventory(
+                detail.get("id", ""), snapshot_cap=snapshot_cap,
+            )
+        except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
             inventory_error = str(e)
 
     alerts, backup_status = alert_monitor.check_datastore(

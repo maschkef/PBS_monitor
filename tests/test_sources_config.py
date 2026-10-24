@@ -107,7 +107,7 @@ class TestValidateSourceEntries:
         for k, v in entry.items():
             assert result[k] == v
 
-    @pytest.mark.parametrize("missing", ["base_url", "node", "token_env"])
+    @pytest.mark.parametrize("missing", ["base_url", "token_env"])
     def test_pbs_missing_required_field_raises(self, missing):
         entry = {
             "id": "home", "type": "pbs",
@@ -117,6 +117,51 @@ class TestValidateSourceEntries:
         }
         del entry[missing]
         with pytest.raises(ValueError, match=missing):
+            validate_source_entries([entry], legacy_api_base="x")
+
+    def test_pbs_missing_node_defaults_to_localhost(self):
+        entry = {
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "token_env": "PBS_HOMELAB_TOKEN",
+        }
+        [result] = validate_source_entries([entry], legacy_api_base="x")
+        assert result["node"] == "localhost"
+
+    @pytest.mark.parametrize("bad_node", [
+        "pbs.fmaschke.de",
+        "https://pbs.example.com",
+        "pbs/node",
+    ])
+    def test_pbs_invalid_node_raises(self, bad_node):
+        entry = {
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": bad_node,
+            "token_env": "PBS_HOMELAB_TOKEN",
+        }
+        with pytest.raises(ValueError, match="short hostname"):
+            validate_source_entries([entry], legacy_api_base="x")
+
+    @pytest.mark.parametrize("bad_env", ["PBS-TOKEN", "1PBS_TOKEN", "PBS TOKEN"])
+    def test_pbs_invalid_token_env_raises(self, bad_env):
+        entry = {
+            "id": "home", "type": "pbs",
+            "base_url": "https://pbs.home.lan:8007",
+            "node": "localhost",
+            "token_env": bad_env,
+        }
+        with pytest.raises(ValueError, match="valid environment variable"):
+            validate_source_entries([entry], legacy_api_base="x")
+
+    @pytest.mark.parametrize("bad_env", ["API-KEY", "1API_KEY", "API KEY"])
+    def test_remote_backups_invalid_api_key_env_raises(self, bad_env):
+        entry = {
+            "id": "cloud", "type": "remote_backups",
+            "api_base": "https://api.example.com",
+            "api_key_env": bad_env,
+        }
+        with pytest.raises(ValueError, match="valid environment variable"):
             validate_source_entries([entry], legacy_api_base="x")
 
     def test_pbs_base_url_without_scheme_raises(self):

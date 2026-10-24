@@ -22,6 +22,7 @@ import os
 import shutil
 import signal
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,7 +92,11 @@ from alerting.schedule import (
     snapshot_to_local_occurrence,  # noqa: F401 — re-export
     weekday_name,  # noqa: F401 — re-export
 )
-from alerting.sources import build_source, validate_source_entries
+from alerting.sources import (
+    SourceConnectionError,
+    build_source,
+    validate_source_entries,
+)
 from alerting.status_feed import enrich_alert as _enrich_alert_with_status_feed
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -1157,6 +1162,25 @@ def run_check(config, state):
 
     prio_cfg = config.get("notification_priorities") or {}
 
+    def emit_platform_alert(alert):
+        """Resolve priority, honour per-alert ``ignore``, apply cooldown, send.
+
+        Centralises the four platform-level emission sites (API Unhealthy,
+        API Unreachable, Monitoring API Error, and the outer catch-all) so
+        the per-alert override (``_resolve_alert_priority`` returning None)
+        actually suppresses platform alerts — mirroring the behaviour the
+        main datastore-alert loop already has.
+        """
+        resolved = _resolve_alert_priority(alert, prio_cfg)
+        if resolved is None:
+            return
+        alert.priority = resolved
+        if not should_alert(config, state, alert.key):
+            return
+        _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
+        safe_send_ntfy(config, alert)
+        state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
+
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}")
     print(f"PBS Monitor Check — {now}")
@@ -1172,143 +1196,153 @@ def run_check(config, state):
         (config.get("schedule_learning") or {}).get("snapshot_retention_count")
     ) or MAX_CURRENT_SNAPSHOT_DETAILS)
 
-    # Phase 3: iterate over all configured sources. Platform-level alerts
-    # (health, fetch failures) are keyed per source so each source's
-    # cooldown state is tracked independently. Phase 7 refines this with
-    # source-aware alert titles and per-source network diagnostics.
+    # Iterate over all configured sources. Platform-level alerts (health,
+    # fetch failures) are keyed per source so each source's cooldown state
+    # is tracked independently. Phase 7: alerts also carry `source_id` so
+    # push-notification titles name the affected source; `alert.title` stays
+    # source-neutral so ALERT_TITLE_TO_TYPE_KEY lookups keep matching. An
+    # outer try/except isolates unexpected adapter failures: one broken
+    # source can never abort processing of the others.
     for source_cfg in config.get("sources") or []:
-        adapter = build_source(source_cfg)
-        source_id = adapter.source_id
-
-        # Check API health first
-        health = adapter.check_health()
-        if health.status == "ok":
-            print(f"API Health: {health.message or 'ok'}")
-        elif health.status == "degraded":
-            api_status = health.message or "unknown"
-            print(f"API Health: {api_status}")
-            alert = Alert(
-                "platform",
-                "API Unhealthy",
-                f"remote-backups.com API health check returned: {api_status}",
-                priority=4,
-                tags=["warning", "cloud"],
-                key=_platform_alert_key(source_id, "API Unhealthy"),
-            )
-            alert.priority = _resolve_alert_priority(alert, prio_cfg)
-            if should_alert(config, state, alert.key):
-                _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
-                safe_send_ntfy(config, alert)
-                state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
-        else:  # "down"
-            if health.net_issue:
-                print(f"WARNING: {health.net_issue} — local network problem, not the API itself")
-            print(f"API Health: UNREACHABLE ({health.error})")
-            alert = Alert(
-                "platform",
-                "API Unreachable",
-                f"remote-backups.com API is not reachable: {health.error}",
-                priority=5,
-                tags=["rotating_light", "cloud"],
-                key=_platform_alert_key(source_id, "API Unreachable"),
-            )
-            alert.priority = _resolve_alert_priority(alert, prio_cfg)
-            if should_alert(config, state, alert.key):
-                _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
-                safe_send_ntfy(config, alert)
-                state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
-            continue
-
-        # Fetch datastores
+        # Resolve a usable source_id up front so we can still key an alert
+        # when build_source() itself raises.
+        source_id = source_cfg.get("id") or "default"
         try:
-            datastores = adapter.fetch_datastores()
-        except (requests.RequestException, RuntimeError) as e:
-            print(f"Failed to fetch datastores: {e}")
-            alert = Alert(
+            adapter = build_source(source_cfg)
+            source_id = adapter.source_id
+
+            # Check API health first
+            health = adapter.check_health()
+            if health.status == "ok":
+                print(f"API Health [{source_id}]: {health.message or 'ok'}")
+            elif health.status == "degraded":
+                api_status = health.message or "unknown"
+                print(f"API Health [{source_id}]: {api_status}")
+                emit_platform_alert(Alert(
+                    "platform",
+                    "API Unhealthy",
+                    f"Source '{source_id}' health check returned: {api_status}",
+                    priority=4,
+                    tags=["warning", "cloud"],
+                    key=_platform_alert_key(source_id, "API Unhealthy"),
+                    source_id=source_id,
+                ))
+            else:  # "down"
+                if health.net_issue:
+                    print(f"WARNING: {health.net_issue} — local network problem, not the API itself")
+                print(f"API Health [{source_id}]: UNREACHABLE ({health.error})")
+                emit_platform_alert(Alert(
+                    "platform",
+                    "API Unreachable",
+                    f"Source '{source_id}' is not reachable: {health.error}",
+                    priority=5,
+                    tags=["rotating_light", "cloud"],
+                    key=_platform_alert_key(source_id, "API Unreachable"),
+                    source_id=source_id,
+                ))
+                continue
+
+            # Fetch datastores
+            try:
+                datastores = adapter.fetch_datastores()
+            except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+                print(f"[{source_id}] Failed to fetch datastores: {e}")
+                emit_platform_alert(Alert(
+                    "platform",
+                    "Monitoring API Error",
+                    f"Source '{source_id}': failed to fetch datastores: {e}",
+                    priority=4,
+                    tags=["x", "cloud"],
+                    key=_platform_alert_key(source_id, "Monitoring API Error"),
+                    source_id=source_id,
+                ))
+                continue
+
+            print(f"[{source_id}] Datastores found: {len(datastores)}")
+
+            for ds in datastores:
+                name = ds.get("name", ds.get("id", "?"))
+                metrics = ds.get("metrics") or {}
+                backup_inventory = None
+                backup_inventory_error = None
+                if metrics:
+                    try:
+                        backup_inventory = adapter.fetch_backup_inventory(
+                            ds.get("id", ""), snapshot_cap=snapshot_cap,
+                        )
+                    except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+                        backup_inventory_error = str(e)
+
+                alerts, backup_status = check_datastore(
+                    ds,
+                    config,
+                    state,
+                    backup_inventory=backup_inventory,
+                    group_rules=group_rules,
+                    persist_group_rules=True,
+                )
+
+                ds_id = ds.get("id", "")
+                if ds_id and metrics:
+                    try:
+                        new_rescale = adapter.fetch_rescale_log(ds_id)
+                    except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
+                        print(f"    • Rescale log unavailable: {e}")
+                    else:
+                        ds_state_ref = state["datastores"].get(ds_id)
+                        if isinstance(ds_state_ref, dict):
+                            ds_state_ref["rescale_history"] = merge_rescale_entries(
+                                ds_state_ref.get("rescale_history"),
+                                new_rescale,
+                                resolve_rescale_history_max(config),
+                            )
+
+                    ds_state_ref = state["datastores"].get(ds_id)
+                    if isinstance(ds_state_ref, dict):
+                        storage_history = ds_state_ref.setdefault(
+                            "storage_history", default_storage_history(),
+                        )
+                        now_ts = int(datetime.now(UTC).timestamp())
+                        append_storage_sample(storage_history, {
+                            "ts": now_ts,
+                            "used_bytes": metrics.get("used_bytes"),
+                            "available_bytes": metrics.get("available_bytes"),
+                            "used_percent": metrics.get("used_percent"),
+                        }, config)
+                        promote_storage_history(storage_history, config, now_ts=now_ts)
+                        prune_storage_history(storage_history, config, now_ts=now_ts)
+
+                status_str = "OFFLINE" if not metrics else f"{metrics.get('used_percent', '?')}%"
+                gc_status = (ds.get("gc") or {}).get("status", "?")
+                verify_status = (ds.get("verification") or {}).get("status", "?")
+                print(
+                    f"\n  [{name}] Storage: {status_str} | GC: {gc_status} | "
+                    f"Verify: {verify_status} | Backups: {backup_status}"
+                )
+                if backup_inventory_error:
+                    print(f"    • Backup inventory unavailable: {backup_inventory_error}")
+
+                if alerts:
+                    for a in alerts:
+                        print(f"    ⚠ {a.title}: {a.message}")
+                    all_alerts.extend(alerts)
+                else:
+                    print("    ✓ All checks passed")
+        except Exception as e:  # noqa: BLE001 — intentional per-source isolation
+            # Catch-all so one source's unexpected failure cannot abort the
+            # others. `Exception` deliberately excludes KeyboardInterrupt /
+            # SystemExit so they still propagate.
+            print(f"[ERROR] Unexpected error for source '{source_id}': {e}")
+            print(traceback.format_exc())
+            emit_platform_alert(Alert(
                 "platform",
                 "Monitoring API Error",
-                f"Failed to fetch datastores: {e}",
+                f"Source '{source_id}' crashed with unexpected error: {e}",
                 priority=4,
                 tags=["x", "cloud"],
                 key=_platform_alert_key(source_id, "Monitoring API Error"),
-            )
-            alert.priority = _resolve_alert_priority(alert, prio_cfg)
-            if should_alert(config, state, alert.key):
-                _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
-                safe_send_ntfy(config, alert)
-                state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
-            continue
-
-        print(f"Datastores found: {len(datastores)}")
-
-        for ds in datastores:
-            name = ds.get("name", ds.get("id", "?"))
-            metrics = ds.get("metrics") or {}
-            backup_inventory = None
-            backup_inventory_error = None
-            if metrics:
-                try:
-                    backup_inventory = adapter.fetch_backup_inventory(
-                        ds.get("id", ""), snapshot_cap=snapshot_cap,
-                    )
-                except (requests.RequestException, RuntimeError) as e:
-                    backup_inventory_error = str(e)
-
-            alerts, backup_status = check_datastore(
-                ds,
-                config,
-                state,
-                backup_inventory=backup_inventory,
-                group_rules=group_rules,
-                persist_group_rules=True,
-            )
-
-            ds_id = ds.get("id", "")
-            if ds_id and metrics:
-                try:
-                    new_rescale = adapter.fetch_rescale_log(ds_id)
-                except (requests.RequestException, RuntimeError) as e:
-                    print(f"    • Rescale log unavailable: {e}")
-                else:
-                    ds_state_ref = state["datastores"].get(ds_id)
-                    if isinstance(ds_state_ref, dict):
-                        ds_state_ref["rescale_history"] = merge_rescale_entries(
-                            ds_state_ref.get("rescale_history"),
-                            new_rescale,
-                            resolve_rescale_history_max(config),
-                        )
-
-                ds_state_ref = state["datastores"].get(ds_id)
-                if isinstance(ds_state_ref, dict):
-                    storage_history = ds_state_ref.setdefault(
-                        "storage_history", default_storage_history(),
-                    )
-                    now_ts = int(datetime.now(UTC).timestamp())
-                    append_storage_sample(storage_history, {
-                        "ts": now_ts,
-                        "used_bytes": metrics.get("used_bytes"),
-                        "available_bytes": metrics.get("available_bytes"),
-                        "used_percent": metrics.get("used_percent"),
-                    }, config)
-                    promote_storage_history(storage_history, config, now_ts=now_ts)
-                    prune_storage_history(storage_history, config, now_ts=now_ts)
-
-            status_str = "OFFLINE" if not metrics else f"{metrics.get('used_percent', '?')}%"
-            gc_status = (ds.get("gc") or {}).get("status", "?")
-            verify_status = (ds.get("verification") or {}).get("status", "?")
-            print(
-                f"\n  [{name}] Storage: {status_str} | GC: {gc_status} | "
-                f"Verify: {verify_status} | Backups: {backup_status}"
-            )
-            if backup_inventory_error:
-                print(f"    • Backup inventory unavailable: {backup_inventory_error}")
-
-            if alerts:
-                for a in alerts:
-                    print(f"    ⚠ {a.title}: {a.message}")
-                all_alerts.extend(alerts)
-            else:
-                print("    ✓ All checks passed")
+                source_id=source_id,
+            ))
 
     # Auto-clear user acknowledgements that have resolved (alert_key no longer
     # appears in this cycle's alerts) or whose expires_at has passed.

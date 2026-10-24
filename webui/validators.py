@@ -258,6 +258,111 @@ def _validate_config_payload(payload: dict, coerce_int_fn) -> None:
                         raise ValueError(f"notification_priorities.per_alert.{type_key} must be between 1 and 5, 'ignore', or null.")
 
 
+# ── Source configuration validation ───────────────────────────────────────────
+
+def _validate_source_url(url: str, field: str) -> None:
+    """Raise ValueError if *url* is not a valid http(s) endpoint."""
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise ValueError(f"{field} is not a valid URL.") from exc
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"{field} must use http:// or https://.")
+    if not parsed.hostname:
+        raise ValueError(f"{field} must contain a hostname.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field} must not contain credentials.")
+
+
+def _validate_env_var_name(name: str, field: str) -> None:
+    """Raise ValueError if *name* is not a valid POSIX-style env-var name."""
+    if not isinstance(name, str):
+        raise ValueError(f"{field} must be a string.")  # noqa: TRY004
+    if not name:
+        raise ValueError(f"{field} must be a non-empty string.")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(
+            f"{field} must be a valid environment variable name "
+            f"(letters, digits, underscores; may not start with a digit)."
+        )
+
+
+def _validate_sources_payload(sources, *, legacy_api_base: str | None = None) -> list:
+    """Validate and normalise a user-supplied ``sources`` list.
+
+    Uses the shared ``validate_source_entries`` validator for identity/type
+    checks, then applies WebUI-specific rules: strict URL validation, trimming,
+    non-blank env-var names, and an explicit allow-list of persisted fields so
+    that secret values never accidentally reach ``config.json``.
+    """
+    from alerting.sources.registry import validate_source_entries
+
+    validated = validate_source_entries(sources, legacy_api_base=legacy_api_base)
+
+    normalised: list = []
+    for idx, entry in enumerate(validated):
+        stype = entry["type"]
+        sid = entry["id"].strip()
+
+        if stype == "remote_backups":
+            api_base = entry["api_base"].strip()
+            _validate_source_url(api_base, f"sources[{idx}].api_base")
+            api_key_env = entry.get("api_key_env", "API_KEY").strip()
+            _validate_env_var_name(api_key_env, f"sources[{idx}].api_key_env")
+            normalised.append({
+                "id": sid,
+                "type": "remote_backups",
+                "api_base": api_base,
+                "api_key_env": api_key_env,
+            })
+        elif stype == "pbs":
+            base_url = entry["base_url"].strip()
+            _validate_source_url(base_url, f"sources[{idx}].base_url")
+            node = entry["node"].strip() or "localhost"
+            if "." in node or "://" in node or "/" in node:
+                raise ValueError(
+                    f"sources[{idx}].node must be a short hostname, not an "
+                    f"FQDN or URL."
+                )
+            token_env = entry["token_env"].strip()
+            _validate_env_var_name(token_env, f"sources[{idx}].token_env")
+            verify_tls = bool(entry.get("verify_tls", True))
+            fingerprint = entry.get("fingerprint")
+            if fingerprint is not None:
+                fingerprint = fingerprint.strip()
+                if not fingerprint:
+                    fingerprint = None
+            if not verify_tls and not fingerprint:
+                raise ValueError(
+                    f"sources[{idx}]: verify_tls=false requires fingerprint pinning."
+                )
+            datastores = [ds.strip() for ds in entry.get("datastores", []) if ds.strip()]
+            if "datastores" in entry and any(
+                not isinstance(ds, str) or not ds.strip() for ds in entry["datastores"]
+            ):
+                raise ValueError(
+                    f"sources[{idx}].datastores must be a list of non-empty strings."
+                )
+
+            out = {
+                "id": sid,
+                "type": "pbs",
+                "base_url": base_url,
+                "node": node,
+                "token_env": token_env,
+                "verify_tls": verify_tls,
+                "datastores": datastores,
+            }
+            label = entry.get("label")
+            if isinstance(label, str) and label.strip():
+                out["label"] = label.strip()
+            if fingerprint:
+                out["fingerprint"] = fingerprint
+            normalised.append(out)
+
+    return normalised
+
+
 def _validate_group_rule_payload(payload: dict) -> None:
     """Validate a user-supplied group-rule payload.
 

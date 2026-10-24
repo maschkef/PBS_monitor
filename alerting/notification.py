@@ -84,7 +84,7 @@ def send_ntfy(config, alert):
         return False
 
     headers = {
-        "Title": _ntfy_header_safe(f"PBS: {alert.title}"),
+        "Title": _ntfy_header_safe(f"PBS: {alert.display_title}"),
         "Priority": str(alert.priority),
         "Tags": _ntfy_header_safe(",".join(alert.tags) if alert.tags else "backup"),
     }
