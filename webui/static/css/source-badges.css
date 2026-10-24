@@ -1,0 +1,28 @@
+/* Source badges identify the origin of a datastore without changing card layout. */
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid var(--border);
+    border-radius: 0.45rem;
+    cursor: help;
+}
+
+.source-badge svg {
+    display: block;
+    width: 0.95rem;
+    height: 0.95rem;
+}
+
+.source-badge-cloud {
+    color: var(--blue);
+    background: var(--blue-bg);
+}
+
+.source-badge-local {
+    color: var(--cyan);
+    background: rgba(6, 182, 212, 0.1);
+}

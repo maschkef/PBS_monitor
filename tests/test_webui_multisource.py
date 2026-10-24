@@ -130,6 +130,7 @@ class TestDatastoresRoute:
         assert by_id["ds-cloud-1"]["source_id"] == "cloud"
         assert by_id["pbs:home:ssd"]["source_type"] == "pbs"
         assert by_id["pbs:home:ssd"]["source_id"] == "home"
+        assert "X-Source-Errors" not in rv.headers
 
     def test_one_source_failing_others_still_return(self, client_no_auth, monkeypatch, tmp_path):
         _write_config(tmp_path, {
@@ -158,6 +159,7 @@ class TestDatastoresRoute:
         data = rv.get_json()
         assert len(data) == 1
         assert data[0]["id"] == "ds-cloud-1"
+        assert json.loads(rv.headers["X-Source-Errors"]) == {"home": "pbs offline"}
 
     def test_all_sources_failing_returns_502(self, client_no_auth, monkeypatch, tmp_path):
         _write_config(tmp_path, {"api_base": "https://api.example.com", "ntfy_topic": "x"})
@@ -206,6 +208,33 @@ class TestDatastoresMetricsRoute:
         by_id = {d["id"]: d for d in data}
         assert set(by_id) == {"ds-cloud-1", "pbs:home:ssd"}
         assert by_id["pbs:home:ssd"]["source_type"] == "pbs"
+        assert "X-Source-Errors" not in rv.headers
+
+    def test_metrics_marks_partial_source_failure(self, client_no_auth, monkeypatch, tmp_path):
+        _write_config(tmp_path, {
+            "sources": [
+                {"id": "cloud", "type": "remote_backups", "api_base": "https://api.example.com"},
+                {
+                    "id": "home", "type": "pbs",
+                    "base_url": "https://pbs.example.com:8007",
+                    "node": "localhost",
+                    "token_env": "PBS_TEST_TOKEN",
+                },
+            ],
+        })
+        monkeypatch.setenv("API_KEY", "secret")
+        monkeypatch.setenv("PBS_TEST_TOKEN", "tok")
+        _patch_route_dependencies(monkeypatch)
+        monkeypatch.setattr(RemoteBackupsAdapter, "fetch_datastores", lambda self: [_cloud_datastore()])
+        monkeypatch.setattr(
+            PbsAdapter, "fetch_datastores",
+            lambda self: (_ for _ in ()).throw(requests.ConnectionError("pbs offline")),
+        )
+
+        rv = client_no_auth.get("/api/datastores/metrics")
+        assert rv.status_code == 200
+        assert [item["id"] for item in rv.get_json()] == ["ds-cloud-1"]
+        assert json.loads(rv.headers["X-Source-Errors"]) == {"home": "pbs offline"}
 
 
 class TestDatastoreBackupsRoute:

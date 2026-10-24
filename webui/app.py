@@ -425,6 +425,22 @@ def _source_meta(alerting_config, source_id):
     return None, source_id
 
 
+def _datastores_response(datastores, source_errors):
+    """Return datastore JSON plus optional partial-source-failure metadata.
+
+    The list-shaped body remains backwards-compatible.  The header lets the
+    dashboard distinguish a temporarily unavailable source from datastores
+    that were deliberately removed, and retain cached cards only for the
+    former.  ASCII JSON keeps the HTTP header safe for arbitrary error text.
+    """
+    response = jsonify(datastores)
+    if source_errors:
+        response.headers["X-Source-Errors"] = json.dumps(
+            source_errors, ensure_ascii=True, separators=(",", ":"),
+        )
+    return response
+
+
 def _load_visual_alerting_config_or_500() -> "tuple[dict | None, tuple | None]":
     """Load the alerting config and translate validation errors into JSON 500.
 
@@ -578,23 +594,23 @@ def get_datastores_metrics():
         return error_response
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
-    adapters, _adapter_errors = _build_adapters(alerting_config)
+    adapters, source_errors = _build_adapters(alerting_config)
     if not adapters:
         return jsonify({"error": "No sources configured."}), 502
 
     datastores_with_source: list = []
-    last_error: str | None = None
     for source_id, adapter in adapters.items():
         try:
             source_datastores = adapter.fetch_datastores()
         except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
-            last_error = str(e)
+            source_errors[source_id] = str(e)
             continue
         src_type, _ = _source_meta(alerting_config, source_id)
         for ds in source_datastores:
             datastores_with_source.append((ds, adapter, source_id, src_type))
 
-    if not datastores_with_source and last_error is not None:
+    if not datastores_with_source and source_errors:
+        last_error = next(iter(source_errors.values()))
         return jsonify({"error": f"API unreachable: {last_error}"}), 502
 
     enriched = []
@@ -694,7 +710,7 @@ def get_datastores_metrics():
             },
         })
 
-    return jsonify(enriched)
+    return _datastores_response(enriched, source_errors)
 
 
 @app.route("/api/datastores")
@@ -711,23 +727,23 @@ def get_datastores():
     alerting_state, state_source = load_visual_alerting_state()
     group_rules, rules_source = load_visual_group_rules()
     rescale_cutoff = _rescale_range_cutoff(rescale_range)
-    adapters, _adapter_errors = _build_adapters(alerting_config)
+    adapters, source_errors = _build_adapters(alerting_config)
     if not adapters:
         return jsonify({"error": "No sources configured."}), 502
 
     datastores_with_source: list = []
-    last_error: str | None = None
     for source_id, adapter in adapters.items():
         try:
             source_datastores = adapter.fetch_datastores()
         except (requests.RequestException, RuntimeError, SourceConnectionError) as e:
-            last_error = str(e)
+            source_errors[source_id] = str(e)
             continue
         src_type, _ = _source_meta(alerting_config, source_id)
         for ds in source_datastores:
             datastores_with_source.append((ds, adapter, source_id, src_type))
 
-    if not datastores_with_source and last_error is not None:
+    if not datastores_with_source and source_errors:
+        last_error = next(iter(source_errors.values()))
         return jsonify({"error": f"API unreachable: {last_error}"}), 502
 
     enriched = []
@@ -871,7 +887,7 @@ def get_datastores():
             "rescale_history_source": rescale_history_source,
         })
 
-    return jsonify(enriched)
+    return _datastores_response(enriched, source_errors)
 
 
 @app.route("/api/alerting/group-rule", methods=["POST"])

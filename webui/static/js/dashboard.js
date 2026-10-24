@@ -127,11 +127,15 @@
                 text += ` · HTTP ${code}`;
             }
             document.getElementById('refreshErrorMsg').textContent = text;
-            document.getElementById('refreshErrorBanner').style.display = '';
+            const banner = document.getElementById('refreshErrorBanner');
+            banner.title = message;
+            banner.style.display = '';
         }
 
         function hideRefreshErrorBanner() {
-            document.getElementById('refreshErrorBanner').style.display = 'none';
+            const banner = document.getElementById('refreshErrorBanner');
+            banner.style.display = 'none';
+            banner.title = '';
         }
 
         function retryLoadLight() {
@@ -311,14 +315,59 @@
             return formatDate(new Date(timestamp * 1000).toISOString());
         }
 
+        async function fetchJsonWithMeta(url) {
+            const response = await fetch(url);
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || data.message || `HTTP ${response.status}`);
+            }
+            return { data, response };
+        }
+
         function fetchJson(url) {
-            return fetch(url).then(async response => {
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || data.message || `HTTP ${response.status}`);
-                }
-                return data;
-            });
+            return fetchJsonWithMeta(url).then(result => result.data);
+        }
+
+        function sourceErrorsFromResponse(response) {
+            if (!response || !response.headers) return [];
+            const raw = response.headers.get('X-Source-Errors');
+            if (!raw) return [];
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+                return Object.entries(parsed)
+                    .filter(([sourceId]) => sourceId)
+                    .map(([sourceId, error]) => ({
+                        source_id: sourceId,
+                        error: String(error || 'Source unavailable'),
+                    }));
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function mergeDatastoresAfterPartialRefresh(fresh, previous, sourceErrors) {
+            const failedSources = new Set(sourceErrors.map(error => error.source_id));
+            if (!failedSources.size || !Array.isArray(previous) || !previous.length) {
+                return fresh;
+            }
+            const freshIds = new Set(fresh.map(ds => ds.id));
+            const retained = previous.filter(ds =>
+                ds && failedSources.has(ds.source_id) && !freshIds.has(ds.id)
+            );
+            return [...fresh, ...retained];
+        }
+
+        function showSourceErrorBanner(sourceErrors) {
+            const ids = sourceErrors.map(error => error.source_id).join(', ');
+            const noun = sourceErrors.length === 1 ? 'Source' : 'Sources';
+            document.getElementById('refreshErrorMsg').textContent =
+                `⚠ ${noun} unavailable: ${ids} · retaining last known data for affected sources`;
+            const banner = document.getElementById('refreshErrorBanner');
+            banner.title = sourceErrors
+                .map(error => `${error.source_id}: ${error.error}`)
+                .join('\n');
+            banner.style.display = '';
         }
 
         function getCsrfToken() {
@@ -1210,6 +1259,29 @@
             </div>`;
         }
 
+        function renderSourceBadge(ds) {
+            if (!ds || !ds.source_type || !ds.source_id) return '';
+            const sourceId = String(ds.source_id).trim();
+            if (!sourceId) return '';
+
+            const isCloud = ds.source_type === 'remote_backups';
+            const isPbs = ds.source_type === 'pbs';
+            if (!isCloud && !isPbs) return '';
+
+            // PbsAdapter uses the configured source label as the datastore name,
+            // falling back to the PBS store name when no label is configured.
+            const sourceLabel = isCloud
+                ? 'remote-backups.com'
+                : (String(ds.name ?? '').trim() || 'PBS');
+            const tooltip = `${sourceLabel} · Source ID: ${sourceId}`;
+            const badgeClass = isCloud ? 'source-badge-cloud' : 'source-badge-local';
+            const icon = isCloud
+                ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>'
+                : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>';
+
+            return `<span class="source-badge ${badgeClass}" role="img" title="${escHtml(tooltip)}" aria-label="${escHtml(tooltip)}">${icon}</span>`;
+        }
+
         function renderDatastore(ds) {
             const m = ds.metrics;
             const pct = m.used_percent;
@@ -1232,6 +1304,7 @@
                         <div class="ds-title">
                             <span class="health-dot ${ds.health}"></span>
                             ${escHtml(ds.name)}
+                            ${renderSourceBadge(ds)}
                         </div>
                         <div class="ds-id">${escHtml(ds.id)} · ${ds.size_gb} GB · Created ${formatDate(ds.created_at)}</div>
                     </div>
@@ -1733,10 +1806,14 @@
 
             try {
                 const rescaleRange = document.getElementById('rescaleRange').value;
-                const [datastores, stats] = await Promise.all([
-                    fetchJson(`/api/datastores?rescale_range=${rescaleRange}`),
+                const [datastoreResult, stats] = await Promise.all([
+                    fetchJsonWithMeta(`/api/datastores?rescale_range=${rescaleRange}`),
                     fetch('/api/platform-stats').then(r => r.json())
                 ]);
+                const sourceErrors = sourceErrorsFromResponse(datastoreResult.response);
+                const datastores = mergeDatastoresAfterPartialRefresh(
+                    datastoreResult.data, currentDatastores, sourceErrors,
+                );
 
                 currentPlatformStats = stats;
                 renderPlatformStats(stats);
@@ -1744,9 +1821,13 @@
                 currentDatastores = datastores;
                 renderDatastoreGrid();
 
-                saveStateToCache(datastores, stats);
+                saveStateToCache(currentDatastores, stats);
                 hideCachedBanner();
-                hideRefreshErrorBanner();
+                if (sourceErrors.length) {
+                    showSourceErrorBanner(sourceErrors);
+                } else {
+                    hideRefreshErrorBanner();
+                }
 
                 document.getElementById('lastUpdated').textContent =
                     'Updated ' + new Date().toLocaleTimeString('de-DE') + ' (full)';
@@ -1769,7 +1850,9 @@
             const spinner = document.getElementById('lightSpinner');
             if (spinner) spinner.classList.add('active');
             try {
-                const datastores = await fetchJson('/api/datastores/metrics');
+                const datastoreResult = await fetchJsonWithMeta('/api/datastores/metrics');
+                const sourceErrors = sourceErrorsFromResponse(datastoreResult.response);
+                const datastores = datastoreResult.data;
                 if (currentDatastores && currentDatastores.length) {
                     const byId = Object.fromEntries(datastores.map(d => [d.id, d]));
                     currentDatastores = currentDatastores.map(full => {
@@ -1791,7 +1874,11 @@
                 }
                 renderDatastoreGrid();
                 saveStateToCache(currentDatastores, currentPlatformStats);
-                hideRefreshErrorBanner();
+                if (sourceErrors.length) {
+                    showSourceErrorBanner(sourceErrors);
+                } else {
+                    hideRefreshErrorBanner();
+                }
                 document.getElementById('lastUpdated').textContent =
                     'Updated ' + new Date().toLocaleTimeString('de-DE') + ' (light)';
                 refreshOpenUsageHistoryPanels();
