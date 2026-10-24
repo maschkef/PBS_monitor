@@ -44,7 +44,13 @@ class _FakeResp:
 
 class _FakeSession:
     """Collects .get() calls and dispatches to canned responses matched by
-    URL suffix. Response may be a _FakeResp, or an Exception to raise."""
+    URL suffix. Response may be a _FakeResp, or an Exception to raise.
+
+    For endpoints that share a URL but differ only in query params (notably
+    `/nodes/<node>/tasks` with varying `typefilter`), pass a dict value with
+    a `"params"` sub-dict: the entry matches when every listed param equals
+    the request's. The special key `"_default"` is used as a fallback.
+    """
 
     def __init__(self, responses: dict):
         self._responses = responses
@@ -58,10 +64,27 @@ class _FakeSession:
             "timeout": timeout,
         })
         for suffix, resp in self._responses.items():
-            if url.endswith(suffix):
-                if isinstance(resp, Exception):
-                    raise resp
-                return resp
+            if not url.endswith(suffix):
+                continue
+            if isinstance(resp, dict) and "_variants" in resp:
+                variants = resp["_variants"]
+                for variant in variants:
+                    match_params = variant.get("params") or {}
+                    request_params = params or {}
+                    if all(
+                        request_params.get(k) == v
+                        for k, v in match_params.items()
+                    ):
+                        inner = variant["response"]
+                        if isinstance(inner, Exception):
+                            raise inner
+                        return inner
+                raise AssertionError(
+                    f"no variant matched params {params!r} for {url}"
+                )
+            if isinstance(resp, Exception):
+                raise resp
+            return resp
         raise AssertionError(f"unexpected URL in test: {url}")
 
 
@@ -75,6 +98,21 @@ def _make_adapter(monkeypatch, token="tok", **kwargs) -> PbsAdapter:
     }
     defaults.update(kwargs)
     return PbsAdapter(**defaults)
+
+
+def _phase6_empty_defaults(*stores: str) -> dict:
+    """Empty-response mocks for the GC/Verify/Prune endpoints introduced in
+    Phase 6. Lets `TestFetchDatastores` cases focus on their own invariants
+    while still letting `_normalise_status` complete without AssertionError.
+    """
+    defaults = {
+        "/tasks": _FakeResp([]),  # matches /nodes/<node>/tasks suffix
+        "/config/verify": _FakeResp([]),
+        "/config/prune": _FakeResp([]),
+    }
+    for store in stores or ("ssd",):
+        defaults[f"/config/datastore/{store}"] = _FakeResp({})
+    return defaults
 
 
 class TestCheckHealth:
@@ -153,6 +191,7 @@ class TestFetchDatastores:
     def test_auto_discovery(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd", "cold"),
             "/api2/json/admin/datastore": _FakeResp([
                 {"store": "ssd", "backend-type": "filesystem"},
                 {"store": "cold", "backend-type": "filesystem"},
@@ -173,6 +212,7 @@ class TestFetchDatastores:
     def test_explicit_list_skips_discovery(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         session = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 200, "used": 100, "avail": 100,
             }),
@@ -188,6 +228,7 @@ class TestFetchDatastores:
     def test_metrics_normalisation(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 200, "used": 100, "avail": 100,
             }),
@@ -205,6 +246,7 @@ class TestFetchDatastores:
             monkeypatch, source_id="home-lab", datastores=["backup01"],
         )
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("backup01"),
             "/admin/datastore/backup01/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
@@ -212,28 +254,41 @@ class TestFetchDatastores:
         [ds] = adapter.fetch_datastores()
         assert ds["id"] == "pbs:home-lab:backup01"
 
-    def test_omits_optional_fields(self, monkeypatch):
+    def test_omits_optional_fields_when_pbs_has_no_data(self, monkeypatch):
+        """When PBS returns no tasks and no verify/prune jobs for the store,
+        the adapter must not populate gc/verification/prune at all — the
+        monitor's `if gc:` / `if verification:` guards rely on absence to
+        decide whether to run the alert path. autoscaling/rescale_history/
+        immutable_backup/replication are PBS-foreign and always absent."""
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
         })
         [ds] = adapter.fetch_datastores()
         for field in (
-            "gc", "verification", "prune",
             "autoscaling", "rescale_history",
             "immutable_backup", "replication",
         ):
             assert field not in ds, (
                 f"{field!r} must be absent, not present with None/{{}}"
             )
+        # Phase 6: gc/verification are present but reflect "never ran" when
+        # PBS returned no tasks; prune stays absent because /config/prune is
+        # empty for this store.
+        assert ds["gc"]["status"] == "never"
+        assert ds["gc"]["last_run"] is None
+        assert ds["verification"]["status"] == "never"
+        assert "prune" not in ds
 
     def test_label_overrides_name(self, monkeypatch):
         adapter = _make_adapter(
             monkeypatch, label="Home PBS", datastores=["ssd"],
         )
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
@@ -244,6 +299,7 @@ class TestFetchDatastores:
     def test_name_defaults_to_store(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
@@ -254,6 +310,7 @@ class TestFetchDatastores:
     def test_source_type_and_id_set(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
@@ -267,6 +324,7 @@ class TestFetchDatastores:
     ):
         adapter = _make_adapter(monkeypatch, datastores=["ssd", "broken"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd", "broken"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 100, "used": 50, "avail": 50,
             }),
@@ -281,6 +339,7 @@ class TestFetchDatastores:
     def test_size_gb_derived_from_total(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
             "/admin/datastore/ssd/status": _FakeResp({
                 "total": 1024**3 * 10, "used": 1024**3 * 5,
                 "avail": 1024**3 * 5,
@@ -535,6 +594,412 @@ class TestFetchRescaleLog:
     def test_returns_empty_list(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
         assert adapter.fetch_rescale_log("pbs:home-lab:ssd") == []
+
+
+def _ok_gc_task(starttime=1700000000, endtime=1700003600):
+    return {
+        "upid": "UPID:pbs:1234:gc:ssd:1",
+        "worker_id": "ssd",
+        "status": "OK",
+        "starttime": starttime,
+        "endtime": endtime,
+        "type": "garbage_collection",
+    }
+
+
+def _ok_verify_task(starttime=1700050000, endtime=1700060000):
+    return {
+        "upid": "UPID:pbs:5678:verify:ssd:1",
+        "worker_id": "ssd:v-abc",
+        "status": "OK",
+        "starttime": starttime,
+        "endtime": endtime,
+        "type": "verificationjob",
+    }
+
+
+def _tasks_variants(gc_tasks, verify_tasks):
+    """Build a `_variants` entry for /nodes/<node>/tasks that dispatches on
+    the `typefilter` param."""
+    return {
+        "_variants": [
+            {
+                "params": {"typefilter": "garbage_collection"},
+                "response": _FakeResp(gc_tasks),
+            },
+            {
+                "params": {"typefilter": "verificationjob"},
+                "response": _FakeResp(verify_tasks),
+            },
+        ],
+    }
+
+
+class TestFetchGc:
+    def test_last_task_ok(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants(
+                [_ok_gc_task(starttime=1792818581)], [],
+            ),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["status"] == "ok"
+        assert ds["gc"]["last_run"].startswith("2026")  # ISO timestamp
+
+    def test_last_task_error(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        failing = _ok_gc_task()
+        failing["status"] = "connection error: boom"
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([failing], []),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["status"] == "error"
+
+    def test_no_tasks_means_never(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["status"] == "never"
+        assert ds["gc"]["last_run"] is None
+
+    def test_next_scheduled_from_gc_schedule(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({"gc-schedule": "daily"}),
+            "/tasks": _tasks_variants([], []),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["next_scheduled"] is not None
+
+    def test_no_schedule_means_next_none(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["next_scheduled"] is None
+
+    def test_malformed_schedule_falls_back_to_none(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({"gc-schedule": "garbage"}),
+            "/tasks": _tasks_variants([], []),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["next_scheduled"] is None
+
+    def test_running_task_without_endtime_is_ignored(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        running = _ok_gc_task()
+        running["endtime"] = None
+        running["status"] = None
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([running], []),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["status"] == "never"
+
+
+class TestFetchVerification:
+    def test_last_task_ok(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([], [_ok_verify_task()]),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["verification"]["status"] == "ok"
+
+    def test_last_task_error(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        failing = _ok_verify_task()
+        failing["status"] = "integrity failure"
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([], [failing]),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["verification"]["status"] == "error"
+
+    def test_verify_new_from_datastore_config(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({"verify-new": True}),
+            "/tasks": _tasks_variants([], []),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["verification"]["verify_new"] is True
+
+    def test_schedule_from_config_verify_filtered_by_store(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([], []),
+            "/config/verify": _FakeResp([
+                {
+                    "id": "v-other", "store": "cold", "ns": "",
+                    "schedule": "weekly", "outdated-after": 7,
+                },
+                {
+                    "id": "v-mine", "store": "ssd", "ns": "",
+                    "schedule": "daily", "outdated-after": 30,
+                },
+            ]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["verification"]["outdated_after_days"] == 30
+        assert ds["verification"]["next_scheduled"] is not None
+
+    def test_outdated_after_missing_is_none(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": _tasks_variants([], []),
+            "/config/verify": _FakeResp([
+                {"id": "v", "store": "ssd", "ns": "", "schedule": "daily"},
+            ]),
+            "/config/prune": _FakeResp([]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["verification"]["outdated_after_days"] is None
+
+
+class TestFetchPrune:
+    def test_single_root_ns_job_flat_shape(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/prune": _FakeResp([{
+                "id": "s-1", "store": "ssd", "ns": "",
+                "schedule": "hourly",
+                "keep-last": 4, "keep-hourly": 6, "keep-daily": 7,
+                "keep-weekly": 6, "keep-monthly": 12, "keep-yearly": 2,
+            }]),
+        })
+        [ds] = adapter.fetch_datastores()
+        prune = ds["prune"]
+        assert prune["schedule"] == "hourly"
+        assert prune["keep_last"] == 4
+        assert prune["keep_hourly"] == 6
+        assert prune["keep_daily"] == 7
+        assert prune["keep_weekly"] == 6
+        assert prune["keep_monthly"] == 12
+        assert prune["keep_yearly"] == 2
+        assert len(prune["jobs"]) == 1
+        assert prune["jobs"][0]["ns"] == ""
+
+    def test_multi_ns_root_wins_as_primary(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/prune": _FakeResp([
+                {
+                    "id": "s-prod", "store": "ssd", "ns": "prod",
+                    "schedule": "weekly", "keep-last": 1,
+                },
+                {
+                    "id": "s-root", "store": "ssd", "ns": "",
+                    "schedule": "daily", "keep-last": 5,
+                },
+            ]),
+        })
+        [ds] = adapter.fetch_datastores()
+        prune = ds["prune"]
+        # Root-ns job wins the flat shape even though it's listed second.
+        assert prune["schedule"] == "daily"
+        assert prune["keep_last"] == 5
+        assert len(prune["jobs"]) == 2
+        assert {j["ns"] for j in prune["jobs"]} == {"", "prod"}
+
+    def test_multi_ns_no_root_first_wins(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/prune": _FakeResp([
+                {
+                    "id": "s-prod", "store": "ssd", "ns": "prod",
+                    "schedule": "weekly", "keep-last": 1,
+                },
+                {
+                    "id": "s-dev", "store": "ssd", "ns": "dev",
+                    "schedule": "monthly", "keep-last": 2,
+                },
+            ]),
+        })
+        [ds] = adapter.fetch_datastores()
+        prune = ds["prune"]
+        assert prune["schedule"] == "weekly"
+        assert prune["keep_last"] == 1
+
+    def test_no_prune_jobs_for_store_omits_field(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/prune": _FakeResp([
+                {
+                    "id": "s-other", "store": "cold", "ns": "",
+                    "schedule": "weekly",
+                },
+            ]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert "prune" not in ds
+
+    def test_missing_keep_fields_default_to_none(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/prune": _FakeResp([{
+                "id": "s-partial", "store": "ssd", "ns": "",
+                "schedule": "daily",
+                "keep-last": 3,  # keep-weekly/monthly/yearly omitted
+            }]),
+        })
+        [ds] = adapter.fetch_datastores()
+        prune = ds["prune"]
+        assert prune["keep_last"] == 3
+        assert prune["keep_weekly"] is None
+        assert prune["keep_monthly"] is None
+        assert prune["keep_yearly"] is None
+
+
+class TestFetchDatastoresIntegratesGcVerifyPrune:
+    def _baseline_session(self):
+        return _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({
+                "gc-schedule": "daily",
+                "verify-new": False,
+            }),
+            "/tasks": _tasks_variants(
+                [_ok_gc_task(starttime=1792818581)],
+                [_ok_verify_task(starttime=1792900000)],
+            ),
+            "/config/verify": _FakeResp([
+                {
+                    "id": "v-ssd", "store": "ssd", "ns": "",
+                    "schedule": "daily", "outdated-after": 30,
+                },
+            ]),
+            "/config/prune": _FakeResp([{
+                "id": "s-ssd", "store": "ssd", "ns": "",
+                "schedule": "hourly",
+                "keep-last": 4, "keep-hourly": 6, "keep-daily": 7,
+                "keep-weekly": 6, "keep-monthly": 12, "keep-yearly": 2,
+            }]),
+        })
+
+    def test_all_three_sections_populated(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = self._baseline_session()
+        [ds] = adapter.fetch_datastores()
+        assert ds["gc"]["status"] == "ok"
+        assert ds["gc"]["next_scheduled"] is not None
+        assert ds["verification"]["status"] == "ok"
+        assert ds["verification"]["outdated_after_days"] == 30
+        assert ds["prune"]["keep_last"] == 4
+        assert ds["prune"]["schedule"] == "hourly"
+
+    def test_task_endpoint_error_drops_gc_and_verification_only(
+        self, monkeypatch, capsys,
+    ):
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/status": _FakeResp(
+                {"total": 100, "used": 50, "avail": 50},
+            ),
+            "/config/datastore/ssd": _FakeResp({}),
+            "/tasks": requests.ConnectionError("tasks endpoint down"),
+            "/config/verify": _FakeResp([]),
+            "/config/prune": _FakeResp([{
+                "id": "s-ssd", "store": "ssd", "ns": "",
+                "schedule": "hourly", "keep-last": 4,
+            }]),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert "gc" not in ds
+        assert "verification" not in ds
+        assert ds["prune"]["keep_last"] == 4
+        captured = capsys.readouterr()
+        assert "GC status" in captured.out
+        assert "verification status" in captured.out
 
 
 class TestFingerprintAdapter:

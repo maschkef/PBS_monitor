@@ -20,12 +20,14 @@ via urllib3's native `assert_fingerprint` parameter.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
 from .base import HealthResult, SourceConnectionError, diagnose_network
+from .pbs_calendar import pbs_calendar_to_next_utc
 
 
 class _FingerprintAdapter(HTTPAdapter):
@@ -202,7 +204,7 @@ class PbsAdapter:
         avail = int(status.get("avail") or 0)
         used_percent = round(used / total * 100, 1) if total > 0 else 0.0
         size_gb = round(total / 1024**3, 2) if total > 0 else 0.0
-        return {
+        ds_dict: dict = {
             "id": f"pbs:{self._source_id}:{store}",
             "name": self._label or store,
             "source_type": "pbs",
@@ -214,6 +216,158 @@ class PbsAdapter:
                 "used_percent": used_percent,
                 "backup_count": 0,
             },
+        }
+
+        datastore_config = self._fetch_section_safe(
+            f"/api2/json/config/datastore/{store}", store, "datastore config",
+        )
+        if not isinstance(datastore_config, dict):
+            datastore_config = {}
+
+        gc = self._fetch_section_safe(
+            lambda: self._fetch_gc(store, datastore_config),
+            store, "GC status",
+        )
+        if gc:
+            ds_dict["gc"] = gc
+
+        verification = self._fetch_section_safe(
+            lambda: self._fetch_verification(store, datastore_config),
+            store, "verification status",
+        )
+        if verification:
+            ds_dict["verification"] = verification
+
+        prune = self._fetch_section_safe(
+            lambda: self._fetch_prune(store),
+            store, "prune config",
+        )
+        if prune:
+            ds_dict["prune"] = prune
+
+        return ds_dict
+
+    def _fetch_section_safe(self, fetcher, store: str, label: str):
+        """Call ``fetcher`` (either a path or a zero-arg callable) and swallow
+        transport errors with a log line. Returns None on failure so callers
+        can decide whether to omit the field.
+        """
+        try:
+            if callable(fetcher):
+                return fetcher()
+            return self._api_get(fetcher)
+        except (requests.RequestException, SourceConnectionError) as e:
+            print(
+                f"PBS source {self._source_id!r}: failed to fetch {label} "
+                f"for datastore {store!r}: {e}"
+            )
+            return None
+
+    def _fetch_last_task(self, store: str, typefilter: str) -> dict | None:
+        """Return the most-recent finished task of a given typefilter.
+
+        PBS filters server-side on both ``store`` and ``typefilter``; passing
+        ``running=false`` excludes in-flight tasks so we never surface a
+        half-complete job as "last run". The response is already ordered
+        newest-first, but we sort defensively by ``starttime`` to tolerate
+        future API changes.
+        """
+        params = {
+            "typefilter": typefilter,
+            "store": store,
+            "running": "false",
+            "limit": 10,
+        }
+        tasks = self._api_get(
+            f"/api2/json/nodes/{self._node}/tasks", params=params,
+        ) or []
+        if not isinstance(tasks, list):
+            return None
+        finished = [
+            t for t in tasks
+            if isinstance(t, dict) and t.get("endtime") is not None
+        ]
+        if not finished:
+            return None
+        finished.sort(
+            key=lambda t: t.get("starttime") or 0, reverse=True,
+        )
+        return finished[0]
+
+    def _fetch_gc(self, store: str, datastore_config: dict) -> dict:
+        last_task = self._fetch_last_task(store, "garbage_collection")
+        status = _map_task_status(last_task)
+        last_run = _task_starttime_iso(last_task)
+        schedule = datastore_config.get("gc-schedule")
+        next_scheduled = _schedule_next_iso(schedule)
+        return {
+            "status": status,
+            "last_run": last_run,
+            "next_scheduled": next_scheduled,
+        }
+
+    def _fetch_verification(
+        self, store: str, datastore_config: dict,
+    ) -> dict:
+        last_task = self._fetch_last_task(store, "verificationjob")
+        status = _map_task_status(last_task)
+        last_run = _task_starttime_iso(last_task)
+
+        verify_jobs = self._fetch_section_safe(
+            "/api2/json/config/verify", store, "verify jobs",
+        ) or []
+        if not isinstance(verify_jobs, list):
+            verify_jobs = []
+        store_jobs = [
+            job for job in verify_jobs
+            if isinstance(job, dict) and job.get("store") == store
+        ]
+        primary = store_jobs[0] if store_jobs else {}
+        next_scheduled = _schedule_next_iso(primary.get("schedule"))
+        outdated_after = primary.get("outdated-after")
+        try:
+            outdated_after_days = (
+                int(outdated_after) if outdated_after is not None else None
+            )
+        except (TypeError, ValueError):
+            outdated_after_days = None
+
+        verify_new_raw = datastore_config.get("verify-new")
+        verify_new = bool(verify_new_raw) if verify_new_raw is not None else False
+
+        return {
+            "status": status,
+            "last_run": last_run,
+            "next_scheduled": next_scheduled,
+            "outdated_after_days": outdated_after_days,
+            "verify_new": verify_new,
+        }
+
+    def _fetch_prune(self, store: str) -> dict:
+        prune_jobs = self._api_get("/api2/json/config/prune")
+        if not isinstance(prune_jobs, list):
+            return {}
+        store_jobs = [
+            job for job in prune_jobs
+            if isinstance(job, dict) and job.get("store") == store
+        ]
+        if not store_jobs:
+            return {}
+
+        normalised = [_normalise_prune_job(job) for job in store_jobs]
+        primary = next(
+            (j for j in normalised if j.get("ns") == ""),
+            normalised[0],
+        )
+        return {
+            "schedule": primary.get("schedule"),
+            "keep_last": primary.get("keep_last"),
+            "keep_hourly": primary.get("keep_hourly"),
+            "keep_daily": primary.get("keep_daily"),
+            "keep_weekly": primary.get("keep_weekly"),
+            "keep_monthly": primary.get("keep_monthly"),
+            "keep_yearly": primary.get("keep_yearly"),
+            "jobs": normalised,
         }
 
     def fetch_backup_inventory(
@@ -297,3 +451,72 @@ def _parse_pbs_datastore_id(datastore_id: str) -> str:
             f"got {datastore_id!r}"
         )
     return parts[2]
+
+
+def _map_task_status(task: dict | None) -> str:
+    """Translate a PBS task record to the internal gc/verify status enum.
+
+    - No task → ``"never"``
+    - ``status == "OK"`` → ``"ok"``
+    - Any other non-empty status → ``"error"``
+    - Missing status on a task that _fetch_last_task returned → ``"ok"``
+      (shouldn't normally happen since we filter by endtime upstream)
+    """
+    if task is None:
+        return "never"
+    status = (task.get("status") or "").strip()
+    if not status:
+        return "ok"
+    if status == "OK":
+        return "ok"
+    return "error"
+
+
+def _task_starttime_iso(task: dict | None) -> str | None:
+    if task is None:
+        return None
+    starttime = task.get("starttime")
+    if starttime is None:
+        return None
+    try:
+        return datetime.fromtimestamp(
+            int(starttime), tz=UTC,
+        ).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _schedule_next_iso(schedule: str | None) -> str | None:
+    if not schedule:
+        return None
+    nxt = pbs_calendar_to_next_utc(schedule)
+    return nxt.isoformat() if nxt is not None else None
+
+
+_PRUNE_KEEP_KEYS = (
+    "keep_last", "keep_hourly", "keep_daily",
+    "keep_weekly", "keep_monthly", "keep_yearly",
+)
+
+
+def _normalise_prune_job(job: dict) -> dict:
+    """Translate a PBS /config/prune entry to the internal underscore shape.
+
+    Missing ``keep-*`` fields map to ``None`` (not ``0``) so downstream code
+    can distinguish "no retention bucket configured" from "retain zero".
+    """
+    translated = _pbs_to_cloud_keys(job)
+    result: dict = {
+        "ns": translated.get("ns", "") or "",
+        "schedule": translated.get("schedule"),
+    }
+    for key in _PRUNE_KEEP_KEYS:
+        raw = translated.get(key)
+        if raw is None:
+            result[key] = None
+            continue
+        try:
+            result[key] = int(raw)
+        except (TypeError, ValueError):
+            result[key] = None
+    return result
