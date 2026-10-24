@@ -79,5 +79,8 @@
   },
 
   "_comment_host_overrides": "Per-datastore (and optionally per-namespace) overrides for the host used when matching alerts against the status feed. Each entry: {datastore_id, namespace, host}. An empty namespace applies to the whole datastore. Resolution picks the most specific match: (datastore_id, namespace) > (datastore_id, '') > status_feed.default_host.",
-  "host_overrides": []
+  "host_overrides": [],
+
+  "_comment_sources": "Optional list of datastore sources (cloud + local PBS). Leave empty [] to use the top-level api_base as a single implicit remote_backups source. Each entry: {id (slug: ^[a-z0-9][a-z0-9-]*$), type ('remote_backups' or 'pbs'), ...}. For type='remote_backups': {api_base, api_key_env (env var holding the Bearer token, default 'API_KEY')}. Entries with type='pbs' are reserved for Phase 4 of the multi-source plan.",
+  "sources": []
 }

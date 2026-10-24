@@ -13,7 +13,7 @@ from .base import (
     SourceError,
     diagnose_network,
 )
-from .registry import build_source
+from .registry import build_source, validate_source_entries
 from .remote_backups import RemoteBackupsAdapter
 
 __all__ = [
@@ -26,4 +26,5 @@ __all__ = [
     "SourceError",
     "build_source",
     "diagnose_network",
+    "validate_source_entries",
 ]

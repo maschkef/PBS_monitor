@@ -19,9 +19,10 @@ from .base import HealthResult, diagnose_network
 class RemoteBackupsAdapter:
     """SourceAdapter implementation for api.remote-backups.com."""
 
-    def __init__(self, source_id: str, api_base: str):
+    def __init__(self, source_id: str, api_base: str, *, api_key_env: str = "API_KEY"):
         self._source_id = source_id
         self._api_base = api_base
+        self._api_key_env = api_key_env
 
     @property
     def source_id(self) -> str:
@@ -34,13 +35,13 @@ class RemoteBackupsAdapter:
     def _api_get(self, path, params=None):
         """Authenticated GET against the Monitoring API.
 
-        Raises RuntimeError when API_KEY is unset (preserving the original
-        contract so callers in alerting/monitor.py that catch RuntimeError
-        continue to work unchanged).
+        Raises RuntimeError when the configured API-key env var is unset
+        (preserving the original contract so callers in alerting/monitor.py
+        that catch RuntimeError continue to work unchanged).
         """
-        api_key = os.environ.get("API_KEY", "")
+        api_key = os.environ.get(self._api_key_env, "")
         if not api_key:
-            raise RuntimeError("API_KEY not set in environment or .env")
+            raise RuntimeError(f"{self._api_key_env} not set in environment or .env")
         headers = {"Authorization": f"Bearer {api_key}"}
         resp = requests.get(
             f"{self._api_base}{path}",
