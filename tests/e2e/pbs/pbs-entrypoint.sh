@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Entrypoint for the pbs-test container.
 #
 # PBS normally runs under systemd. In a container we start the two API
