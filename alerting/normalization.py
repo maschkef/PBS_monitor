@@ -300,6 +300,7 @@ def default_datastore_state(name="unknown"):
         "name": name,
         "source_type": "remote_backups",
         "source_id": "default",
+        "vanished_at": None,
         "last_inventory_at": None,
         "inventory_summary": empty_inventory_summary(),
         "schedule_summary": {

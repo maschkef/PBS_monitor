@@ -161,6 +161,40 @@
                 : '<span class="badge disabled">— disabled</span>';
         }
 
+        function pruneGrid(job) {
+            const cell = (v) => (v === null || v === undefined ? '–' : v);
+            return `
+                <div class="prune-grid">
+                    <div class="prune-item"><div class="num">${cell(job.keep_last)}</div><div class="lbl">Last</div></div>
+                    <div class="prune-item"><div class="num">${cell(job.keep_hourly)}</div><div class="lbl">Hourly</div></div>
+                    <div class="prune-item"><div class="num">${cell(job.keep_daily)}</div><div class="lbl">Daily</div></div>
+                    <div class="prune-item"><div class="num">${cell(job.keep_weekly)}</div><div class="lbl">Weekly</div></div>
+                    <div class="prune-item"><div class="num">${cell(job.keep_monthly)}</div><div class="lbl">Monthly</div></div>
+                    <div class="prune-item"><div class="num">${cell(job.keep_yearly)}</div><div class="lbl">Yearly</div></div>
+                </div>`;
+        }
+
+        function renderPruneSection(prune) {
+            const jobs = Array.isArray(prune.jobs) ? prune.jobs : [];
+            if (jobs.length <= 1) {
+                return `
+                    <div class="section-title">Retention (Prune: ${escHtml(prune.schedule)})</div>
+                    ${pruneGrid(prune)}`;
+            }
+            const rendered = jobs.map((job) => {
+                const nsLabel = job.ns ? escHtml(job.ns) : '(root)';
+                const schedule = escHtml(job.schedule || '–');
+                return `
+                    <div class="prune-job">
+                        <div class="prune-job-head">Namespace <strong>${nsLabel}</strong> · Schedule <strong>${schedule}</strong></div>
+                        ${pruneGrid(job)}
+                    </div>`;
+            }).join('');
+            return `
+                <div class="section-title">Retention (${jobs.length} prune jobs)</div>
+                ${rendered}`;
+        }
+
         function alertPriorityLabel(priority) {
             const labels = {
                 5: 'urgent',
@@ -1372,15 +1406,7 @@
 
                         <!-- Retention -->
                         <div class="section">
-                            <div class="section-title">Retention (Prune: ${escHtml(ds.prune.schedule)})</div>
-                            <div class="prune-grid">
-                                <div class="prune-item"><div class="num">${ds.prune.keep_last}</div><div class="lbl">Last</div></div>
-                                <div class="prune-item"><div class="num">${ds.prune.keep_hourly}</div><div class="lbl">Hourly</div></div>
-                                <div class="prune-item"><div class="num">${ds.prune.keep_daily}</div><div class="lbl">Daily</div></div>
-                                <div class="prune-item"><div class="num">${ds.prune.keep_weekly}</div><div class="lbl">Weekly</div></div>
-                                <div class="prune-item"><div class="num">${ds.prune.keep_monthly}</div><div class="lbl">Monthly</div></div>
-                                <div class="prune-item"><div class="num">${ds.prune.keep_yearly}</div><div class="lbl">Yearly</div></div>
-                            </div>
+                            ${renderPruneSection(ds.prune)}
                         </div>
 
                         <!-- Features (cloud-only) -->
@@ -2194,7 +2220,7 @@
                     'gc_failed','gc_never_ran','gc_overdue',
                     'verification_failed','verification_never_ran','verification_overdue',
                     'storage_warning','storage_critical',
-                    'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone',
+                    'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone','datastore_missing',
                     'replication_stale','replication_never_synced','immutable_disable_pending',
                     'host_offline','api_unreachable','api_unhealthy','monitoring_api_error',
                     'heartbeat_failed','ntfy_delivery_failed',
@@ -2707,7 +2733,7 @@
                             'gc_failed','gc_never_ran','gc_overdue',
                             'verification_failed','verification_never_ran','verification_overdue',
                             'storage_warning','storage_critical',
-                            'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone',
+                            'missed_backup_window','missed_backup_interval','snapshots_unexpectedly_removed','all_backups_gone','datastore_missing',
                             'replication_stale','replication_never_synced','immutable_disable_pending',
                             'host_offline','api_unreachable','api_unhealthy','monitoring_api_error',
                             'heartbeat_failed','ntfy_delivery_failed',
@@ -2861,7 +2887,7 @@
             gc_failed: 4, gc_never_ran: 3, gc_overdue: 3,
             verification_failed: 5, verification_never_ran: 3, verification_overdue: 3,
             storage_warning: 3, storage_critical: 5,
-            all_backups_gone: 5, snapshots_unexpectedly_removed: 4,
+            all_backups_gone: 5, snapshots_unexpectedly_removed: 4, datastore_missing: 5,
             missed_backup_window: 4, missed_backup_interval: 4,
             host_offline: 4, api_unreachable: 5, api_unhealthy: 4, monitoring_api_error: 4,
             ntfy_delivery_failed: 5, heartbeat_failed: 5,

@@ -462,6 +462,23 @@
             text-transform: uppercase;
         }
 
+        .prune-job + .prune-job {
+            margin-top: 0.6rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid rgba(var(--rgb-text),0.08);
+        }
+
+        .prune-job-head {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 0.35rem;
+        }
+
+        .prune-job-head strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+
         /* Rescale log */
         .rescale-timeline {
             max-height: 200px;
@@ -2126,6 +2143,18 @@
               <div class="form-group">
                 <label style="font-size:0.82rem">All Backups Gone <span class="tooltip-icon">i<span class="tooltip-text">The entire backup inventory for a datastore dropped to zero — previously observed snapshots are all missing.</span></span></label>
                 <select id="cfg-prio-alert-all_backups_gone" class="per-alert-prio-select">
+                  <option value="">— tier default</option>
+                  <option value="1">1 &ndash; min (silent)</option>
+                  <option value="2">2 &ndash; low</option>
+                  <option value="3">3 &ndash; default</option>
+                  <option value="4">4 &ndash; high</option>
+                  <option value="5">5 &ndash; urgent (bypasses DND)</option>
+                  <option value="ignore">— ignore (suppress alert)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="font-size:0.82rem">Datastore Missing <span class="tooltip-icon">i<span class="tooltip-text">A datastore known to local state is no longer reported by its source. Fired once at disappearance; cleared automatically when the datastore reappears.</span></span></label>
+                <select id="cfg-prio-alert-datastore_missing" class="per-alert-prio-select">
                   <option value="">— tier default</option>
                   <option value="1">1 &ndash; min (silent)</option>
                   <option value="2">2 &ndash; low</option>

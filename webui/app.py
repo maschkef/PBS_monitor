@@ -861,6 +861,7 @@ def get_datastores():
                 "keep_weekly": prune.get("keep_weekly", 0),
                 "keep_monthly": prune.get("keep_monthly", 0),
                 "keep_yearly": prune.get("keep_yearly", 0),
+                "jobs": prune.get("jobs") or [],
             },
             "autoscaling": {
                 "enabled": autoscaling.get("enabled", False),

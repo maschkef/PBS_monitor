@@ -79,15 +79,16 @@ Evaluates high-level datastore health:
 The master execution cycle run per interval.
 1. Probes the remote-backups API `/health` endpoint.
 2. Fetches datastores via `fetch_datastores`.
-3. Loops through each datastore, pulling inventory and executing `check_datastore`.
-4. Gathers all generated `Alert` objects.
-5. Filters out alerts lower than the minimum priority if `is_quiet_hours` is active.
-6. Filters out recently fired alerts using `should_alert` (cooldown period).
-7. Resolves the final ntfy priority for each alert via `_resolve_alert_priority` (checks per-alert overrides, then tier defaults). Alerts resolved to `None` are skipped (suppressed by `"ignore"`), while the rest are dispatched via `send_ntfy` and appended to the notification log. Catches any `NtfyDeliveryError` and sets an internal `ntfy_delivery_failed` flag.
-8. Handles heartbeat pings with the following logic:
+3. For each configured source, compares the returned datastore ids against `state["datastores"]` filtered by `source_type` + `source_id`. A datastore known to state but absent from the fetch raises a single `Datastore Missing` alert (priority 5, key `<ds_id>:datastore_missing`) and sets `vanished_at` on the state entry so later cycles stay quiet until it reappears. The diff is skipped when the fetch itself failed, so a down source cannot look like a mass deletion.
+4. Loops through each datastore, pulling inventory and executing `check_datastore`. A datastore whose `vanished_at` was set in an earlier cycle has that marker cleared here (recovery).
+5. Gathers all generated `Alert` objects.
+6. Filters out alerts lower than the minimum priority if `is_quiet_hours` is active.
+7. Filters out recently fired alerts using `should_alert` (cooldown period).
+8. Resolves the final ntfy priority for each alert via `_resolve_alert_priority` (checks per-alert overrides, then tier defaults). Alerts resolved to `None` are skipped (suppressed by `"ignore"`), while the rest are dispatched via `send_ntfy` and appended to the notification log. Catches any `NtfyDeliveryError` and sets an internal `ntfy_delivery_failed` flag.
+9. Handles heartbeat pings with the following logic:
    - **Normal path** (`ntfy_delivery_failed = False`): pings `heartbeat_fail_url` when alerts were detected, `heartbeat_url` when none were. If only `heartbeat_url` is configured, no ping is sent when alerts exist — the timeout signals the problem. A failed ping generates an internal urgent alert sent via ntfy.
    - **ntfy delivery failed path** (`ntfy_delivery_failed = True`): pings `heartbeat_fail_url` if configured, so an external monitor receives an active failure signal even when push delivery is broken. `heartbeat_url` is never pinged in this path — doing so would either clear an alarm set by the fail URL, or (when only `heartbeat_url` is set) prevent the timeout from triggering the alert. Logs a `"Ntfy Delivery Failed"` entry to the notification log when any heartbeat URL is configured.
-9. Commits the updated `state.json`.
+10. Commits the updated `state.json`.
 
 ### `main()`
 Parses CLI arguments. If `--daemon <seconds>` is provided with a positive value, that value is used as the loop interval. If `--daemon` is provided without a value or as `--daemon 0`, the loop interval is read from `daemon_interval_seconds` in config and falls back to the built-in default. In daemon mode, `config.json` is reloaded before every check so Web UI changes to thresholds, ignored groups, notification settings, and the daemon interval apply to the next loop. Otherwise, runs `run_check` exactly once.

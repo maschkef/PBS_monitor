@@ -136,6 +136,7 @@ ALERT_TITLE_TO_TYPE_KEY: dict[str, str] = {
     "API Unreachable":                   "api_unreachable",
     "API Unhealthy":                     "api_unhealthy",
     "Monitoring API Error":              "monitoring_api_error",
+    "Datastore Missing":                 "datastore_missing",
     "Ntfy Delivery Failed":              "ntfy_delivery_failed",
     "Heartbeat Failed":                  "heartbeat_failed",
     "Immutable Backup Disable Pending":  "immutable_disable_pending",
@@ -1260,6 +1261,42 @@ def run_check(config, state):
 
             print(f"[{source_id}] Datastores found: {len(datastores)}")
 
+            # Detect datastores known to state but no longer reported by this
+            # source. Fires one alert per vanished datastore and marks the
+            # entry so subsequent cycles stay quiet until the datastore
+            # reappears (handled below in the per-ds loop). The diff is
+            # scoped by source_type + source_id so a datastore belonging to
+            # a different source is never falsely flagged. Skipped during
+            # fetch failures because those `continue` above — a down source
+            # must not look like a mass-deletion.
+            source_type_cfg = source_cfg.get("type") or "remote_backups"
+            current_ids = {ds.get("id") for ds in datastores if ds.get("id")}
+            for ds_id, ds_state in state.get("datastores", {}).items():
+                if ds_state.get("source_id") != source_id:
+                    continue
+                if ds_state.get("source_type") != source_type_cfg:
+                    continue
+                if ds_id in current_ids:
+                    continue
+                if ds_state.get("vanished_at"):
+                    continue
+                observed_at = datetime.now(UTC).isoformat()
+                ds_state["vanished_at"] = observed_at
+                ds_name = ds_state.get("name") or ds_id
+                last_seen = ds_state.get("last_inventory_at") or "never"
+                emit_platform_alert(Alert(
+                    ds_name,
+                    "Datastore Missing",
+                    f"Datastore '{ds_name}' ({ds_id}) is no longer reported by "
+                    f"source '{source_id}'. Last inventory: {last_seen}. State "
+                    f"retained; delete manually if the removal was intentional.",
+                    priority=5,
+                    tags=["rotating_light", "package"],
+                    key=f"{ds_id}:datastore_missing",
+                    datastore_id=ds_id,
+                    source_id=source_id,
+                ))
+
             for ds in datastores:
                 name = ds.get("name", ds.get("id", "?"))
                 metrics = ds.get("metrics") or {}
@@ -1283,6 +1320,11 @@ def run_check(config, state):
                 )
 
                 ds_id = ds.get("id", "")
+                if ds_id:
+                    recovered_state = state["datastores"].get(ds_id)
+                    if isinstance(recovered_state, dict) and recovered_state.get("vanished_at"):
+                        recovered_state["vanished_at"] = None
+                        print(f"[{source_id}] Datastore '{name}' reappeared")
                 if ds_id and metrics:
                     try:
                         new_rescale = adapter.fetch_rescale_log(ds_id)

@@ -388,6 +388,126 @@ class TestPhase7MultiSourceHardening:
         assert call["source_id"] == "lab-pbs"
         assert call["display_title"] == "API Unhealthy [lab-pbs]"
 
+    def test_vanished_datastore_emits_alert_and_marks_state(self, monitor_env):
+        """A datastore in state but missing from fetch → one `Datastore Missing` alert."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        # Seed state with a datastore that the adapter will NOT return.
+        env["state"]["datastores"]["ds-gone"] = {
+            **alert_monitor.default_datastore_state("Gone Store"),
+            "source_type": "remote_backups",
+            "source_id": "cloud-a",
+            "last_inventory_at": "2026-10-20T12:00:00+00:00",
+        }
+        adapter = FakeAdapter("cloud-a", datastores=[])
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "ds-gone:datastore_missing"]
+        assert len(missing_calls) == 1
+        assert missing_calls[0]["title"] == "Datastore Missing"
+        assert missing_calls[0]["source_id"] == "cloud-a"
+        assert env["state"]["datastores"]["ds-gone"]["vanished_at"] is not None
+
+    def test_already_vanished_datastore_does_not_realert(self, monitor_env):
+        """Second cycle with same datastore still missing → no duplicate alert."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        env["state"]["datastores"]["ds-gone"] = {
+            **alert_monitor.default_datastore_state("Gone Store"),
+            "source_id": "cloud-a",
+            "vanished_at": "2026-10-20T12:00:00+00:00",
+        }
+        adapter = FakeAdapter("cloud-a", datastores=[])
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "ds-gone:datastore_missing"]
+        assert missing_calls == []
+
+    def test_vanished_datastore_recovery_clears_marker(self, monitor_env):
+        """A previously vanished datastore that reappears → marker cleared, no alert."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        env["state"]["datastores"]["ds-back"] = {
+            **alert_monitor.default_datastore_state("Back Store"),
+            "source_id": "cloud-a",
+            "vanished_at": "2026-10-20T12:00:00+00:00",
+        }
+        adapter = FakeAdapter(
+            "cloud-a",
+            datastores=[{"id": "ds-back", "name": "Back Store", "metrics": {}}],
+        )
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        assert env["state"]["datastores"]["ds-back"]["vanished_at"] is None
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "ds-back:datastore_missing"]
+        assert missing_calls == []
+
+    def test_vanished_diff_scoped_by_source_id(self, monitor_env):
+        """Datastore belonging to source B is not flagged when source A is checked."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        # Seed a datastore owned by a DIFFERENT source — must stay untouched.
+        env["state"]["datastores"]["ds-other"] = {
+            **alert_monitor.default_datastore_state("Other"),
+            "source_id": "cloud-b",
+        }
+        adapter = FakeAdapter("cloud-a", datastores=[])
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "ds-other:datastore_missing"]
+        assert missing_calls == []
+        assert env["state"]["datastores"]["ds-other"].get("vanished_at") is None
+
+    def test_fetch_failure_does_not_mass_mark_as_vanished(self, monitor_env):
+        """When fetch_datastores raises, we must NOT flag every known ds as missing."""
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        env["state"]["datastores"]["ds-still-there"] = {
+            **alert_monitor.default_datastore_state("Still There"),
+            "source_id": "cloud-a",
+        }
+        adapter = _RaisingAdapter(
+            "cloud-a",
+            fetch_error=SourceConnectionError("API hiccup"),
+        )
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        # Monitoring API Error should have fired, but no Datastore Missing.
+        assert "platform:cloud-a:Monitoring API Error" in env["state"]["last_alerts"]
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "ds-still-there:datastore_missing"]
+        assert missing_calls == []
+        assert env["state"]["datastores"]["ds-still-there"].get("vanished_at") is None
+
     def test_per_alert_override_still_applies_for_source_tagged_alert(
         self, monitor_env,
     ):
