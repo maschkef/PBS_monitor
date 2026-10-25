@@ -6,6 +6,14 @@
 # then restarts the container.
 set -eu
 
+# proxmox-backup-server installs the daemons under the Debian multiarch
+# libdir (e.g. /usr/lib/x86_64-linux-gnu/proxmox-backup/), which is not on
+# PATH by default. Glob to stay architecture-agnostic.
+for d in /usr/lib/*/proxmox-backup; do
+    [ -d "$d" ] && PATH="$d:$PATH"
+done
+export PATH
+
 proxmox-backup-api &
 api_pid=$!
 
