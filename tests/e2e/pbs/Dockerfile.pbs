@@ -1,5 +1,4 @@
-# Local PBS test container for the pbs-smoke-test CI job and the local
-# docker-test/ compose harness.
+# Local PBS test container for the docker-test/ compose harness.
 #
 # Built from debian:bookworm-slim + the official Proxmox Backup Server
 # no-subscription repository. Not shipped to GHCR; this image is a test

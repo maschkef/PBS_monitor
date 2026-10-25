@@ -1,14 +1,11 @@
 # PBS End-to-End Test Fixture
 
 Files in this directory bootstrap a self-contained Proxmox Backup Server
-instance that the `pbs-smoke-test` CI job (see
-[.github/workflows/ci.yml](../../../.github/workflows/ci.yml)) uses on every PR
-to exercise the native PBS source adapter against a real `proxmox-backup-proxy`.
-
-The same fixtures are also used by the maintainer's local pre-release Compose
-harness in `docker-test/` — that harness is intentionally not shipped (local
-scratch area, see [.gitignore](../../../.gitignore)), but it mounts the files
-here via relative paths.
+instance for the maintainer's local pre-release Compose harness in
+`docker-test/`. The harness is intentionally not shipped (local scratch area,
+see [.gitignore](../../../.gitignore)), but it mounts the files here via
+relative paths to exercise the native PBS source adapter against a real
+`proxmox-backup-proxy` before cutting a release.
 
 This is **not a pytest target.** `pytest tests/` skips this directory because it
 contains no `test_*.py` modules. In-process unit coverage for the PBS adapter
