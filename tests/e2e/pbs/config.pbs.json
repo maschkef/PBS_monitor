@@ -1,0 +1,25 @@
+{
+  "_comment": "Template for docker-test with both cloud (remote-backups.com) and a local PBS container as sources. The __PBS_FINGERPRINT__ placeholder is substituted by setup-pbs.sh when it renders this file to config.json. Do not use this file as config.json directly — run setup-pbs.sh first.",
+  "sources": [
+    {
+      "id": "cloud",
+      "type": "remote_backups",
+      "api_base": "https://api.remote-backups.com",
+      "api_key_env": "API_KEY"
+    },
+    {
+      "id": "home",
+      "type": "pbs",
+      "label": "PBS Test Container",
+      "base_url": "https://pbs-test:8007",
+      "node": "localhost",
+      "token_env": "PBS_TEST_TOKEN",
+      "verify_tls": false,
+      "fingerprint": "__PBS_FINGERPRINT__",
+      "datastores": ["test-store"]
+    }
+  ],
+  "ntfy_topic": "",
+  "ntfy_server": "https://ntfy.sh",
+  "daemon_interval_seconds": 1800
+}

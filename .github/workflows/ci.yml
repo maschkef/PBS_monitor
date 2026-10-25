@@ -217,3 +217,100 @@ jobs:
       - name: Stop and remove container
         if: always()
         run: docker rm -f pbs-webui-smoke || true
+
+  pbs-smoke-test:
+    name: PBS End-to-End Smoke Test
+    runs-on: ubuntu-latest
+    needs: build-docker
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build alerting image
+        run: docker build -f docker/alerting/Dockerfile -t pbs-alerting-test .
+
+      - name: Build pbs-test image
+        run: docker build -f tests/e2e/pbs/Dockerfile.pbs -t pbs-test-server:ci .
+
+      - name: Create isolated docker network
+        run: docker network create pbs-smoke-net
+
+      - name: Start pbs-test container
+        run: |
+          docker run -d \
+            --name pbs-test-server \
+            --network pbs-smoke-net \
+            --cap-add SYS_ADMIN \
+            --security-opt apparmor=unconfined \
+            --tmpfs /var/lib/pbs-test-store \
+            -p 8007:8007 \
+            pbs-test-server:ci
+
+      - name: Wait for PBS API to come up
+        run: |
+          for i in $(seq 1 90); do
+            if docker exec pbs-test-server curl -fsSk \
+                 https://localhost:8007/api2/json/version >/dev/null 2>&1; then
+              echo "PBS API reachable after ${i}s"
+              break
+            fi
+            sleep 1
+            if [ "$i" = "90" ]; then
+              echo "PBS API did not become ready within 90s"
+              docker logs --tail=200 pbs-test-server
+              exit 1
+            fi
+          done
+
+      - name: Run setup-pbs.sh (creates datastore, token, renders config.json)
+        run: |
+          mkdir -p /tmp/pbs-smoke-data
+          PBS_SMOKE_OUT=/tmp/pbs-smoke-data bash tests/e2e/pbs/setup-pbs.sh
+
+      - name: Verify setup artefacts exist
+        run: |
+          test -s /tmp/pbs-smoke-data/.pbs-token \
+            || { echo ".pbs-token missing or empty"; exit 1; }
+          test -s /tmp/pbs-smoke-data/config.json \
+            || { echo "config.json missing or empty"; exit 1; }
+          grep -q '"type": "pbs"' /tmp/pbs-smoke-data/config.json \
+            || { echo "config.json missing pbs source"; exit 1; }
+
+      - name: Run alerting monitor one-shot against PBS
+        run: |
+          set +e
+          docker run --rm \
+            --name pbs-alerting-smoke \
+            --network pbs-smoke-net \
+            --env-file /tmp/pbs-smoke-data/.pbs-token \
+            -e API_KEY=smoke-test-key \
+            -e ALERTING_DATA_DIR=/app/data \
+            -v /tmp/pbs-smoke-data:/app/data:rw \
+            pbs-alerting-test \
+            python -m alerting.monitor \
+            > /tmp/pbs-smoke.log 2>&1
+          exit_code=$?
+          set -e
+          echo "---- monitor output ----"
+          cat /tmp/pbs-smoke.log
+          echo "---- /monitor output ----"
+          [ "$exit_code" = "0" ] \
+            || { echo "monitor exited $exit_code"; exit 1; }
+          grep -q "\[home\]" /tmp/pbs-smoke.log \
+            || { echo "expected source_id 'home' in monitor output"; exit 1; }
+          # A traceback indicates an unhandled failure in the pbs code path.
+          # Per-source errors go through structured logging (no "Traceback" line).
+          if grep -q "^Traceback" /tmp/pbs-smoke.log; then
+            echo "monitor emitted a traceback"
+            exit 1
+          fi
+
+      - name: Dump pbs-test logs on failure
+        if: failure()
+        run: docker logs --tail=200 pbs-test-server || true
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f pbs-test-server || true
+          docker network rm pbs-smoke-net || true

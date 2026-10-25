@@ -77,6 +77,30 @@ source .venv/bin/activate
 pip install -r webui/requirements.txt -r alerting/requirements.txt
 ```
 
+### Adding a local PBS source
+
+PBS Monitor can watch a locally-reachable Proxmox Backup Server in addition to the `remote-backups.com` cloud — or on its own. Both source types coexist in `alerting/config.json` under `sources: []`:
+
+```json
+{
+  "sources": [
+    {"id": "cloud", "type": "remote_backups",
+     "api_base": "https://api.remote-backups.com", "api_key_env": "API_KEY"},
+    {"id": "home", "type": "pbs",
+     "base_url": "https://pbs.home.lan:8007",
+     "token_env": "PBS_HOME_TOKEN"}
+  ]
+}
+```
+
+Then add the token to `.env` (format `USER@REALM!TOKENID:SECRET`, generated in the PBS UI under *Configuration → Access Control → API Token*, with `Datastore.Audit` + `Sys.Audit` on `/` + Propagate):
+
+```bash
+PBS_HOME_TOKEN=root@pam!monitor:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+Restart the alerting daemon / web UI after editing `.env`. For self-signed TLS certificates, pin the SHA-256 fingerprint via the `fingerprint` field — see [docs/pbs_source.md](docs/pbs_source.md) for full details. The web UI's **Settings → Sources** tab offers the same configuration visually without hand-editing JSON.
+
 ---
 
 ## Tool 1: Web UI

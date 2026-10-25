@@ -1,0 +1,43 @@
+# Local PBS test container for the pbs-smoke-test CI job and the local
+# docker-test/ compose harness.
+#
+# Built from debian:bookworm-slim + the official Proxmox Backup Server
+# no-subscription repository. Not shipped to GHCR; this image is a test
+# fixture only — never deployed.
+#
+# Scope deliberately kept minimal: proxmox-backup-server + the two daemons
+# the API needs (proxmox-backup-proxy, proxmox-backup-api). No systemd, no
+# proxmox-backup-client — the setup-pbs.sh script drives everything via
+# proxmox-backup-manager + the HTTP API.
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Repo key + sources.list for proxmox-backup-no-subscription (Debian 12 "bookworm")
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates gnupg \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
+       -o /etc/apt/keyrings/proxmox-release-bookworm.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/proxmox-release-bookworm.gpg] \
+http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
+       > /etc/apt/sources.list.d/pbs-no-subscription.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends proxmox-backup-server \
+    && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8007
+
+# Ephemeral datastore root — bound to tmpfs via docker compose for fast resets.
+RUN mkdir -p /var/lib/pbs-test-store
+
+# Start the two daemons that serve the HTTPS API, foreground, side-by-side.
+# `exec` in the entrypoint lets Docker signal both children; `wait -n` exits
+# as soon as one dies so the container restarts cleanly.
+COPY tests/e2e/pbs/pbs-entrypoint.sh /usr/local/bin/pbs-entrypoint.sh
+RUN chmod +x /usr/local/bin/pbs-entrypoint.sh
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+    CMD curl -fsSk https://localhost:8007/api2/json/version > /dev/null
+
+ENTRYPOINT ["/usr/local/bin/pbs-entrypoint.sh"]

@@ -23,6 +23,36 @@ This is the frontend dashboard. It provides a visual overlay over the backend st
 - **Proxying:** The Flask app proxies data requests directly to the remote API (for Backup Browsing, etc.) so the frontend never directly needs the API Bearer Token.
 - **Configuration Editing:** The UI acts as a graphical editor for the backend JSON files, using `validators.py` and `normalizers.py` to ensure user inputs don't corrupt the daemon. 
 
+### 3. Multi-Source Adapter Pattern (`/alerting/sources/`)
+Since version 1.2 the monitor is not tied to a single HTTP endpoint. Every data origin is wrapped by a `SourceAdapter` ([alerting/sources/base.py](../alerting/sources/base.py)) that exposes a small, uniform contract:
+
+- `source_id` — stable slug used in alert keys and dashboard routing
+- `check_health()` → `HealthResult(status, message, …)`
+- `fetch_datastores()` → list of normalised datastore dicts
+- `fetch_backup_inventory(datastore_id, snapshot_cap=…)` → namespaces/groups/snapshots
+- `fetch_rescale_log(datastore_id)` → cloud-only, PBS returns `[]`
+
+Two implementations ship today:
+- **`RemoteBackupsAdapter`** ([alerting/sources/remote_backups.py](../alerting/sources/remote_backups.py)) — the original `api.remote-backups.com` client.
+- **`PbsAdapter`** ([alerting/sources/pbs.py](../alerting/sources/pbs.py)) — talks to a local Proxmox Backup Server via its native API; see [docs/pbs_source.md](pbs_source.md).
+
+Configuration is a list under `config.sources[]`; `validate_source_entries()` normalises it (an empty list synthesises an implicit `remote_backups` entry from the legacy top-level `api_base`), then `build_source(entry)` returns the right adapter.
+
+```
+   config.sources[]
+          │
+          ▼
+  validate_source_entries()  ──►  build_source(entry)  ──►  SourceAdapter
+          │                                                      │
+          └── fail-closed error (ValueError)                      ▼
+                                                        monitor.run_check()
+                                                        webui.app routes
+```
+
+Every datastore dict carries `source_type` (`"remote_backups"` or `"pbs"`) and `source_id`. PBS datastore IDs use the `pbs:<source_id>:<store>` prefix so routing (e.g. the WebUI backup browser) can resolve the owning adapter without a state lookup.
+
+**Error isolation.** The monitor loop and the WebUI routes catch `requests.RequestException`, `RuntimeError`, and `SourceConnectionError` per source — a single misbehaving adapter degrades its own entries only; the remaining sources keep working.
+
 ## Data Flow & File Persistence
 The application uses the local file system (via atomic tmp-file writes) as the shared database between the daemon and the UI:
 1. **`config.json`**: Holds thresholds, ntfy settings, heartbeat URLs (success + fail), daemon interval, quiet hours, schedule-learning settings, ignored groups, and notification priorities (global warning/critical tiers plus optional per-alert-type overrides). Editable via UI, consumed by daemon.
