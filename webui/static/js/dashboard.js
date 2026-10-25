@@ -1346,7 +1346,7 @@
                         <div class="ds-issues">${issuesHtml}</div>
                         <button class="btn btn-secondary" onclick="toggleAlertingPanel(${escHtml(JSON.stringify(ds.id))})">${alertingLabel}</button>
                         <button class="btn btn-secondary" onclick="toggleUsageHistoryPanel(${escHtml(JSON.stringify(ds.id))})">${usageHistoryLabel}</button>
-                        <button class="btn btn-secondary" onclick="toggleRescalePanel(${escHtml(JSON.stringify(ds.id))})">${rescaleLabel}</button>
+                        ${ds.source_type !== 'pbs' ? `<button class="btn btn-secondary" onclick="toggleRescalePanel(${escHtml(JSON.stringify(ds.id))})">${rescaleLabel}</button>` : ''}
                         <button class="btn btn-secondary" onclick="toggleBackupBrowser(${escHtml(JSON.stringify(ds.id))})">${browserLabel}</button>
                     </div>
                 </div>
@@ -1443,7 +1443,7 @@
                         </div>` : ''}
 
                         <!-- Rescale Log -->
-                        ${openRescalePanels.has(ds.id) ? `
+                        ${openRescalePanels.has(ds.id) && ds.source_type !== 'pbs' ? `
                         <div class="section" style="grid-column: 1 / -1;">
                             <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
                             ${renderRescaleLog(ds.rescale_log)}
