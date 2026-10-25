@@ -341,6 +341,7 @@ class TestBuildSource:
             return _Resp()
 
         monkeypatch.setattr(requests, "get", fake_get)
+        assert isinstance(adapter, RemoteBackupsAdapter)
         adapter._api_get("/dummy")
         assert captured["headers"]["Authorization"] == "Bearer shhh"
 
@@ -349,6 +350,7 @@ class TestBuildSource:
         adapter = build_source({
             "id": "a", "type": "remote_backups", "api_base": "https://x",
         })
+        assert isinstance(adapter, RemoteBackupsAdapter)
         with pytest.raises(RuntimeError, match="API_KEY not set"):
             adapter._api_get("/dummy")
 

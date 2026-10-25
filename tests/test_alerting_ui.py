@@ -83,15 +83,26 @@ class TestBuildVisualAlerting:
         assert result["inventory_error"] is None
 
     def test_adapter_provided_fetches_inventory_with_snapshot_cap(self, monkeypatch, tmp_path):
+        from alerting.sources import HealthResult
+
         class FakeAdapter:
             source_id = "fake"
 
             def __init__(self):
                 self.calls = []
 
-            def fetch_backup_inventory(self, ds_id, *, snapshot_cap):
-                self.calls.append((ds_id, snapshot_cap))
+            def fetch_backup_inventory(self, datastore_id: str, *, snapshot_cap: int) -> dict:
+                self.calls.append((datastore_id, snapshot_cap))
                 return {"summary": {"group_count": 0}, "groups": []}
+
+            def check_health(self) -> HealthResult:
+                return HealthResult(status="ok")
+
+            def fetch_datastores(self) -> list[dict]:
+                return []
+
+            def fetch_rescale_log(self, datastore_id: str) -> list[dict]:
+                return []
 
         captured = {}
 
@@ -122,13 +133,22 @@ class TestBuildVisualAlerting:
         assert captured["backup_inventory"] == {"summary": {"group_count": 0}, "groups": []}
 
     def test_source_connection_error_becomes_inventory_error(self, monkeypatch, tmp_path):
-        from alerting.sources import SourceConnectionError
+        from alerting.sources import HealthResult, SourceConnectionError
 
         class BrokenAdapter:
             source_id = "broken"
 
-            def fetch_backup_inventory(self, ds_id, *, snapshot_cap):
+            def fetch_backup_inventory(self, datastore_id: str, *, snapshot_cap: int) -> dict:
                 raise SourceConnectionError("TLS failure")
+
+            def check_health(self) -> HealthResult:
+                return HealthResult(status="ok")
+
+            def fetch_datastores(self) -> list[dict]:
+                return []
+
+            def fetch_rescale_log(self, datastore_id: str) -> list[dict]:
+                return []
 
         monkeypatch.setattr(alert_monitor, "check_datastore", lambda *a, **kw: ([], {}))
         monkeypatch.setattr(alerting_ui, "collect_schedule_groups", lambda *a, **k: [])

@@ -177,7 +177,7 @@ def normalize_ignored_group(raw_group):
     if not isinstance(raw_group, dict):
         return None
 
-    normalized = {
+    normalized: dict[str, str | None] = {
         "datastore_id": None,
         "namespace": None,
         "backup_type": None,

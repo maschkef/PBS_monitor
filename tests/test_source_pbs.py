@@ -42,7 +42,7 @@ class _FakeResp:
         return {"data": self._data_payload}
 
 
-class _FakeSession:
+class _FakeSession(requests.Session):
     """Collects .get() calls and dispatches to canned responses matched by
     URL suffix. Response may be a _FakeResp, or an Exception to raise.
 
@@ -53,10 +53,15 @@ class _FakeSession:
     """
 
     def __init__(self, responses: dict):
+        # Intentionally skip Session.__init__ — tests only need .get(), and the
+        # real init builds HTTPAdapters / cookie jars we don't want here.
         self._responses = responses
         self.calls: list[dict] = []
 
-    def get(self, url, headers=None, params=None, timeout=None):
+    def get(self, url, **kwargs):  # type: ignore[override]
+        headers = kwargs.get("headers")
+        params = kwargs.get("params")
+        timeout = kwargs.get("timeout")
         self.calls.append({
             "url": url,
             "headers": headers or {},
@@ -90,14 +95,13 @@ class _FakeSession:
 
 def _make_adapter(monkeypatch, token="tok", **kwargs) -> PbsAdapter:
     monkeypatch.setenv("PBS_TOKEN", token)
-    defaults = {
-        "source_id": "home-lab",
-        "base_url": "https://pbs.example.com:8007",
-        "node": "localhost",
-        "token_env": "PBS_TOKEN",
-    }
-    defaults.update(kwargs)
-    return PbsAdapter(**defaults)
+    return PbsAdapter(
+        source_id=kwargs.pop("source_id", "home-lab"),
+        base_url=kwargs.pop("base_url", "https://pbs.example.com:8007"),
+        node=kwargs.pop("node", "localhost"),
+        token_env=kwargs.pop("token_env", "PBS_TOKEN"),
+        **kwargs,
+    )
 
 
 def _phase6_empty_defaults(*stores: str) -> dict:

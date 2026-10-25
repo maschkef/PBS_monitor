@@ -343,7 +343,8 @@ def _load_alerting_config() -> "tuple[dict, tuple | None]":
     """Load alerting config.json and return (raw_config, error_response).
 
     Returns ({}, None) when the file does not exist yet (first-run case).
-    Returns (None, (response, status)) when the file exists but is corrupted.
+    Returns ({}, (response, status)) when the file exists but is corrupted —
+    callers early-return on error_response so the empty dict is never read.
     """
     if not ALERTING_CONFIG_PATH.exists():
         return {}, None
@@ -351,7 +352,7 @@ def _load_alerting_config() -> "tuple[dict, tuple | None]":
         with open(ALERTING_CONFIG_PATH) as f:
             return json.load(f), None
     except json.JSONDecodeError:
-        return None, (jsonify({"error": "config.json is corrupted and cannot be parsed. Please fix it manually."}), 500)
+        return {}, (jsonify({"error": "config.json is corrupted and cannot be parsed. Please fix it manually."}), 500)
 
 
 def _load_alerting_state_for_write() -> dict:
@@ -441,16 +442,17 @@ def _datastores_response(datastores, source_errors):
     return response
 
 
-def _load_visual_alerting_config_or_500() -> "tuple[dict | None, tuple | None]":
+def _load_visual_alerting_config_or_500() -> "tuple[dict, tuple | None]":
     """Load the alerting config and translate validation errors into JSON 500.
 
-    Returns ``(config, None)`` on success or ``(None, (response, status))`` when
-    the ``sources`` list is invalid.
+    Returns ``(config, None)`` on success or ``({}, (response, status))`` when
+    the ``sources`` list is invalid.  Callers early-return on error_response so
+    the empty dict is never read.
     """
     try:
         return load_visual_alerting_config(), None
     except ValueError as e:
-        return None, (jsonify({"error": str(e)}), 500)
+        return {}, (jsonify({"error": str(e)}), 500)
 
 
 def _normalise_pbs_browser_namespaces(inventory: dict) -> list[dict]:
@@ -1831,6 +1833,7 @@ def get_storage_history(datastore_id):
             if not isinstance(ts, int):
                 continue
             if use_window:
+                assert window_from is not None and window_to is not None
                 if ts < window_from or ts > window_to:
                     continue
             elif cutoff_ts is not None and ts < cutoff_ts:

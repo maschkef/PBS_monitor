@@ -178,14 +178,15 @@ class PbsAdapter:
         Per-store status failures are logged and skip that store (metrics
         are mandatory downstream for storage alerts).
         """
+        store_names: list[str]
         if self._datastores:
             store_names = self._datastores
         else:
             discovery = self._api_get("/api2/json/admin/datastore") or []
             store_names = [
-                entry.get("store")
+                str(name)
                 for entry in discovery
-                if isinstance(entry, dict) and entry.get("store")
+                if isinstance(entry, dict) and (name := entry.get("store"))
             ]
 
         result: list[dict] = []
