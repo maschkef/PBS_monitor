@@ -501,14 +501,12 @@
                             <tr>
                                 <th>File</th>
                                 <th>Size</th>
-                                <th>Checksum</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${snapshot.files.map(file => `<tr>
                                 <td>${escHtml(file.filename)}</td>
                                 <td>${file.size_human}</td>
-                                <td>${escHtml(file.csum || '—')}</td>
                             </tr>`).join('')}
                         </tbody>
                     </table>
@@ -1257,7 +1255,7 @@
             const alerts = alerting.alerts || [];
             const schedule = alerting.schedule_learning || {};
             const groups = schedule.groups || [];
-            return `<div class="section" style="grid-column: 1 / -1;">
+            return `<div class="section">
                 <div class="section-title">Visual Alerting</div>
                 <div class="alert-summary-grid">
                     <div class="alert-summary-card">
@@ -1326,6 +1324,17 @@
             const rescaleLabel = openRescalePanels.has(ds.id) ? 'Hide Rescale History' : 'Show Rescale History';
             const alerting = ds.alerting || { alerts: [], schedule_learning: {} };
 
+            const panelsHtml = [
+                openRescalePanels.has(ds.id) && ds.source_type !== 'pbs'
+                    ? `<div class="section">
+                        <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
+                        ${renderRescaleLog(ds.rescale_log)}
+                    </div>`
+                    : '',
+                openUsageHistoryPanels.has(ds.id) ? renderUsageHistoryPanel(ds.id) : '',
+                openAlertingPanels.has(ds.id) ? renderAlertingSection(ds.id, alerting) : '',
+            ].filter(Boolean).join('');
+
             const issuesHtml = ds.issues.map(i => {
                 const cls = ds.health === 'critical' ? 'critical' : 'warning';
                 return `<span class="issue-badge ${cls}">${escHtml(i)}</span>`;
@@ -1340,7 +1349,7 @@
                             ${escHtml(ds.name)}
                             ${renderSourceBadge(ds)}
                         </div>
-                        <div class="ds-id">${escHtml(ds.id)} · ${ds.size_gb} GB · Created ${formatDate(ds.created_at)}</div>
+                        <div class="ds-id">${escHtml(ds.id)} · ${ds.size_gb} GB${ds.created_at ? ` · Created ${formatDate(ds.created_at)}` : ''}</div>
                     </div>
                     <div class="ds-header-side">
                         <div class="ds-issues">${issuesHtml}</div>
@@ -1441,18 +1450,8 @@
                                 <span class="status-value">${ds.replication.factor}x</span>
                             </div>` : ''}
                         </div>` : ''}
-
-                        <!-- Rescale Log -->
-                        ${openRescalePanels.has(ds.id) && ds.source_type !== 'pbs' ? `
-                        <div class="section" style="grid-column: 1 / -1;">
-                            <div class="section-title">Rescale History (${document.getElementById('rescaleRange').value})</div>
-                            ${renderRescaleLog(ds.rescale_log)}
-                        </div>` : ''}
-
-                        ${openUsageHistoryPanels.has(ds.id) ? renderUsageHistoryPanel(ds.id) : ''}
-
-                        ${openAlertingPanels.has(ds.id) ? renderAlertingSection(ds.id, alerting) : ''}
                     </div>
+                    ${panelsHtml ? `<div class="ds-panels">${panelsHtml}</div>` : ''}
                     ${renderBackupBrowserPanel(ds.id)}
                 </div>
             </div>`;
@@ -1645,7 +1644,7 @@
             } else {
                 body = renderUsageHistoryBody(cached.data, dsId);
             }
-            return `<div class="section" style="grid-column: 1 / -1;">${header}${body}</div>`;
+            return `<div class="section">${header}${body}</div>`;
         }
 
         function renderUsageHistoryBody(data, dsId) {

@@ -220,7 +220,7 @@ class PbsAdapter:
                 "used_bytes": used,
                 "available_bytes": avail,
                 "used_percent": used_percent,
-                "backup_count": 0,
+                "backup_count": self._count_backups(store),
             },
         }
 
@@ -258,6 +258,51 @@ class PbsAdapter:
             ds_dict["prune"] = prune
 
         return ds_dict
+
+    def _count_backups(self, store: str) -> int:
+        """Sum `backup-count` across every group in every namespace.
+
+        Uses the groups listing instead of pulling all snapshots so the
+        overview card stays cheap — the webui's Backup Browser performs the
+        heavier snapshot pull separately on demand. Transport errors are
+        swallowed (same pattern as GC/verify) and surface as `0`.
+        """
+        try:
+            namespaces = self._api_get(
+                f"/api2/json/admin/datastore/{store}/namespace"
+            ) or []
+        except (requests.RequestException, SourceConnectionError) as e:
+            print(
+                f"PBS source {self._source_id!r}: failed to list namespaces "
+                f"for datastore {store!r}: {e}"
+            )
+            return 0
+
+        ns_values = [
+            ns.get("ns", "") for ns in namespaces if isinstance(ns, dict)
+        ] or [""]
+
+        total = 0
+        for ns in ns_values:
+            params = {"ns": ns} if ns else None
+            try:
+                groups = self._api_get(
+                    f"/api2/json/admin/datastore/{store}/groups",
+                    params=params,
+                ) or []
+            except (requests.RequestException, SourceConnectionError) as e:
+                print(
+                    f"PBS source {self._source_id!r}: failed to list groups "
+                    f"for datastore {store!r} ns={ns!r}: {e}"
+                )
+                continue
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                count = group.get("backup-count")
+                if isinstance(count, int):
+                    total += count
+        return total
 
     def _fetch_section_safe(self, fetcher, store: str, label: str):
         """Call ``fetcher`` (either a path or a zero-arg callable) and swallow

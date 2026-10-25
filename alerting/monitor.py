@@ -452,12 +452,23 @@ def build_snapshot_record(snapshot):
     if backup_time is None:
         return None
 
-    return {
+    record = {
         "backup_time": backup_time,
         "size": coerce_int(snapshot.get("size")),
         "protected": bool(snapshot.get("protected", False)),
         "comment": snapshot.get("comment"),
     }
+    # Pass through fields the WebUI backup browser needs; alerting ignores
+    # them. `files` is the per-snapshot file list PBS returns inline;
+    # `verification` is the PBS-only {state, upid} object (cloud API does
+    # not expose it per snapshot).
+    files = snapshot.get("files")
+    if isinstance(files, list):
+        record["files"] = files
+    verification = snapshot.get("verification")
+    if verification is not None:
+        record["verification"] = verification
+    return record
 
 
 def build_backup_group_record(namespace, group, group_snapshots, snapshot_cap=MAX_CURRENT_SNAPSHOT_DETAILS):

@@ -106,8 +106,9 @@ def _make_adapter(monkeypatch, token="tok", **kwargs) -> PbsAdapter:
 
 def _phase6_empty_defaults(*stores: str) -> dict:
     """Empty-response mocks for the GC/Verify/Prune endpoints introduced in
-    Phase 6. Lets `TestFetchDatastores` cases focus on their own invariants
-    while still letting `_normalise_status` complete without AssertionError.
+    Phase 6, plus the namespace/groups endpoints `_count_backups` needs.
+    Lets `TestFetchDatastores` cases focus on their own invariants while
+    still letting `_normalise_status` complete without AssertionError.
     """
     defaults = {
         "/tasks": _FakeResp([]),  # matches /nodes/<node>/tasks suffix
@@ -116,7 +117,20 @@ def _phase6_empty_defaults(*stores: str) -> dict:
     }
     for store in stores or ("ssd",):
         defaults[f"/config/datastore/{store}"] = _FakeResp({})
+        defaults.update(_backup_count_mocks(store))
     return defaults
+
+
+def _backup_count_mocks(store: str) -> dict:
+    """Empty namespace/groups responses so `_count_backups` returns 0 without
+    AssertionError in tests that focus on an unrelated code path. Uses the
+    full `/admin/datastore/<store>/…` suffix so tests spreading this can
+    override with the same key — a shorter suffix would still match the
+    overriding URL and win via insertion order."""
+    return {
+        f"/admin/datastore/{store}/namespace": _FakeResp([]),
+        f"/admin/datastore/{store}/groups": _FakeResp([]),
+    }
 
 
 class TestCheckHealth:
@@ -352,6 +366,47 @@ class TestFetchDatastores:
         [ds] = adapter.fetch_datastores()
         assert ds["size_gb"] == 10.0
 
+    def test_backup_count_sums_groups_across_namespaces(self, monkeypatch):
+        """`_count_backups` sums `backup-count` across every group in every
+        namespace. The overview card uses this instead of the hardcoded 0."""
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp({
+                "total": 200, "used": 100, "avail": 100,
+            }),
+            # Override the empty namespace/groups defaults.
+            "/admin/datastore/ssd/namespace": _FakeResp(
+                [{"ns": ""}, {"ns": "prod"}],
+            ),
+            "/admin/datastore/ssd/groups": _FakeResp([
+                {"backup-type": "vm", "backup-id": "100", "backup-count": 5},
+                {"backup-type": "ct", "backup-id": "200", "backup-count": 3},
+            ]),
+        })
+        [ds] = adapter.fetch_datastores()
+        # Two namespaces × two groups × (5 + 3) each = 16.
+        assert ds["metrics"]["backup_count"] == 16
+
+    def test_backup_count_falls_back_to_zero_on_api_error(
+        self, monkeypatch, capsys,
+    ):
+        """Transport errors against /namespace must not break the overview —
+        same resilience pattern as GC/verify. backup_count falls to 0 and a
+        log line surfaces the reason."""
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            **_phase6_empty_defaults("ssd"),
+            "/admin/datastore/ssd/status": _FakeResp({
+                "total": 200, "used": 100, "avail": 100,
+            }),
+            "/admin/datastore/ssd/namespace":
+                requests.ConnectionError("ns offline"),
+        })
+        [ds] = adapter.fetch_datastores()
+        assert ds["metrics"]["backup_count"] == 0
+        assert "namespaces" in capsys.readouterr().out
+
 
 class TestApiGet:
     def test_sends_pbs_api_token_header(self, monkeypatch):
@@ -579,6 +634,49 @@ class TestFetchBackupInventory:
                 "wrong:format", snapshot_cap=50,
             )
 
+    def test_files_and_verification_propagate_to_snapshot(self, monkeypatch):
+        """The PBS /snapshots payload includes `files` and `verification`
+        inline — both must flow through `build_snapshot_record` so the WebUI
+        backup browser can render the file table and the per-snapshot
+        verify pill."""
+        adapter = _make_adapter(monkeypatch, datastores=["ssd"])
+        adapter._session_cache = _FakeSession({
+            "/admin/datastore/ssd/namespace": _FakeResp([{"ns": ""}]),
+            "/admin/datastore/ssd/groups": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 400,
+                "last-backup": 1700000000,
+                "backup-count": 1,
+            }]),
+            "/admin/datastore/ssd/snapshots": _FakeResp([{
+                "backup-type": "vm",
+                "backup-id": 400,
+                "backup-time": 1700000000,
+                "size": 2048,
+                "protected": False,
+                "files": [
+                    {"filename": "qemu-server.conf.blob", "size": 495},
+                    {"filename": "drive-scsi0.img.fidx", "size": 1024**3},
+                ],
+                "verification": {
+                    "state": "ok",
+                    "upid": "UPID:node:...",
+                },
+            }]),
+        })
+        inv = adapter.fetch_backup_inventory(
+            "pbs:home-lab:ssd", snapshot_cap=50,
+        )
+        [grp] = inv["groups"]
+        [snap] = grp["current_snapshots"]
+        assert snap["files"] == [
+            {"filename": "qemu-server.conf.blob", "size": 495},
+            {"filename": "drive-scsi0.img.fidx", "size": 1024**3},
+        ]
+        assert snap["verification"] == {
+            "state": "ok", "upid": "UPID:node:...",
+        }
+
     def test_http_error_on_groups_propagates(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         http_err = requests.HTTPError("500 Internal Server Error")
@@ -643,6 +741,7 @@ class TestFetchGc:
     def test_last_task_ok(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -662,6 +761,7 @@ class TestFetchGc:
         failing = _ok_gc_task()
         failing["status"] = "connection error: boom"
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -688,6 +788,7 @@ class TestFetchGc:
     def test_next_scheduled_from_gc_schedule(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -713,6 +814,7 @@ class TestFetchGc:
     def test_malformed_schedule_falls_back_to_none(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -730,6 +832,7 @@ class TestFetchGc:
         running["endtime"] = None
         running["status"] = None
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -746,6 +849,7 @@ class TestFetchVerification:
     def test_last_task_ok(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -762,6 +866,7 @@ class TestFetchVerification:
         failing = _ok_verify_task()
         failing["status"] = "integrity failure"
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -776,6 +881,7 @@ class TestFetchVerification:
     def test_verify_new_from_datastore_config(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -790,6 +896,7 @@ class TestFetchVerification:
     def test_schedule_from_config_verify_filtered_by_store(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -814,6 +921,7 @@ class TestFetchVerification:
     def test_outdated_after_missing_is_none(self, monkeypatch):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -945,6 +1053,7 @@ class TestFetchPrune:
 class TestFetchDatastoresIntegratesGcVerifyPrune:
     def _baseline_session(self):
         return _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),
@@ -986,6 +1095,7 @@ class TestFetchDatastoresIntegratesGcVerifyPrune:
     ):
         adapter = _make_adapter(monkeypatch, datastores=["ssd"])
         adapter._session_cache = _FakeSession({
+            **_backup_count_mocks("ssd"),
             "/admin/datastore/ssd/status": _FakeResp(
                 {"total": 100, "used": 50, "avail": 50},
             ),

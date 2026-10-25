@@ -348,12 +348,20 @@ def normalize_snapshot_entries(entries, limit=None):
         backup_time = coerce_int(entry.get("backup_time"))
         if backup_time is None:
             continue
-        normalized[backup_time] = {
+        record = {
             "backup_time": backup_time,
             "size": coerce_int(entry.get("size")),
             "protected": bool(entry.get("protected", False)),
             "comment": entry.get("comment"),
         }
+        # Pass through optional WebUI-only fields; alerting ignores them.
+        files = entry.get("files")
+        if isinstance(files, list):
+            record["files"] = files
+        verification = entry.get("verification")
+        if verification is not None:
+            record["verification"] = verification
+        normalized[backup_time] = record
     snapshots = sorted(normalized.values(), key=lambda item: item["backup_time"], reverse=True)
     if limit is not None:
         snapshots = snapshots[:limit]

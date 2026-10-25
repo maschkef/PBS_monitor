@@ -46,7 +46,6 @@ def normalize_backup_file(file_entry):
         "filename": file_entry.get("filename", "unknown"),
         "size": size,
         "size_human": format_binary_bytes(size),
-        "csum": file_entry.get("csum"),
     }
 
 
