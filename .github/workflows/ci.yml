@@ -230,7 +230,7 @@ jobs:
         run: docker build -f docker/alerting/Dockerfile -t pbs-alerting-test .
 
       - name: Build pbs-test image
-        run: docker build -f tests/e2e/pbs/Dockerfile.pbs -t pbs-test-server:ci .
+        run: docker build -f tests/e2e/pbs/Dockerfile.pbs -t pbs-test-server:ci tests/e2e/pbs
 
       - name: Create isolated docker network
         run: docker network create pbs-smoke-net

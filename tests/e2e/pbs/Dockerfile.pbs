@@ -34,7 +34,7 @@ RUN mkdir -p /var/lib/pbs-test-store
 # Start the two daemons that serve the HTTPS API, foreground, side-by-side.
 # `exec` in the entrypoint lets Docker signal both children; `wait -n` exits
 # as soon as one dies so the container restarts cleanly.
-COPY tests/e2e/pbs/pbs-entrypoint.sh /usr/local/bin/pbs-entrypoint.sh
+COPY pbs-entrypoint.sh /usr/local/bin/pbs-entrypoint.sh
 RUN chmod +x /usr/local/bin/pbs-entrypoint.sh
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \

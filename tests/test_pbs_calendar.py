@@ -141,7 +141,7 @@ class TestUnparseable:
 
 class TestTimezoneHandling:
     def test_naive_now_treated_as_utc(self):
-        naive = datetime(2026, 3, 10, 14, 0, 0)  # noqa: DTZ001
+        naive = datetime(2026, 3, 10, 14, 0, 0)
         result = pbs_calendar_to_next_utc("hourly", now=naive)
         assert result == _utc(2026, 3, 10, 15, 0, 0)
 

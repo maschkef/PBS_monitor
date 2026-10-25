@@ -27,7 +27,7 @@ lives in [tests/test_source_pbs.py](../../test_source_pbs.py).
 
 ```bash
 # Build and start the PBS container from the repo root:
-docker build -f tests/e2e/pbs/Dockerfile.pbs -t pbs-test-server:local .
+docker build -f tests/e2e/pbs/Dockerfile.pbs -t pbs-test-server:local tests/e2e/pbs
 docker run -d --name pbs-test-server --cap-add SYS_ADMIN \
     --security-opt apparmor=unconfined --tmpfs /var/lib/pbs-test-store \
     -p 8007:8007 pbs-test-server:local
