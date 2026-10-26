@@ -781,6 +781,15 @@ def migrate_state(raw_state):
                 raw_ds_state.get("storage_history"),
             )
 
+        # Repair PBS entries whose source attribution was never written
+        # correctly by older daemon builds — the ds_id prefix encodes the
+        # source unambiguously.
+        if ds_id.startswith("pbs:"):
+            parts = ds_id.split(":", 2)
+            if len(parts) == 3 and parts[1]:
+                migrated_ds_state["source_type"] = "pbs"
+                migrated_ds_state["source_id"] = parts[1]
+
         state["datastores"][str(ds_id)] = migrated_ds_state
 
     return state

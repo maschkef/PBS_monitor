@@ -696,10 +696,14 @@ def purge_ignored_backup_groups(ds_state, config, datastore_id):
 
 # ─── Datastore state management ──────────────────────────────────────────────
 
-def ensure_datastore_state(state, ds_id, name, config=None):
+def ensure_datastore_state(state, ds_id, name, config=None, *, source_id=None, source_type=None):
     """Ensure the persistent state for one datastore exists and is normalized."""
     ds_state = state["datastores"].setdefault(ds_id, default_datastore_state(name))
     ds_state["name"] = name
+    if source_id:
+        ds_state["source_id"] = source_id
+    if source_type:
+        ds_state["source_type"] = source_type
     ds_state["inventory_summary"] = migrate_inventory_summary(ds_state.get("inventory_summary"))
     if not isinstance(ds_state.get("schedule_summary"), dict):
         ds_state["schedule_summary"] = {
@@ -963,7 +967,11 @@ def check_datastore(ds, config, state, backup_inventory=None, group_rules=None, 
     alerts = []
     ds_id = ds.get("id", "")
     name = ds.get("name", ds.get("id", "unknown"))
-    ds_state = ensure_datastore_state(state, ds_id, name, config)
+    ds_state = ensure_datastore_state(
+        state, ds_id, name, config,
+        source_id=ds.get("source_id"),
+        source_type=ds.get("source_type"),
+    )
     purge_ignored_backup_groups(ds_state, config, ds_id)
     thresholds = config["thresholds"]
     metrics = ds.get("metrics") or {}
@@ -1190,8 +1198,19 @@ def run_check(config, state):
         if not should_alert(config, state, alert.key):
             return
         _enrich_alert_with_status_feed(alert, config, event_time=datetime.now(UTC))
-        safe_send_ntfy(config, alert)
-        state.setdefault("last_alerts", {})[alert.key] = datetime.now(UTC).isoformat()
+        sent = safe_send_ntfy(config, alert)
+        now_iso = datetime.now(UTC).isoformat()
+        state.setdefault("last_alerts", {})[alert.key] = now_iso
+        if sent:
+            append_notification_log(NOTIFICATION_LOG_PATH, {
+                "timestamp": now_iso,
+                "source": "alerting",
+                "title": alert.title,
+                "message": alert.message,
+                "priority": alert.priority,
+                "datastore_name": alert.datastore_name,
+                "alert_key": alert.key,
+            })
 
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"\n{'='*60}")

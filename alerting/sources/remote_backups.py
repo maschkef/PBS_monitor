@@ -81,9 +81,13 @@ class RemoteBackupsAdapter:
         for ds in datastores:
             try:
                 detail = self._api_get(f"/monitoring/v1/datastores/{ds['id']}")
-                result.append(detail)
             except requests.RequestException:
-                result.append(ds)
+                detail = ds
+            # Attach source attribution symmetric with other adapters so the
+            # monitor can persist state with the correct source_id/source_type.
+            detail["source_type"] = "remote_backups"
+            detail["source_id"] = self._source_id
+            result.append(detail)
         return result
 
     def fetch_backup_inventory(

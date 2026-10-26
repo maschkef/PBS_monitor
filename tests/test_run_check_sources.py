@@ -508,6 +508,85 @@ class TestPhase7MultiSourceHardening:
         assert missing_calls == []
         assert env["state"]["datastores"]["ds-still-there"].get("vanished_at") is None
 
+    def test_pbs_datastore_source_attribution_persisted_from_adapter(
+        self, monitor_env,
+    ):
+        """Regression: PBS ds state must inherit source_id/source_type from the adapter dict.
+
+        Before the fix, `ensure_datastore_state` always kept the hardcoded
+        `source_id="default"` / `source_type="remote_backups"` from
+        `default_datastore_state`. That mislabel caused the cloud-source
+        iteration to flag every PBS datastore as "Datastore Missing" on
+        every subsequent cycle.
+        """
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+            {"id": "lab-pbs", "type": "pbs",
+             "base_url": "https://pbs", "node": "pbs", "token_env": "T"},
+        ]
+        cloud_adapter = FakeAdapter(
+            "cloud-a",
+            datastores=[{
+                "id": "ds-cloud", "name": "Cloud Store", "metrics": {},
+                "source_type": "remote_backups", "source_id": "cloud-a",
+            }],
+        )
+        pbs_adapter = FakeAdapter(
+            "lab-pbs",
+            datastores=[{
+                "id": "pbs:lab-pbs:ssd", "name": "PBS Local",
+                "metrics": {"used_percent": 10, "used_bytes": 1, "available_bytes": 9, "backup_count": 0},
+                "source_type": "pbs", "source_id": "lab-pbs",
+            }],
+        )
+        env["register_adapters"]({"cloud-a": cloud_adapter, "lab-pbs": pbs_adapter})
+
+        # First cycle populates state.
+        alert_monitor.run_check(env["config"], env["state"])
+        pbs_state = env["state"]["datastores"]["pbs:lab-pbs:ssd"]
+        assert pbs_state["source_id"] == "lab-pbs"
+        assert pbs_state["source_type"] == "pbs"
+
+        # Second cycle: cloud-a iteration must NOT flag the PBS datastore
+        # as missing (it belongs to lab-pbs).
+        env["ntfy_calls"].clear()
+        alert_monitor.run_check(env["config"], env["state"])
+        missing_calls = [c for c in env["ntfy_calls"]
+                         if c["key"] == "pbs:lab-pbs:ssd:datastore_missing"]
+        assert missing_calls == []
+        assert env["state"]["datastores"]["pbs:lab-pbs:ssd"].get("vanished_at") is None
+
+    def test_platform_alert_appended_to_notification_log(self, monitor_env):
+        """Regression: `emit_platform_alert` must also append to notification_log.json.
+
+        Before the fix only the per-datastore alert dispatch loop logged;
+        platform alerts (API Unhealthy, Datastore Missing, etc.) pushed via
+        ntfy but never landed in the WebUI-visible log.
+        """
+        env = monitor_env
+        env["config"]["sources"] = [
+            {"id": "cloud-a", "type": "remote_backups",
+             "api_base": "https://a", "api_key_env": "API_KEY"},
+        ]
+        adapter = FakeAdapter(
+            "cloud-a",
+            health=HealthResult(status="degraded", message="partial outage"),
+        )
+        env["register_adapters"]({"cloud-a": adapter})
+
+        alert_monitor.run_check(env["config"], env["state"])
+
+        log_path = env["tmp_path"] / "notification_log.json"
+        assert log_path.exists()
+        entries = json.loads(log_path.read_text())
+        unhealthy = [e for e in entries
+                     if e.get("alert_key") == "platform:cloud-a:API Unhealthy"]
+        assert len(unhealthy) == 1
+        assert unhealthy[0]["title"] == "API Unhealthy"
+        assert unhealthy[0]["source"] == "alerting"
+
     def test_per_alert_override_still_applies_for_source_tagged_alert(
         self, monitor_env,
     ):
