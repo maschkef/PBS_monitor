@@ -2554,6 +2554,10 @@
             <button class="btn btn-secondary" id="addCloudSourceBtn" style="font-size:0.82rem" onclick="addSource('remote_backups')">+ Add Cloud Source</button>
             <button class="btn btn-secondary" id="addPbsSourceBtn" style="font-size:0.82rem" onclick="addSource('pbs')">+ Add PBS Source</button>
           </div>
+          <div id="sourceTestOutput" style="display:none;margin-top:1rem;">
+            <div class="form-section-title" id="sourceTestOutputLabel">Test result</div>
+            <pre class="test-output" id="sourceTestOutputPre"></pre>
+          </div>
         </div>
 
         <!-- Cron Setup -->
@@ -2747,7 +2751,8 @@
             <span class="source-type-badge"></span>
             <span class="source-id"></span>
             <span class="source-env-status"></span>
-            <button type="button" class="btn btn-secondary source-delete-btn" style="font-size:0.78rem;padding:0.25rem 0.5rem;margin-left:auto;">✕</button>
+            <button type="button" class="btn btn-secondary source-test-btn" style="font-size:0.78rem;padding:0.25rem 0.5rem;margin-left:auto;">🔌 Test</button>
+            <button type="button" class="btn btn-secondary source-delete-btn" style="font-size:0.78rem;padding:0.25rem 0.5rem;">✕</button>
           </div>
           <div class="source-editor-body">
             <div class="form-group source-id-group">

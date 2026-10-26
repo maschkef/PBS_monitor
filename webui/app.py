@@ -1561,6 +1561,256 @@ def alerting_test_notify():
         return jsonify({"ok": False, "error": str(e), "status_code": status_code}), 502
 
 
+# ── Per-source connection test ────────────────────────────────────────────────
+
+_TEST_STEP_NAMES = ("settings", "reachable", "auth", "datastores")
+
+
+def _classify_health_for_test(health):
+    """Map a HealthResult to the "reachable" step dict.
+
+    Returns ``(step_dict, keep_going)``. When *keep_going* is False the caller
+    stops and finalises after this step. PBS reports 401/403 as ``degraded``;
+    we treat that as reachable-ok so the auth step owns the error message.
+    """
+    status = health.status
+    if status == "ok":
+        return (
+            {"name": "reachable", "status": "ok",
+             "message": health.message or "API reachable"},
+            True,
+        )
+    if status == "degraded":
+        msg = health.message or ""
+        if "401" in msg or "403" in msg or "auth" in msg.lower():
+            return (
+                {"name": "reachable", "status": "ok",
+                 "message": "API reachable (auth check pending)"},
+                True,
+            )
+        return (
+            {"name": "reachable", "status": "warn",
+             "message": msg or "API degraded"},
+            True,
+        )
+    # status == "down"
+    if health.net_issue:
+        return (
+            {"name": "reachable", "status": "fail", "message": health.net_issue},
+            False,
+        )
+    return (
+        {"name": "reachable", "status": "fail",
+         "message": f"API unreachable: {health.message or 'unknown error'}"},
+        False,
+    )
+
+
+def _auth_error_message(stype, code):
+    """Translate 401/403 responses into a user-facing step message."""
+    if stype == "pbs":
+        if code == 401:
+            return "Authentication failed (HTTP 401) — token value may be wrong"
+        if code == 403:
+            return (
+                "Token lacks required permissions "
+                "(Datastore.Audit + Sys.Audit on '/')"
+            )
+    else:
+        if code == 401:
+            return "Authentication failed (HTTP 401) — Bearer token invalid"
+        if code == 403:
+            return "Token present but lacks read access to monitoring API"
+    return f"HTTP {code} from source API"
+
+
+def _summarize_backup_coverage(adapter, datastores, stype):
+    """Return ``(total_snapshots, has_any)`` across the given datastores.
+
+    Both adapters populate ``metrics.backup_count`` in ``fetch_datastores``
+    with the real per-store snapshot total (remote_backups: documented
+    required field; PBS: summed in ``_count_backups``), so summing is the
+    primary path. For ``remote_backups`` with the metric unexpectedly
+    missing on every store we probe the first store with a cheap
+    ``fetch_backup_inventory(snapshot_cap=1)`` call to still report
+    presence accurately.
+    """
+    total = 0
+    for d in datastores:
+        total += int((d.get("metrics") or {}).get("backup_count") or 0)
+    if total > 0:
+        return total, True
+    if stype != "remote_backups" or not datastores:
+        return 0, False
+
+    first = datastores[0]
+    ds_id = first.get("id")
+    if not ds_id:
+        return 0, False
+    try:
+        inventory = adapter.fetch_backup_inventory(ds_id, snapshot_cap=1)
+    except (requests.RequestException, RuntimeError, SourceConnectionError):
+        return 0, False
+    summary = (inventory or {}).get("summary") or {}
+    probe_count = int(summary.get("snapshot_count") or 0)
+    return probe_count, probe_count > 0
+
+
+def _finalize_test_result(steps, source_id):
+    """Compute ok/summary from the collected steps and pad missing ones."""
+    first_fail = next((s["name"] for s in steps if s["status"] == "fail"), None)
+    present = {s["name"] for s in steps}
+    for name in _TEST_STEP_NAMES:
+        if name not in present:
+            steps.append({"name": name, "status": "skipped", "message": ""})
+    order = {n: i for i, n in enumerate(_TEST_STEP_NAMES)}
+    steps.sort(key=lambda s: order.get(s["name"], 999))
+
+    if first_fail is not None:
+        return {
+            "ok": False,
+            "source_id": source_id,
+            "steps": steps,
+            "summary": f"Failed at step: {first_fail}",
+        }
+    has_warn = any(s["status"] == "warn" for s in steps)
+    return {
+        "ok": True,
+        "source_id": source_id,
+        "steps": steps,
+        "summary": "Connection successful with warnings" if has_warn
+                   else "Connection successful",
+    }
+
+
+@app.route("/api/alerting/test/source", methods=["POST"])
+@require_auth
+@require_csrf
+@limiter.limit("10 per minute")
+def alerting_test_source():
+    """Run a step-by-step connection probe for a single source entry.
+
+    The body carries one *source* object (same shape the sources list uses in
+    config.json). The entry is validated and used in-memory — the saved
+    config.json is not consulted. Env vars are read from the process
+    environment. The endpoint never mutates state and is allowed in
+    read-only mode.
+    """
+    body = request.get_json(silent=True) or {}
+    entry = body.get("source")
+    if not isinstance(entry, dict):
+        return jsonify({"error": "Request body must contain a 'source' object."}), 400
+
+    source_id = entry.get("id") or "?"
+    steps: list = []
+
+    # Step 1 — settings
+    try:
+        validated = _validators._validate_sources_payload(
+            [entry], legacy_api_base=None,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg.startswith("sources[0]."):
+            msg = msg[len("sources[0]."):]
+        elif msg.startswith("sources[0]"):
+            msg = msg[len("sources[0]"):].lstrip(":. ")
+        steps.append({"name": "settings", "status": "fail", "message": msg})
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    validated_entry = validated[0]
+    source_id = validated_entry["id"]
+    stype = validated_entry["type"]
+    env_name = (
+        validated_entry.get("api_key_env", "API_KEY")
+        if stype == "remote_backups"
+        else validated_entry["token_env"]
+    )
+    if not os.environ.get(env_name, ""):
+        steps.append({
+            "name": "settings", "status": "fail",
+            "message": f"Environment variable {env_name} is not set",
+        })
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    steps.append({
+        "name": "settings", "status": "ok",
+        "message": "All required fields present",
+    })
+
+    # Step 2 — reachable
+    try:
+        adapter = build_source(validated_entry)
+    except (ValueError, RuntimeError) as exc:
+        steps.append({"name": "reachable", "status": "fail", "message": str(exc)})
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    try:
+        health = adapter.check_health()
+    except Exception as exc:  # noqa: BLE001 — API boundary: never crash the handler
+        steps.append({"name": "reachable", "status": "fail", "message": str(exc)})
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    reach_step, keep_going = _classify_health_for_test(health)
+    steps.append(reach_step)
+    if not keep_going:
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    # Step 3 (auth) and Step 4 (datastores) share one fetch call.
+    try:
+        datastores = adapter.fetch_datastores()
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else 0
+        steps.append({
+            "name": "auth", "status": "fail",
+            "message": _auth_error_message(stype, code),
+        })
+        return jsonify(_finalize_test_result(steps, source_id))
+    except RuntimeError as exc:
+        steps.append({"name": "auth", "status": "fail", "message": str(exc)})
+        return jsonify(_finalize_test_result(steps, source_id))
+    except (SourceConnectionError, requests.RequestException) as exc:
+        steps.append({"name": "auth", "status": "fail", "message": str(exc)})
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    steps.append({
+        "name": "auth", "status": "ok", "message": "Authentication succeeded",
+    })
+
+    if not datastores:
+        steps.append({
+            "name": "datastores", "status": "warn",
+            "message": "No datastores accessible with this token",
+        })
+        return jsonify(_finalize_test_result(steps, source_id))
+
+    try:
+        total_snapshots, has_any = _summarize_backup_coverage(adapter, datastores, stype)
+    except Exception:  # noqa: BLE001 — never fail the probe on a bookkeeping error
+        total_snapshots, has_any = 0, False
+
+    total = len(datastores)
+    noun = "datastore" if total == 1 else "datastores"
+    if not has_any:
+        steps.append({
+            "name": "datastores", "status": "warn",
+            "message": f"Found {total} {noun} but no backups yet",
+        })
+    elif total_snapshots > 0:
+        snap_noun = "snapshot" if total_snapshots == 1 else "snapshots"
+        steps.append({
+            "name": "datastores", "status": "ok",
+            "message": f"Found {total} {noun}, {total_snapshots} {snap_noun} total",
+        })
+    else:
+        steps.append({
+            "name": "datastores", "status": "ok",
+            "message": f"Found {total} {noun}, backups present",
+        })
+
+    return jsonify(_finalize_test_result(steps, source_id))
+
+
 @app.route("/api/alerting/notification-log", methods=["GET"])
 @require_auth
 def get_notification_log():

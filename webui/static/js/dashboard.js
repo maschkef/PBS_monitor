@@ -2377,6 +2377,9 @@
             const delBtn = root.querySelector('.source-delete-btn');
             delBtn.addEventListener('click', () => removeSourceCard(delBtn));
 
+            const testBtn = root.querySelector('.source-test-btn');
+            testBtn.addEventListener('click', () => runSourceConnectionTest(root, testBtn));
+
             root.querySelectorAll('input, select').forEach(el => {
                 el.addEventListener('input', () => { _sourcesDirty = true; });
                 el.addEventListener('change', () => { _sourcesDirty = true; });
@@ -2385,6 +2388,7 @@
             if (_sourcesReadOnly) {
                 root.querySelector('.source-fieldset').disabled = true;
                 delBtn.disabled = true;
+                testBtn.disabled = true;
             }
 
             return root;
@@ -2419,61 +2423,63 @@
             if (empty && !list.children.length) empty.style.display = 'block';
         }
 
+        function _collectSingleSource(row, index) {
+            const id = row.querySelector('.src-id').value.trim();
+            const type = row.querySelector('.src-type').value;
+            if (!id) throw new Error(`Source ${index + 1}: ID is required.`);
+            if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+                throw new Error(`Source '${id}': ID may only contain lower-case letters, numbers and dashes.`);
+            }
+
+            if (type === 'remote_backups') {
+                const api_base = row.querySelector('.src-api_base').value.trim();
+                const api_key_env = row.querySelector('.src-api_key_env').value.trim();
+                if (!api_base) throw new Error(`Source '${id}': API Base URL is required.`);
+                if (!api_key_env) throw new Error(`Source '${id}': API Key environment variable is required.`);
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(api_key_env)) {
+                    throw new Error(`Source '${id}': API Key environment variable must be a valid env-var name.`);
+                }
+                _validateSourceUrl(api_base, `Source '${id}' API Base URL`);
+                return { id, type, api_base, api_key_env };
+            } else if (type === 'pbs') {
+                const base_url = row.querySelector('.src-base_url').value.trim();
+                const node = row.querySelector('.src-node').value.trim();
+                const token_env = row.querySelector('.src-token_env').value.trim();
+                const verify_tls = row.querySelector('.src-verify_tls').checked;
+                const fingerprint = row.querySelector('.src-fingerprint').value.trim();
+                const datastoresRaw = row.querySelector('.src-datastores').value;
+                const label = row.querySelector('.src-label').value.trim();
+                if (!base_url) throw new Error(`Source '${id}': Base URL is required.`);
+                if (!node) throw new Error(`Source '${id}': Node name is required.`);
+                if (node.includes('.') || node.includes('://') || node.includes('/')) {
+                    throw new Error(`Source '${id}': Node name must be a short hostname, not an FQDN or URL.`);
+                }
+                if (!token_env) throw new Error(`Source '${id}': Token environment variable is required.`);
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(token_env)) {
+                    throw new Error(`Source '${id}': Token environment variable must be a valid env-var name.`);
+                }
+                _validateSourceUrl(base_url, `Source '${id}' Base URL`);
+                if (!verify_tls && !fingerprint) {
+                    throw new Error(`Source '${id}': TLS verification disabled requires a fingerprint.`);
+                }
+                const datastores = datastoresRaw.split(',').map(s => s.trim()).filter(Boolean);
+                const obj = { id, type, base_url, node, token_env, verify_tls, datastores };
+                if (label) obj.label = label;
+                if (fingerprint) obj.fingerprint = fingerprint;
+                return obj;
+            }
+            throw new Error(`Source '${id}': unsupported type '${type}'.`);
+        }
+
         function collectSources() {
             const rows = document.querySelectorAll('#sourcesList .source-editor');
             const out = [];
             const ids = new Set();
-            let idx = 0;
-            rows.forEach(row => {
-                const id = row.querySelector('.src-id').value.trim();
-                const type = row.querySelector('.src-type').value;
-                if (!id) throw new Error(`Source ${idx + 1}: ID is required.`);
-                if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
-                    throw new Error(`Source '${id}': ID may only contain lower-case letters, numbers and dashes.`);
-                }
-                if (ids.has(id)) throw new Error(`Duplicate source ID '${id}'.`);
-                ids.add(id);
-
-                if (type === 'remote_backups') {
-                    const api_base = row.querySelector('.src-api_base').value.trim();
-                    const api_key_env = row.querySelector('.src-api_key_env').value.trim();
-                    if (!api_base) throw new Error(`Source '${id}': API Base URL is required.`);
-                    if (!api_key_env) throw new Error(`Source '${id}': API Key environment variable is required.`);
-                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(api_key_env)) {
-                        throw new Error(`Source '${id}': API Key environment variable must be a valid env-var name.`);
-                    }
-                    _validateSourceUrl(api_base, `Source '${id}' API Base URL`);
-                    out.push({ id, type, api_base, api_key_env });
-                } else if (type === 'pbs') {
-                    const base_url = row.querySelector('.src-base_url').value.trim();
-                    const node = row.querySelector('.src-node').value.trim();
-                    const token_env = row.querySelector('.src-token_env').value.trim();
-                    const verify_tls = row.querySelector('.src-verify_tls').checked;
-                    const fingerprint = row.querySelector('.src-fingerprint').value.trim();
-                    const datastoresRaw = row.querySelector('.src-datastores').value;
-                    const label = row.querySelector('.src-label').value.trim();
-                    if (!base_url) throw new Error(`Source '${id}': Base URL is required.`);
-                    if (!node) throw new Error(`Source '${id}': Node name is required.`);
-                    if (node.includes('.') || node.includes('://') || node.includes('/')) {
-                        throw new Error(`Source '${id}': Node name must be a short hostname, not an FQDN or URL.`);
-                    }
-                    if (!token_env) throw new Error(`Source '${id}': Token environment variable is required.`);
-                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(token_env)) {
-                        throw new Error(`Source '${id}': Token environment variable must be a valid env-var name.`);
-                    }
-                    _validateSourceUrl(base_url, `Source '${id}' Base URL`);
-                    if (!verify_tls && !fingerprint) {
-                        throw new Error(`Source '${id}': TLS verification disabled requires a fingerprint.`);
-                    }
-                    const datastores = datastoresRaw.split(',').map(s => s.trim()).filter(Boolean);
-                    const obj = { id, type, base_url, node, token_env, verify_tls, datastores };
-                    if (label) obj.label = label;
-                    if (fingerprint) obj.fingerprint = fingerprint;
-                    out.push(obj);
-                } else {
-                    throw new Error(`Source '${id}': unsupported type '${type}'.`);
-                }
-                idx++;
+            rows.forEach((row, idx) => {
+                const entry = _collectSingleSource(row, idx);
+                if (ids.has(entry.id)) throw new Error(`Duplicate source ID '${entry.id}'.`);
+                ids.add(entry.id);
+                out.push(entry);
             });
             return out;
         }
@@ -3082,6 +3088,80 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '📬 Send test notification';
+            }
+        }
+
+        // ── Per-source connection test ────────────────────────────────────
+        const SOURCE_TEST_STEP_LABEL = {
+            settings:   'Settings',
+            reachable:  'API reachable',
+            auth:       'Credentials & permissions',
+            datastores: 'Datastore discovery',
+        };
+        const SOURCE_TEST_GLYPH = { ok: '✓', warn: '⚠', fail: '✗', skipped: '…' };
+
+        function showSourceTestOutput(label, content) {
+            const panel = document.getElementById('sourceTestOutput');
+            const labelEl = document.getElementById('sourceTestOutputLabel');
+            const preEl = document.getElementById('sourceTestOutputPre');
+            if (!panel || !labelEl || !preEl) return;
+            labelEl.textContent = label;
+            preEl.textContent = content;
+            panel.style.display = '';
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function formatSourceTestResult(data) {
+            const lines = [];
+            for (const s of data.steps || []) {
+                const glyph = SOURCE_TEST_GLYPH[s.status] || '?';
+                const label = SOURCE_TEST_STEP_LABEL[s.name] || s.name;
+                const msg = s.message ? ': ' + s.message : '';
+                lines.push(`${glyph} ${label}${msg}`);
+            }
+            lines.push('');
+            lines.push(data.summary || (data.ok ? 'Connection successful' : 'Connection failed'));
+            return lines.join('\n');
+        }
+
+        async function runSourceConnectionTest(row, btn) {
+            let entry;
+            try {
+                entry = _collectSingleSource(row, 0);
+            } catch (e) {
+                showSourceTestOutput('Test connection - invalid settings', e.message);
+                return;
+            }
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ Testing…';
+            showSourceTestOutput(`Testing source '${entry.id}'…`, '');
+            try {
+                const res = await fetchWrite('/api/alerting/test/source', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: entry }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    const { description } = categorizeError(`HTTP ${res.status}`);
+                    const detail = data.error || `HTTP ${res.status}`;
+                    showSourceTestOutput(
+                        'Test connection failed',
+                        description ? `${description}\n\n${detail}` : detail
+                    );
+                    return;
+                }
+                const label = data.ok
+                    ? `✓ Connection OK — ${entry.id}`
+                    : `✗ Connection failed — ${entry.id}`;
+                showSourceTestOutput(label, formatSourceTestResult(data));
+            } catch (e) {
+                const { description } = categorizeError(e.message);
+                showSourceTestOutput('Error', description ? `${description}\n\n${e.message}` : e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
 
