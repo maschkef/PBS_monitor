@@ -22,9 +22,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Strip pip / setuptools / wheel and their vendored / bundled wheels from the
 # final image. They are only needed at build time and Trivy flags their
 # vendored copies (e.g. pip/_vendor/msgpack, ensurepip/_bundled/setuptools).
-RUN pip uninstall -y pip setuptools wheel \
-    && find /usr/local/lib/python3.14 -type d -name "_bundled" -exec rm -rf {} + \
-    && find /usr/local/lib/python3.14 -type d -name "__pycache__" -exec rm -rf {} +
+# PY_LIB is resolved dynamically so Dependabot bumps of the python:X.Y-slim
+# base image don't break the strip step.
+RUN PY_LIB=$(python -c "import sys; print(f'/usr/local/lib/python{sys.version_info.major}.{sys.version_info.minor}')") \
+    && pip uninstall -y pip setuptools wheel \
+    && find "$PY_LIB" -type d -name "_bundled" -exec rm -rf {} + \
+    && find "$PY_LIB" -type d -name "__pycache__" -exec rm -rf {} +
 
 # Copy application code
 COPY webui/ ./webui/
