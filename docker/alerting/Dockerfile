@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 LABEL org.opencontainers.image.source=https://github.com/maschkef/PBS_monitor
 LABEL org.opencontainers.image.description="PBS Monitor Alerting Service"
