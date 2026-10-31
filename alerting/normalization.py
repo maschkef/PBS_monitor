@@ -290,8 +290,15 @@ def empty_inventory_summary():
 
 
 def default_storage_history():
-    """Return empty storage-history tiers for one datastore."""
-    return {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+    """Return empty storage-history tiers for one datastore.
+
+    Includes the ``backfill_rrd_status`` sibling marker used by the PBS
+    RRD backfill: ``None`` means "never attempted"; a dict carries the
+    outcome of the last attempt.
+    """
+    result: dict = {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+    result["backfill_rrd_status"] = None
+    return result
 
 
 def default_datastore_state(name="unknown"):
@@ -457,24 +464,41 @@ def _coerce_float(value):
         return None
 
 
+_STORAGE_POINT_SOURCES = ("polled", "backfill_rrd")
+
+
 def _normalize_storage_point(entry):
-    """Normalize one storage-history data point; return None for invalid input."""
+    """Normalize one storage-history data point; return None for invalid input.
+
+    Accepts an optional ``source`` field (one of
+    ``_STORAGE_POINT_SOURCES``); legacy points without that key default
+    to ``"polled"`` so pre-backfill state remains correctly labelled.
+    """
     if not isinstance(entry, dict):
         return None
     ts = coerce_int(entry.get("ts"))
     if ts is None or ts <= 0:
         return None
+    source = entry.get("source")
+    if source not in _STORAGE_POINT_SOURCES:
+        source = "polled"
     return {
         "ts": ts,
         "used_bytes": _coerce_float(entry.get("used_bytes")),
         "available_bytes": _coerce_float(entry.get("available_bytes")),
         "used_percent": _coerce_float(entry.get("used_percent")),
+        "source": source,
     }
 
 
 def normalize_storage_history(obj):
-    """Normalize a storage_history object into the canonical four-tier shape."""
-    result = {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+    """Normalize a storage_history object into the canonical four-tier shape.
+
+    Also passes the ``backfill_rrd_status`` sibling through (defaulting
+    to ``None``) so the RRD backfill marker survives a load/save cycle.
+    """
+    result: dict = {tier: [] for tier in _STORAGE_HISTORY_TIER_KEYS}
+    result["backfill_rrd_status"] = None
     if not isinstance(obj, dict):
         return result
     for tier in _STORAGE_HISTORY_TIER_KEYS:
@@ -488,6 +512,9 @@ def normalize_storage_history(obj):
                 continue
             deduped[point["ts"]] = point
         result[tier] = sorted(deduped.values(), key=lambda p: p["ts"])
+    bf_status = obj.get("backfill_rrd_status")
+    if isinstance(bf_status, dict) or bf_status is None:
+        result["backfill_rrd_status"] = bf_status
     return result
 
 
@@ -583,11 +610,18 @@ def _promote_tier(src_entries, dst_entries, bucket_seconds, cutoff_ts):
     for bucket_start, entries in buckets.items():
         if bucket_start in dst_by_ts:
             continue
+        # Mixed polled+backfill buckets collapse to ``polled`` so promoted
+        # history reflects the live-polled baseline whenever any such
+        # point was present during the aggregation window.
+        all_backfill = all(
+            (e.get("source") or "polled") == "backfill_rrd" for e in entries
+        )
         dst_by_ts[bucket_start] = {
             "ts": bucket_start,
             "used_bytes": _median(e["used_bytes"] for e in entries),
             "available_bytes": _median(e["available_bytes"] for e in entries),
             "used_percent": _median(e["used_percent"] for e in entries),
+            "source": "backfill_rrd" if all_backfill else "polled",
         }
 
     return keep, sorted(dst_by_ts.values(), key=lambda p: p["ts"])
@@ -635,6 +669,46 @@ def prune_storage_history(history, config=None, now_ts=None):
         now_ts = int(datetime.now(UTC).timestamp())
     cutoff = now_ts - daily_retention * _SECONDS_PER_DAY
     history["daily"] = [p for p in history.get("daily", []) if p["ts"] >= cutoff]
+
+
+def insert_backfill_point(history, point, tier, boundary_ts):
+    """Insert a pre-aggregated backfill point into *history* at *tier*.
+
+    Caller is responsible for snapping *point["ts"]* to the destination
+    tier's bucket boundary and for computing per-field medians across any
+    source rows that collapsed into the same bucket.
+
+    Returns True on insert / overwrite-of-backfill, False when blocked by
+    the ``boundary_ts`` guard or by an existing polled sample at the same
+    ``ts`` (polled-first-wins).  The inserted point always carries
+    ``source="backfill_rrd"``.
+    """
+    if not isinstance(history, dict) or not isinstance(point, dict):
+        return False
+    ts = point.get("ts")
+    if not isinstance(ts, int) or ts <= 0:
+        return False
+    if ts >= boundary_ts:
+        return False
+    tier_entries = history.setdefault(tier, [])
+    stored = {
+        "ts": ts,
+        "used_bytes": point.get("used_bytes"),
+        "available_bytes": point.get("available_bytes"),
+        "used_percent": point.get("used_percent"),
+        "source": "backfill_rrd",
+    }
+    for i, existing in enumerate(tier_entries):
+        if existing.get("ts") == ts:
+            # Legacy entries without ``source`` are treated as polled —
+            # we never overwrite a live-polled sample with backfill data.
+            if (existing.get("source") or "polled") == "polled":
+                return False
+            tier_entries[i] = stored
+            return True
+    tier_entries.append(stored)
+    tier_entries.sort(key=lambda p: p["ts"])
+    return True
 
 
 # ── State / rule migration ────────────────────────────────────────────────────

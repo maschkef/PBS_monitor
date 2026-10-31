@@ -131,6 +131,7 @@ Paste the result (colons-separated or without colons) as the `fingerprint` field
 | `GET /api2/json/admin/datastore/{store}/namespace` | `fetch_backup_inventory` | List namespaces |
 | `GET /api2/json/admin/datastore/{store}/groups?ns={ns}` | `fetch_backup_inventory` | List backup groups per namespace |
 | `GET /api2/json/admin/datastore/{store}/snapshots?ns={ns}` | `fetch_backup_inventory` | List snapshots per namespace |
+| `GET /api2/json/admin/datastore/{store}/rrd?timeframe=&cf=` | `backfill_pbs_storage` | RRD history for the usage chart ([see below](#storage-history-backfill-from-pbs-rrd)) |
 | `GET /api2/json/nodes/{node}/tasks?typefilter=garbage_collection&store={store}` | `fetch_datastores` | Last GC task |
 | `GET /api2/json/nodes/{node}/tasks?typefilter=verificationjob` | `fetch_datastores` | Last verify task (filtered on `worker_id` prefix) |
 | `GET /api2/json/config/datastore/{store}` | `fetch_datastores` | `gc-schedule`, `verify-new` configuration |
@@ -138,6 +139,30 @@ Paste the result (colons-separated or without colons) as the `fingerprint` field
 | `GET /api2/json/config/prune` | `fetch_datastores` | Prune jobs for retention policy |
 
 All requests use `Authorization: PBSAPIToken=<token>` and a 15 s timeout — identical to the Cloud adapter.
+
+## Storage-history backfill from PBS RRD
+
+By default, the monitor imports a PBS datastore's native RRD history on the **first successful poll** so the usage-history chart isn't empty for new sources. Users can also trigger it manually via the **"Reimport history"** button in the datastore's *Usage History* panel.
+
+**Scope.** Only `used`, `total`, and `available` are imported — the backfill never introduces new chart series. Imported points are placed age-based into the existing `storage_history` tiers (`raw`/`hourly`/`sixhour`/`daily`) and summarised with the same median-per-bucket aggregation. Each imported point is tagged `source: "backfill_rrd"`; polled samples (`source: "polled"`) always win over backfill in the same bucket, so live polling takes over seamlessly once samples start accumulating.
+
+**Where it lives.** `alerting/sources/pbs_rrd.py` fetches `/admin/datastore/<store>/rrd?timeframe=&cf=` for each configured timeframe, parses the dense rows, groups them into `(tier, snapped_ts)` buckets, computes the median per bucket, and inserts via `insert_backfill_point()`. A `boundary_ts` (the oldest polled timestamp across all tiers) prevents the backfill from overwriting live samples.
+
+**Config.** `pbs_backfill` in `config.json`:
+
+```json
+"pbs_backfill": {
+  "enabled": true,
+  "timeframes": ["day", "month", "year", "decade"],
+  "cf": "AVERAGE"
+}
+```
+
+Valid timeframes: `hour`, `day`, `week`, `month`, `year`, `decade` (PBS's native RRD scopes). `cf` is either `AVERAGE` or `MAX`. The defaults cover the past day down to multi-year coverage; set `enabled: false` to disable the feature entirely.
+
+**ACL requirements.** The PBS token needs `Datastore.Audit` (or `Datastore.Reader`) on the datastore being backfilled — the same permission the rest of the adapter needs. The usual `Datastore.Audit` on `/` with Propagate (see [Grant permissions](#grant-permissions)) covers this.
+
+**Degradation.** A `401`, `403`, or `404` from `/rrd` on any configured timeframe is treated as **unavailable** rather than an error: the backfill records `status: "unavailable"` with the HTTP reason, the chart shows a small hint under the usage panel, and the monitor does **not** retry on every subsequent cycle. Other errors (`ConnectionError`, `Timeout`, `5xx`) propagate so the monitor hook records `status: "error"` and may retry on the next cycle. The one-shot guard in `backfill_rrd_status` prevents re-runs after a successful backfill; pressing *"Reimport history"* in the Web UI resets the marker to `"pending_retry"` so the next monitor cycle will re-run the backfill.
 
 ## Alert coverage per source type
 

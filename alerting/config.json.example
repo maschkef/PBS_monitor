@@ -69,6 +69,13 @@
     "rescale_history_max_entries": 1000
   },
 
+  "_comment_pbs_backfill": "One-shot import of a PBS datastore's native RRD history on first successful poll (and whenever the 'Reimport history' button is pressed in the Web UI). Fills the usage-history chart with past samples so new PBS sources don't start empty. Only used/total/available are imported; placement into raw/hourly/sixhour/daily follows storage_history retention, and polled samples always win over backfill in the same bucket. enabled: master switch. timeframes: which PBS RRD timeframes to fetch (valid: 'hour', 'day', 'week', 'month', 'year', 'decade'); the defaults cover from the past day down to multi-year coverage. cf: PBS consolidation function ('AVERAGE' or 'MAX'). Requires 'Datastore.Audit' (or 'Datastore.Reader') ACL on the PBS token; a 401/403/404 degrades gracefully (chart shows a hint, no retry storm).",
+  "pbs_backfill": {
+    "enabled": true,
+    "timeframes": ["day", "month", "year", "decade"],
+    "cf": "AVERAGE"
+  },
+
   "_comment_status_feed": "Enrich backup-/API-related alerts with context from the remote-backups.com status page. When a backup-related alert fires, the daemon fetches the status feed (cached in-process) and appends any currently-open or recently-overlapping incidents affecting the configured host. 'url' points at the JSON feed. 'cache_minutes' limits how often the feed is re-fetched. 'lookback_minutes' controls how far back from the alert time an incident is still considered 'possibly related'. 'default_host' is the global fallback host used for matching (e.g. 'dus1-1.pbs-host.de'); per-datastore / per-namespace overrides live in 'host_overrides'.",
   "status_feed": {
     "enabled": true,

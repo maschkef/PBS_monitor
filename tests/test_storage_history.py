@@ -28,8 +28,9 @@ def _sample(ts, used_percent=50.0, used_bytes=500_000_000_000, available_bytes=5
 
 def test_normalize_returns_four_tier_shape_for_none():
     out = normalize_storage_history(None)
-    assert set(out) == set(_STORAGE_HISTORY_TIER_KEYS)
+    assert set(_STORAGE_HISTORY_TIER_KEYS).issubset(out)
     assert all(out[tier] == [] for tier in _STORAGE_HISTORY_TIER_KEYS)
+    assert out["backfill_rrd_status"] is None
 
 
 def test_normalize_drops_entries_without_valid_ts():
@@ -69,7 +70,8 @@ def test_normalize_coerces_numeric_fields_to_float():
 def test_default_datastore_state_has_empty_storage_history():
     ds = default_datastore_state("x")
     assert ds["storage_history"] == default_storage_history()
-    assert set(ds["storage_history"]) == set(_STORAGE_HISTORY_TIER_KEYS)
+    assert set(_STORAGE_HISTORY_TIER_KEYS).issubset(ds["storage_history"])
+    assert ds["storage_history"]["backfill_rrd_status"] is None
 
 
 # ── append_storage_sample ────────────────────────────────────────────────────
@@ -182,6 +184,69 @@ def test_promote_preserves_existing_dst_bucket():
     promote_storage_history(history, now_ts=now)
     assert history["hourly"][0]["used_percent"] == 99.0
     assert history["raw"] == []  # aged sample dropped (bucket already present)
+
+
+# ── promote source-field behavior (RRD backfill interactions) ────────────────
+
+def test_promote_pure_backfill_bucket_stays_backfill():
+    now = 100 * _SECONDS_PER_DAY
+    bucket_start = now - 8 * _SECONDS_PER_DAY
+    bucket_start -= bucket_start % 3600
+    history = default_storage_history()
+    history["raw"] = [
+        {**_sample(bucket_start, used_percent=10.0), "source": "backfill_rrd"},
+        {**_sample(bucket_start + 60, used_percent=20.0), "source": "backfill_rrd"},
+    ]
+    promote_storage_history(history, now_ts=now)
+    assert history["hourly"][0]["source"] == "backfill_rrd"
+
+
+def test_promote_mixed_bucket_collapses_to_polled():
+    """A bucket containing even one polled sample must promote as polled."""
+    now = 100 * _SECONDS_PER_DAY
+    bucket_start = now - 8 * _SECONDS_PER_DAY
+    bucket_start -= bucket_start % 3600
+    history = default_storage_history()
+    history["raw"] = [
+        {**_sample(bucket_start, used_percent=10.0), "source": "backfill_rrd"},
+        {**_sample(bucket_start + 60, used_percent=20.0), "source": "polled"},
+    ]
+    promote_storage_history(history, now_ts=now)
+    assert history["hourly"][0]["source"] == "polled"
+
+
+def test_promote_legacy_point_defaults_to_polled():
+    """Pre-existing points without a `source` field pre-date the backfill."""
+    now = 100 * _SECONDS_PER_DAY
+    bucket_start = now - 8 * _SECONDS_PER_DAY
+    bucket_start -= bucket_start % 3600
+    history = default_storage_history()
+    history["raw"] = [
+        # legacy shape — no `source` key
+        _sample(bucket_start, used_percent=10.0),
+    ]
+    promote_storage_history(history, now_ts=now)
+    assert history["hourly"][0]["source"] == "polled"
+
+
+def test_normalize_defaults_missing_source_to_polled():
+    out = normalize_storage_history({"raw": [{"ts": 1000, "used_percent": 10.0}]})
+    assert out["raw"][0]["source"] == "polled"
+
+
+def test_normalize_passes_backfill_source_through():
+    out = normalize_storage_history(
+        {"raw": [{"ts": 1000, "used_percent": 10.0, "source": "backfill_rrd"}]}
+    )
+    assert out["raw"][0]["source"] == "backfill_rrd"
+
+
+def test_normalize_rejects_unknown_source_value():
+    """Unknown source strings fall back to `polled` (not silently preserved)."""
+    out = normalize_storage_history(
+        {"raw": [{"ts": 1000, "used_percent": 10.0, "source": "evil"}]}
+    )
+    assert out["raw"][0]["source"] == "polled"
 
 
 # ── prune_storage_history ────────────────────────────────────────────────────
@@ -465,6 +530,108 @@ def test_storage_history_endpoint_without_auth_configured(client_no_auth, tmp_pa
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["points"] == []
+
+
+# ── sample_source + backfill_status passthrough ──────────────────────────────
+
+def test_storage_history_endpoint_passes_through_sample_source(
+    client_logged_in, tmp_path,
+):
+    client, _csrf = client_logged_in
+    import time
+    now_ts = int(time.time())
+    recent = now_ts - 3600
+    polled_recent = {**_sample(recent, used_percent=42.0), "source": "polled"}
+    backfill_old = {
+        **_sample(recent - 60, used_percent=55.0),
+        "source": "backfill_rrd",
+    }
+    _write_state(tmp_path, {
+        "ds-1": {
+            "name": "ds-1",
+            "storage_history": {
+                "raw": [backfill_old, polled_recent],
+                "hourly": [],
+                "sixhour": [],
+                "daily": [],
+                "backfill_rrd_status": {
+                    "status": "ok",
+                    "points_added": 7,
+                },
+            },
+        },
+    })
+    resp = client.get("/api/datastores/ds-1/storage-history?range=7d")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    sources = {p["ts"]: p["sample_source"] for p in body["points"]}
+    assert sources[recent] == "polled"
+    assert sources[recent - 60] == "backfill_rrd"
+    assert body["backfill_status"] == {"status": "ok", "points_added": 7}
+
+
+def test_storage_history_endpoint_backfill_status_none_when_absent(
+    client_logged_in, tmp_path,
+):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.get("/api/datastores/ds-1/storage-history?range=7d")
+    assert resp.status_code == 200
+    assert resp.get_json()["backfill_status"] is None
+
+
+# ── POST /storage-history/backfill ───────────────────────────────────────────
+
+def test_backfill_route_sets_pending_retry_marker(client_logged_in, tmp_path):
+    client, csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.post(
+        "/api/datastores/pbs:local:ssd/storage-history/backfill",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["status"] == "scheduled"
+    assert isinstance(body["next_cycle_in_s"], int) and body["next_cycle_in_s"] > 0
+
+    state = json.loads((tmp_path / "state.json").read_text())
+    ds = state["datastores"]["pbs:local:ssd"]
+    assert ds["storage_history"]["backfill_rrd_status"]["status"] == "pending_retry"
+    assert "requested_at" in ds["storage_history"]["backfill_rrd_status"]
+
+
+def test_backfill_route_rejects_non_pbs_datastore(client_logged_in, tmp_path):
+    client, csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.post(
+        "/api/datastores/some-cloud-ds/storage-history/backfill",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert resp.status_code == 400
+
+
+def test_backfill_route_requires_csrf(client_logged_in, tmp_path):
+    client, _csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.post(
+        "/api/datastores/pbs:local:ssd/storage-history/backfill",
+    )
+    assert resp.status_code in (400, 403)
+
+
+def test_backfill_route_blocked_in_read_only_mode(
+    monkeypatch, client_logged_in, tmp_path,
+):
+    import webui.app as webapp
+    monkeypatch.setattr(webapp, "WEBUI_READ_ONLY", True)
+    client, csrf = client_logged_in
+    _write_state(tmp_path, {})
+    resp = client.post(
+        "/api/datastores/pbs:local:ssd/storage-history/backfill",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert resp.status_code == 403
 
 
 # ── Suppress unused imports warning when running isolated ────────────────────

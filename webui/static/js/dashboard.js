@@ -1596,6 +1596,24 @@
             loadUsageHistory(dsId, range);
         }
 
+        async function triggerStorageBackfill(dsId) {
+            try {
+                const resp = await fetchWrite(
+                    `/api/datastores/${encodeURIComponent(dsId)}/storage-history/backfill`,
+                    { method: 'POST' }
+                );
+                const data = await resp.json().catch(() => ({}));
+                if (resp.ok) {
+                    const mins = Math.max(1, Math.round((data.next_cycle_in_s || 1800) / 60));
+                    window.alert(`Backfill scheduled. It will run on the next monitor cycle (within ~${mins} min).`);
+                } else {
+                    window.alert(data.error || `Failed to schedule backfill (HTTP ${resp.status})`);
+                }
+            } catch (e) {
+                window.alert(e.message || 'Failed to schedule backfill');
+            }
+        }
+
         function toggleChartSeries(el, series) {
             const section = el.closest('.section');
             const wrap = section && section.querySelector('.chart-wrap');
@@ -1623,6 +1641,10 @@
             const resetBtn = zoom
                 ? `<button type="button" class="header-select chart-zoom-reset-btn" onclick="resetUsageHistoryZoom(${dsIdAttr})" title="Clear zoom and return to the selected range">Reset zoom</button>`
                 : '';
+            const isPbs = typeof dsId === 'string' && dsId.startsWith('pbs:');
+            const backfillBtn = (isPbs && !_sourcesReadOnly)
+                ? `<button type="button" class="header-select" onclick="triggerStorageBackfill(${dsIdAttr})" title="Re-import the datastore's RRD history from PBS on the next monitor cycle">Reimport history</button>`
+                : '';
             const header = `
                 <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;">
                     <span>Usage History</span>
@@ -1631,6 +1653,7 @@
                             ${rangeOptions}
                         </select>
                         ${resetBtn}
+                        ${backfillBtn}
                     </div>
                 </div>`;
 
@@ -1677,10 +1700,17 @@
                 `<span class="tooltip-icon">i<span class="tooltip-text">${escHtml(sampleCountText)} · ${escHtml(tiersText)}</span></span>`,
             ].filter(Boolean).join('');
             const legend = renderUsageHistoryLegend(warn, crit, dsId);
+            const bf = data.backfill_status;
+            let backfillNote = '';
+            if (bf && (bf.status === 'unavailable' || bf.status === 'error')) {
+                const label = bf.status === 'unavailable' ? 'Backfill unavailable' : 'Backfill failed';
+                backfillNote = `<div class="soft-note">${escHtml(label)}: ${escHtml(bf.reason || 'see monitor log')}</div>`;
+            }
             return `
                 <div class="chart-meta">${metaParts}</div>
                 ${legend}
                 ${renderUsageHistoryChart(points, warn, crit, dsId)}
+                ${backfillNote}
             `;
         }
 
@@ -1693,6 +1723,7 @@
                 mk('points', `<span class="chart-legend-swatch dot" style="background:var(--cyan);"></span>`, 'Points'),
                 mk('used-bytes', `<span class="chart-legend-swatch" style="background:var(--purple);"></span>`, 'Used (bytes)'),
                 mk('total-bytes', `<span class="chart-legend-swatch dashed" style="color:var(--text-dim);"></span>`, 'Total (bytes)'),
+                mk('backfill', `<span class="chart-legend-swatch dashed" style="color:var(--cyan);"></span>`, 'Backfill (PBS RRD)'),
             ];
             if (typeof warnPct === 'number' && warnPct > 0) {
                 items.push(mk('warn', `<span class="chart-legend-swatch dashed" style="color:var(--yellow);"></span>`, `Warn ${warnPct}%`));
@@ -1754,20 +1785,28 @@
                 xTicks.push(`<text x="${x}" y="${padT + plotH + 18}" fill="var(--text-dim)" font-size="11" text-anchor="middle">${escHtml(label)}</text>`);
             }
 
-            const percentPolyline = points
-                .filter(p => typeof p.used_percent === 'number')
-                .map(p => `${xFor(p.ts).toFixed(2)},${yFor(p.used_percent).toFixed(2)}`)
+            // Chart series are split at the first polled sample so RRD-backfill
+            // points (older) can be rendered as a dashed/dim segment to signal
+            // they came from PBS's own history rather than live polling.
+            const isBackfill = p => p.sample_source === 'backfill_rrd';
+            const polyAt = (filter, yFn) => points
+                .filter(p => filter(p))
+                .map(p => `${xFor(p.ts).toFixed(2)},${yFn(p).toFixed(2)}`)
                 .join(' ');
 
-            const usedBytesPolyline = points
-                .filter(p => typeof p.used_bytes === 'number')
-                .map(p => `${xFor(p.ts).toFixed(2)},${yForBytes(p.used_bytes).toFixed(2)}`)
-                .join(' ');
+            const pctFilter = p => typeof p.used_percent === 'number';
+            const usedFilter = p => typeof p.used_bytes === 'number';
+            const totalFilter = p => totalBytesFor(p) > 0;
+            const yPct = p => yFor(p.used_percent);
+            const yUsed = p => yForBytes(p.used_bytes);
+            const yTotal = p => yForBytes(totalBytesFor(p));
 
-            const totalBytesPolyline = points
-                .filter(p => totalBytesFor(p) > 0)
-                .map(p => `${xFor(p.ts).toFixed(2)},${yForBytes(totalBytesFor(p)).toFixed(2)}`)
-                .join(' ');
+            const percentPolyline      = polyAt(p => pctFilter(p)   && !isBackfill(p), yPct);
+            const usedBytesPolyline    = polyAt(p => usedFilter(p)  && !isBackfill(p), yUsed);
+            const totalBytesPolyline   = polyAt(p => totalFilter(p) && !isBackfill(p), yTotal);
+            const percentPolylineBF    = polyAt(p => pctFilter(p)   &&  isBackfill(p), yPct);
+            const usedBytesPolylineBF  = polyAt(p => usedFilter(p)  &&  isBackfill(p), yUsed);
+            const totalBytesPolylineBF = polyAt(p => totalFilter(p) &&  isBackfill(p), yTotal);
 
             const hidden = usageHistoryHiddenSeries.get(dsId) || new Set(USAGE_HISTORY_DEFAULT_HIDDEN_SERIES);
             const hideStyle = s => hidden.has(s) ? ' style="display:none;"' : '';
@@ -1783,11 +1822,16 @@
             }
 
             const dotHide = hideStyle('points');
+            const backfillHide = hidden.has('backfill') ? ' style="display:none;"' : '';
             // Hover-targets live on the used-% line; the interactive HTML tooltip reads the full point from the cache.
             const dots = points.map(p => {
                 if (typeof p.used_percent !== 'number') return '';
                 const cx = xFor(p.ts).toFixed(2);
                 const cy = yFor(p.used_percent).toFixed(2);
+                if (isBackfill(p)) {
+                    const hide = hidden.has('backfill') ? ' style="display:none;"' : dotHide;
+                    return `<circle class="chart-series-points chart-series-backfill" cx="${cx}" cy="${cy}" r="2.5" fill="var(--text-dim)"${hide}/>`;
+                }
                 return `<circle class="chart-series-points" cx="${cx}" cy="${cy}" r="2.5" fill="var(--cyan)"${dotHide}/>`;
             }).join('');
 
@@ -1799,6 +1843,9 @@
                     ${gridlines.join('')}
                     ${xTicks.join('')}
                     ${thresholdLines.join('')}
+                    <polyline class="chart-series-total-bytes chart-series-backfill" fill="none" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="4 4" opacity="0.5" points="${totalBytesPolylineBF}"${backfillHide}/>
+                    <polyline class="chart-series-used-bytes chart-series-backfill" fill="none" stroke="var(--purple)" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.7" points="${usedBytesPolylineBF}"${backfillHide}/>
+                    <polyline class="chart-series-percent chart-series-backfill" fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.7" points="${percentPolylineBF}"${backfillHide}/>
                     <polyline class="chart-series-total-bytes" fill="none" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="2 4" opacity="0.5" points="${totalBytesPolyline}"${hideStyle('total-bytes')}/>
                     <polyline class="chart-series-used-bytes" fill="none" stroke="var(--purple)" stroke-width="1.5" points="${usedBytesPolyline}"${hideStyle('used-bytes')}/>
                     <polyline class="chart-series-percent" fill="none" stroke="var(--cyan)" stroke-width="1.5" points="${percentPolyline}"${hideStyle('percent')}/>

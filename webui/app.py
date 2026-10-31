@@ -2093,10 +2093,12 @@ def get_storage_history(datastore_id):
                 "used_bytes": point.get("used_bytes"),
                 "available_bytes": point.get("available_bytes"),
                 "used_percent": point.get("used_percent"),
+                "sample_source": point.get("source") or "polled",
             }
     ordered = sorted(deduped.values(), key=lambda p: p["ts"])
 
     thresholds = alerting_config.get("thresholds") or {}
+    backfill_status = history.get("backfill_rrd_status")
     payload = {
         "datastore_id": datastore_id,
         "range": None if use_window else range_str,
@@ -2107,6 +2109,7 @@ def get_storage_history(datastore_id):
         "newest_ts": ordered[-1]["ts"] if ordered else None,
         "source": "daemon" if ordered else "empty",
         "state_source": state_source,
+        "backfill_status": backfill_status if isinstance(backfill_status, dict) else None,
         "thresholds": {
             "storage_warn_percent": thresholds.get("storage_warn_percent"),
             "storage_crit_percent": thresholds.get("storage_crit_percent"),
@@ -2116,6 +2119,57 @@ def get_storage_history(datastore_id):
         payload["from"] = window_from
         payload["to"] = window_to
     return jsonify(payload)
+
+
+@app.route(
+    "/api/datastores/<datastore_id>/storage-history/backfill",
+    methods=["POST"],
+)
+@require_auth
+@require_csrf
+@limiter.limit("10 per minute")
+def trigger_storage_backfill(datastore_id):
+    """Flag a PBS datastore so the next monitor cycle re-runs the RRD backfill.
+
+    Non-destructive: only sets ``storage_history.backfill_rrd_status.status =
+    "pending_retry"`` so that the daemon's PBS backfill hook picks it up on
+    its next poll.  No RRD fetches happen in-process to avoid duplicating the
+    PBS adapter's TLS/session management inside the WebUI.
+    """
+    guard = read_only_guard()
+    if guard:
+        return guard
+    if not isinstance(datastore_id, str) or not datastore_id.startswith("pbs:"):
+        return jsonify({
+            "ok": False,
+            "error": "Backfill is only available for PBS datastores.",
+        }), 400
+
+    state = _load_alerting_state_for_write()
+    datastores = state.setdefault("datastores", {})
+    ds_state = datastores.setdefault(
+        datastore_id, alert_monitor.default_datastore_state(datastore_id),
+    )
+    storage_history = ds_state.setdefault(
+        "storage_history", alert_monitor.default_storage_history(),
+    )
+    storage_history["backfill_rrd_status"] = {
+        "status": "pending_retry",
+        "requested_at": datetime.now(UTC).isoformat(),
+    }
+    _write_json_atomic(ALERTING_STATE_PATH, state)
+    _audit("storage_backfill_scheduled", datastore_id=datastore_id)
+
+    alerting_config = load_visual_alerting_config()
+    interval_raw = alert_monitor.coerce_int(
+        alerting_config.get("daemon_interval_seconds"),
+    )
+    interval = interval_raw if (interval_raw and interval_raw > 0) else 1800
+    return jsonify({
+        "ok": True,
+        "status": "scheduled",
+        "next_cycle_in_s": interval,
+    }), 202
 
 
 _status_feed_cache_webui = {"ts": 0.0, "data": None}

@@ -287,12 +287,20 @@ def auto_migrate_config(config_path, example_path):
         new_config = merge_dicts(current_config, example_config)
         
         if modified:
-            tmp = config_path.with_name(config_path.name + ".tmp")
+            # Per-pid tmp name so concurrent callers (parallel requests, Flask
+            # dev reloader) don't race on the same scratch file. os.replace is
+            # atomic — the slowest writer simply overwrites with the same
+            # merged content; FileNotFoundError here means another process
+            # already renamed our tmp away, which is benign.
+            tmp = config_path.with_name(f"{config_path.name}.{os.getpid()}.tmp")
             with open(tmp, "w") as f:
                 json.dump(new_config, f, indent=2)
-            os.replace(tmp, config_path)
+            try:
+                os.replace(tmp, config_path)
+            except FileNotFoundError:
+                return
             print("Auto-migrated config.json with new keys from example.")
-            
+
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
         print(f"Warning: Failed to auto-migrate config.json: {e}")
 
@@ -1163,6 +1171,57 @@ def _platform_alert_key(source_id: str, title: str) -> str:
     return f"platform:{source_id}:{title}"
 
 
+def _maybe_run_pbs_backfill(adapter, ds, storage_history, config, now_ts):
+    """Run PBS RRD backfill once per datastore (or on retry request).
+
+    The guard marker ``storage_history["backfill_rrd_status"]`` is
+    consulted:
+
+    - ``None`` (never attempted) or ``status in {"error", "pending_retry"}``
+      triggers a run.
+    - ``status == "ok"`` or ``"unavailable"`` suppresses it so we don't
+      spam PBS on every monitor cycle.
+
+    The import is local so that non-PBS deployments don't pay the module
+    load cost at monitor startup.
+    """
+    pbs_bf_cfg = (config.get("pbs_backfill") or {})
+    if not pbs_bf_cfg.get("enabled", True):
+        return
+    bf_status = storage_history.get("backfill_rrd_status")
+    status_val = bf_status.get("status") if isinstance(bf_status, dict) else None
+    if status_val is not None and status_val not in ("error", "pending_retry"):
+        return
+
+    from alerting.sources.pbs_rrd import backfill_pbs_storage
+
+    store_name = ds["id"].split(":", 2)[-1]
+    attempted_at = datetime.now(UTC).isoformat()
+    try:
+        result = backfill_pbs_storage(
+            adapter, store_name, storage_history, config, now_ts=now_ts,
+        )
+        storage_history["backfill_rrd_status"] = {
+            "attempted_at": attempted_at,
+            **result,
+        }
+        if result.get("status") == "ok":
+            print(
+                f"    • PBS backfill ok for {ds['id']}: "
+                f"{result.get('points_added', 0)} points added"
+            )
+        else:
+            reason = result.get("reason", "")
+            print(f"    • PBS backfill unavailable for {ds['id']}: {reason}")
+    except Exception as e:  # noqa: BLE001 — per-datastore isolation
+        print(f"    • PBS backfill failed for {ds['id']}: {e}")
+        storage_history["backfill_rrd_status"] = {
+            "attempted_at": attempted_at,
+            "status": "error",
+            "reason": str(e),
+        }
+
+
 def run_check(config, state):
     """Run a single monitoring check cycle."""
     ntfy_delivery_failed = False
@@ -1380,9 +1439,15 @@ def run_check(config, state):
                             "used_bytes": metrics.get("used_bytes"),
                             "available_bytes": metrics.get("available_bytes"),
                             "used_percent": metrics.get("used_percent"),
+                            "source": "polled",
                         }, config)
                         promote_storage_history(storage_history, config, now_ts=now_ts)
                         prune_storage_history(storage_history, config, now_ts=now_ts)
+
+                        if ds.get("source_type") == "pbs":
+                            _maybe_run_pbs_backfill(
+                                adapter, ds, storage_history, config, now_ts,
+                            )
 
                 status_str = "OFFLINE" if not metrics else f"{metrics.get('used_percent', '?')}%"
                 gc_status = (ds.get("gc") or {}).get("status", "?")
